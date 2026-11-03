@@ -9,7 +9,7 @@
 #
 # Tag plus digest, followed by Dependabot (docker, directory /deploy/postgres). The extension
 # is only CREATEd by the retrieval add-on; the base install does not use it.
-FROM pgvector/pgvector:0.8.7-pg16-trixie@sha256:40d828eda66737aaacb934387a337babf1455ebd56e9bdd13fc08e211257c972
+FROM pgvector/pgvector:0.8.7-pg16-trixie@sha256:9cf8b511f0e9a2c209b61430fc139f1ab9c75edbb31fb1751db6617b246a897a
 
 # Delete first, in its own layer: a scanner (Trivy) reads each layer, and a file merely
 # overwritten in a later layer still reports the Go binary of the earlier one; a deletion
