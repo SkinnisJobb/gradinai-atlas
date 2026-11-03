@@ -1,0 +1,4 @@
+# The owner reviews every change to CI, the CI checks and the scrub gate.
+/.github/      @SkinnisJobb
+/tools/ci/     @SkinnisJobb
+/tools/scrub/  @SkinnisJobb
