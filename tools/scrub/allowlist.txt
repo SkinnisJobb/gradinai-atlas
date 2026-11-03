@@ -28,3 +28,7 @@ NOTICE denylist[2]
 # the password check compares against, not an address. Only the email pattern, only that file
 # (owner decision, 2026-11-03).
 backend/data/breached-passwords.txt email
+
+# CODEOWNERS must name the repository owner's account (@<owner>); it is the one file whose job is
+# to name it (owner decision 2026-11-03). Outside github.com links, nowhere else.
+.github/CODEOWNERS denylist[6]
