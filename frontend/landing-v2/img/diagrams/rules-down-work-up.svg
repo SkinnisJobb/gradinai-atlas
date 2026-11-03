@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 648" role="img" aria-labelledby="rules-down-work-up-t rules-down-work-up-d">
+<title id="rules-down-work-up-t">Rules roll down, work rolls up</title>
+<desc id="rules-down-work-up-d">Top: the Atlas system carries a rule, secrets are files. Its parts, atlas-api and atlas-mcp, carry the same rule, inherited, drawn dashed: a rule stated once on a part binds every part inside it. Bottom: one of the two tasks in a story is done, so the story shows 1 of 2 items done and the epic, counting the story and both tasks, 1 of 3. Search, the part the work is bound to, counts all four items, 1 of 4, and so does every part that contains it. Rules flow down, progress flows up, and neither is set by hand.</desc>
+<style>
+svg{--bg:#ffffff;--surface:#f4f5f7;--ink:#1d2127;--muted:#58616c;--line:#c5cbd3;--agent:#2457c5;--agent-soft:#e7eefc;--person:#0a7565;--person-soft:#e0f3ef;--ok:#1b7a34;--ok-soft:#e3f3e7;--warn:#a85300;--warn-soft:#fdf0e0;--bad:#bf2a2a;--bad-soft:#fbe9e9}
+@media (prefers-color-scheme:dark){svg{--bg:#16191e;--surface:#21252c;--ink:#e8eaed;--muted:#a6aeb8;--line:#3d444f;--agent:#86abff;--agent-soft:#1d2a45;--person:#55cdb8;--person-soft:#15322d;--ok:#5cc777;--ok-soft:#173020;--warn:#f2a457;--warn-soft:#3a2a15;--bad:#ff8585;--bad-soft:#3d1d1d}}
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:15px;fill:var(--ink)}
+.m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:13px}
+.s{font-size:13px;fill:var(--muted)}
+.b{font-weight:600}
+.h{font-size:17px;font-weight:700}
+.c{text-anchor:middle}
+.r{text-anchor:end}
+.bg{fill:var(--bg)}
+.card{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+.ln{fill:none;stroke:var(--muted);stroke-width:1.5}
+.d{stroke-dasharray:5 4}
+.ah{fill:var(--muted)}
+.ag{fill:var(--agent-soft);stroke:var(--agent);stroke-width:1.5}
+.pe{fill:var(--person-soft);stroke:var(--person);stroke-width:1.5}
+.ok{fill:var(--ok-soft);stroke:var(--ok);stroke-width:2}
+.wa{fill:var(--warn-soft);stroke:var(--warn);stroke-width:2}
+.no{fill:var(--bad-soft);stroke:var(--bad);stroke-width:2}
+.ta{fill:var(--agent)}.tp{fill:var(--person)}.tok{fill:var(--ok)}.twa{fill:var(--warn)}.tno{fill:var(--bad)}.tm{fill:var(--muted)}
+.ka{color:var(--agent)}.kp{color:var(--person)}.kok{color:var(--ok)}.kno{color:var(--bad)}.kwa{color:var(--warn)}.km{color:var(--muted)}
+</style>
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+<symbol id="i-agent" viewBox="0 0 20 20"><rect x="3" y="6" width="14" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="7.8" cy="11.5" r="1.5" fill="currentColor"/><circle cx="12.2" cy="11.5" r="1.5" fill="currentColor"/><path d="M10 6V2.5" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-person" viewBox="0 0 20 20"><circle cx="10" cy="6.5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.2 18.5c0-4.2 3-6.6 6.8-6.6s6.8 2.4 6.8 6.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-tick" viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-cross" viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+<symbol id="i-doc" viewBox="0 0 20 20"><path d="M5 2.5h7l3.5 3.5v11.5h-10.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M7.5 9.5h5M7.5 12.5h5" stroke="currentColor" stroke-width="1.3"/></symbol>
+<symbol id="i-key" viewBox="0 0 20 20"><circle cx="6.5" cy="10" r="3.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.3 10H18M15 10v3M17.5 10v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+</defs>
+<rect class="bg" width="400" height="648" rx="12"/>
+<text x="14" y="32" class="h">Rules roll down</text>
+<rect x="110" y="46" width="180" height="76" rx="8" class="pe"/>
+<text x="124" y="70" class="b">Atlas (system)</text>
+<rect x="124" y="82" width="152" height="28" rx="6" class="wa"/>
+<text x="134" y="101" class="s">rule: secrets are files</text>
+<path d="M200 122 L102 156" class="ln" marker-end="url(#ar)"/>
+<rect x="14" y="158" width="176" height="76" rx="8" class="pe"/>
+<text x="26" y="182" class="b">atlas-api</text>
+<rect x="26" y="194" width="152" height="28" rx="6" class="wa d"/>
+<text x="36" y="213" class="s">same rule, inherited</text>
+<path d="M200 122 L298 156" class="ln" marker-end="url(#ar)"/>
+<rect x="210" y="158" width="176" height="76" rx="8" class="pe"/>
+<text x="222" y="182" class="b">atlas-mcp</text>
+<rect x="222" y="194" width="152" height="28" rx="6" class="wa d"/>
+<text x="232" y="213" class="s">same rule, inherited</text>
+<text x="14" y="262" class="s">A rule (an intent) stated once on a part binds</text>
+<text x="14" y="280" class="s">every part inside it.</text>
+<path d="M14 302 L386 302" class="ln d"/>
+<text x="14" y="334" class="h">Work rolls up</text>
+<rect x="14" y="350" width="206" height="56" rx="8" class="card"/>
+<circle cx="42" cy="378" r="14" fill="none" stroke="var(--line)" stroke-width="4"/><path d="M42 364 A14 14 0 0 1 54.1 385.0" fill="none" stroke="var(--ok)" stroke-width="4"/>
+<text x="66" y="374" class="b">Epic</text>
+<text x="66" y="394" class="s">1 of 3 items done</text>
+<rect x="14" y="440" width="206" height="56" rx="8" class="card"/>
+<circle cx="42" cy="468" r="14" fill="none" stroke="var(--line)" stroke-width="4"/><path d="M42 454 A14 14 0 0 1 42.0 482.0" fill="none" stroke="var(--ok)" stroke-width="4"/>
+<text x="66" y="464" class="b">Story</text>
+<text x="66" y="484" class="s">1 of 2 items done</text>
+<rect x="14" y="530" width="98" height="50" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="545" width="18" height="18" class="kok"/>
+<text x="46" y="560" class="b">Task</text>
+<rect x="122" y="530" width="98" height="50" rx="6" class="card"/>
+<text x="132" y="560" class="b">Task</text>
+<path d="M63 530 L63 498" class="ln" marker-end="url(#ar)"/>
+<path d="M63 440 L63 408" class="ln" marker-end="url(#ar)"/>
+<text x="76" y="520" class="s tok">done</text>
+<rect x="246" y="350" width="140" height="76" rx="8" class="pe"/>
+<circle cx="272" cy="378" r="14" fill="none" stroke="var(--line)" stroke-width="4"/><path d="M272 364 A14 14 0 0 1 286.0 378.0" fill="none" stroke="var(--ok)" stroke-width="4"/>
+<text x="294" y="374" class="b">Search</text>
+<text x="294" y="394" class="s">1 of 4 items</text>
+<text x="294" y="412" class="s">done</text>
+<path d="M220 378 L244 378" class="ln" marker-end="url(#ar)"/>
+<text x="246" y="446" class="s">the part the work</text>
+<text x="246" y="464" class="s">is bound to, and</text>
+<text x="246" y="482" class="s">every part that</text>
+<text x="246" y="500" class="s">contains it</text>
+<text x="14" y="610">Rules flow down to the parts; progress flows</text>
+<text x="14" y="630">up to the whole. Neither is set by hand.</text>
+</svg>

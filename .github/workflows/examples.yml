@@ -1,0 +1,169 @@
+# Configuration examples (TASK-1431, STORY-oss-20): every file in docs/oss/examples/ is read by
+# the code that reads it in production, and the minimal profile boots.
+#
+#   validate  tools/check_examples.py: each .env profile against the settings catalogue, the
+#             API's own loaders and atlas-mcp's settings module; the guardrails matrix through
+#             guardrails.load_file; the CI/CD answers through cicd.generate on all three
+#             platforms; the crunch-week configuration through crunch.validate_config. Its
+#             --self-test first proves a broken copy of each kind fails.
+#   boot      the OSS stack from .env.example + env/minimal.env, as install-smoke.yml leg 1
+#             boots it, then GET /auth/login must answer 200 over the install's TLS. Before
+#             `up`, `docker compose config` is run once per profile with the overlays its start command
+#             names (deploy/oss/oidc.yml, retrieval.yml, retrieval-workload-identity.yml),
+#             which is compose's own check of each fragment's interpolation and profiles.
+#
+# No secret: the stack's credentials are made by scripts/init-secrets.sh on the runner, and the
+# validate job's stand-in peppers are throwaway values it mints itself. No repository secret.
+
+name: examples
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "docs/oss/examples/**"
+      - "tools/check_examples.py"
+      - ".github/workflows/examples.yml"
+      # The loaders the examples exercise, and the files they layer over.
+      - "deploy/oss/**"
+      - "scripts/init-secrets.sh"
+      - "backend/settings.py"
+      - "backend/settings_catalog.py"
+      - "backend/guardrails.py"
+      - "backend/cicd.py"
+      - "backend/data/cicd/**"
+      - "backend/guide_answers.py"
+      - "backend/setup_guide.py"
+      - "backend/data/setup_guide/**"
+      - "backend/crunch.py"
+      - "backend/retrieval/**"
+      - "backend/identity/**"
+      - "mcp/app/settings.py"
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE (2026-10-25, after the account ran out of Actions minutes; narrowed
+# 2026-10-26). A pull request runs on `pull_request` only, and its superseded runs are
+# cancelled. A master push does NOT run this workflow: it already ran on the pull request that
+# made the commit, and on the shared self-hosted runner pool every master run queues behind the
+# PR runs. Only verify.yml runs on a master push, because tools/deploy.sh gates on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  EX_HOST: atlas.test
+
+jobs:
+  validate:
+    name: validate every example with the production loaders
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"          # matches backend/Dockerfile
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r backend/requirements.txt
+
+      - name: self-test (a broken copy of each kind must fail)
+        run: python tools/check_examples.py --self-test
+
+      - name: check docs/oss/examples
+        # Runs even when the self-test failed, so a red run also names the broken example here.
+        if: ${{ !cancelled() }}
+        run: python tools/check_examples.py
+
+  boot:
+    name: boot the minimal profile, /auth/login answers 200
+    # The OSS stack is compose project `atlas` with fixed host ports, so it runs only on the
+    # runner labelled `<CI_RUNNER>-stack`, one stack job at a time (as install-smoke.yml).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: prepare the runner
+        run: |
+          set -euo pipefail
+          grep -q " $EX_HOST\$" /etc/hosts || echo "127.0.0.1 $EX_HOST" | sudo tee -a /etc/hosts
+          docker version --format 'docker {{.Server.Version}}'; docker compose version
+
+      - name: layer env/minimal.env over .env.example, make the secrets
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          python ../../tools/check_examples.py apply ../../docs/oss/examples/env/minimal.env --env .env
+          # The example's placeholder name -> this runner's test name, as install-smoke does.
+          sed -i -e "s/atlas\.example\.org/$EX_HOST/g" -e "s/privacy@example\.org/privacy@$EX_HOST/" .env
+          echo "--- .env against .env.example (what the minimal profile changed):"
+          diff .env.example .env || true
+          bash ../../scripts/init-secrets.sh
+
+      - name: docker compose config for every profile (compose's own check of each fragment)
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          ex=../../docs/oss/examples
+          # The files the shipped overlays (oidc.yml, retrieval.yml) mount by default;
+          # placeholders for config only.
+          for f in oidc_client_secret oidc_group_map.yml embed_key; do
+            [ -e "secrets/$f" ] || { : > "secrets/$f"; echo "secrets/$f" >> "$RUNNER_TEMP/ex-placeholders"; }
+          done
+          for frag in "$ex"/env/*.env; do
+            name=$(basename "$frag" .env)
+            cp .env "$RUNNER_TEMP/env.$name"
+            python ../../tools/check_examples.py apply "$frag" --env "$RUNNER_TEMP/env.$name"
+            # The compose files the profile's own start command names (check_examples.py
+            # checks they are shipped and mount every /run/secrets path the profile sets).
+            files=()
+            while IFS= read -r f; do files+=(-f "$f"); done \
+              < <(python ../../tools/check_examples.py compose-files "$frag")
+            echo "--- $name: docker compose ${files[*]} config"
+            docker compose --env-file "$RUNNER_TEMP/env.$name" "${files[@]}" config -q
+            docker compose --env-file "$RUNNER_TEMP/env.$name" "${files[@]}" config --services
+          done
+          # The placeholders must not reach the boot below.
+          if [ -f "$RUNNER_TEMP/ex-placeholders" ]; then xargs rm -f < "$RUNNER_TEMP/ex-placeholders"; fi
+
+      - name: boot the minimal profile
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          docker compose up -d --build --wait --wait-timeout 600
+          docker compose ps -a
+
+      - name: GET /auth/login answers 200
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          code=$(curl -sS --max-time 15 --cacert secrets/tls/ca.crt -o "$RUNNER_TEMP/login.html" \
+                 -w '%{http_code}' "https://$EX_HOST/auth/login")
+          echo "GET https://$EX_HOST/auth/login -> $code ($(wc -c < "$RUNNER_TEMP/login.html") bytes)"
+          [ "$code" = 200 ] || { echo "the login page did not answer 200" >&2; exit 1; }
+
+      - name: compose logs (on failure)
+        if: failure()
+        working-directory: deploy/oss
+        run: docker compose logs --no-color --tail 80 || true
+
+      - name: tear down
+        if: always()
+        working-directory: deploy/oss
+        run: |
+          docker compose down -v --remove-orphans || true
+          rm -rf secrets .env

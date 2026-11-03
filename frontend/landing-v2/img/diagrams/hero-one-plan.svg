@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 456" role="img" aria-labelledby="hero-one-plan-t hero-one-plan-d">
+<title id="hero-one-plan-t">One plan, many agents</title>
+<desc id="hero-one-plan-d">Three agents working for one person, Alex, file task cards into one board: one epic lane with To do, In progress, Blocked and Done columns, every task assigned to Alex. A blocked card shows red; a done card green with a tick. On the in-progress task an agent has proposed new acceptance criteria, which wait on the item for a person. An arrow takes the proposal to Alex, the person the task is assigned to, who approves it. Agents cannot assign work or approve their own criteria; a person does.</desc>
+<style>
+svg{--bg:#ffffff;--surface:#f4f5f7;--ink:#1d2127;--muted:#58616c;--line:#c5cbd3;--agent:#2457c5;--agent-soft:#e7eefc;--person:#0a7565;--person-soft:#e0f3ef;--ok:#1b7a34;--ok-soft:#e3f3e7;--warn:#a85300;--warn-soft:#fdf0e0;--bad:#bf2a2a;--bad-soft:#fbe9e9}
+@media (prefers-color-scheme:dark){svg{--bg:#16191e;--surface:#21252c;--ink:#e8eaed;--muted:#a6aeb8;--line:#3d444f;--agent:#86abff;--agent-soft:#1d2a45;--person:#55cdb8;--person-soft:#15322d;--ok:#5cc777;--ok-soft:#173020;--warn:#f2a457;--warn-soft:#3a2a15;--bad:#ff8585;--bad-soft:#3d1d1d}}
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:15px;fill:var(--ink)}
+.m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:13px}
+.s{font-size:13px;fill:var(--muted)}
+.b{font-weight:600}
+.h{font-size:17px;font-weight:700}
+.c{text-anchor:middle}
+.r{text-anchor:end}
+.bg{fill:var(--bg)}
+.card{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+.ln{fill:none;stroke:var(--muted);stroke-width:1.5}
+.d{stroke-dasharray:5 4}
+.ah{fill:var(--muted)}
+.ag{fill:var(--agent-soft);stroke:var(--agent);stroke-width:1.5}
+.pe{fill:var(--person-soft);stroke:var(--person);stroke-width:1.5}
+.ok{fill:var(--ok-soft);stroke:var(--ok);stroke-width:2}
+.wa{fill:var(--warn-soft);stroke:var(--warn);stroke-width:2}
+.no{fill:var(--bad-soft);stroke:var(--bad);stroke-width:2}
+.ta{fill:var(--agent)}.tp{fill:var(--person)}.tok{fill:var(--ok)}.twa{fill:var(--warn)}.tno{fill:var(--bad)}.tm{fill:var(--muted)}
+.ka{color:var(--agent)}.kp{color:var(--person)}.kok{color:var(--ok)}.kno{color:var(--bad)}.kwa{color:var(--warn)}.km{color:var(--muted)}
+</style>
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+<symbol id="i-agent" viewBox="0 0 20 20"><rect x="3" y="6" width="14" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="7.8" cy="11.5" r="1.5" fill="currentColor"/><circle cx="12.2" cy="11.5" r="1.5" fill="currentColor"/><path d="M10 6V2.5" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-person" viewBox="0 0 20 20"><circle cx="10" cy="6.5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.2 18.5c0-4.2 3-6.6 6.8-6.6s6.8 2.4 6.8 6.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-tick" viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-cross" viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+<symbol id="i-doc" viewBox="0 0 20 20"><path d="M5 2.5h7l3.5 3.5v11.5h-10.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M7.5 9.5h5M7.5 12.5h5" stroke="currentColor" stroke-width="1.3"/></symbol>
+<symbol id="i-key" viewBox="0 0 20 20"><circle cx="6.5" cy="10" r="3.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.3 10H18M15 10v3M17.5 10v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+</defs>
+<rect class="bg" width="800" height="456" rx="12"/>
+<text x="20" y="38" class="h">Three agents, working for Alex</text>
+<rect x="20" y="70" width="170" height="58" rx="8" class="ag"/>
+<use href="#i-agent" x="30" y="79" width="22" height="22" class="ka"/>
+<text x="58" y="96" class="b">alex-claude</text>
+<text x="58" y="115" class="s">agent for Alex</text>
+<path d="M190 99 L226 150" class="ln" marker-end="url(#ar)"/>
+<rect x="20" y="170" width="170" height="58" rx="8" class="ag"/>
+<use href="#i-agent" x="30" y="179" width="22" height="22" class="ka"/>
+<text x="58" y="196" class="b">alex-review</text>
+<text x="58" y="215" class="s">agent for Alex</text>
+<path d="M190 199 L226 200" class="ln" marker-end="url(#ar)"/>
+<rect x="20" y="270" width="170" height="58" rx="8" class="ag"/>
+<use href="#i-agent" x="30" y="279" width="22" height="22" class="ka"/>
+<text x="58" y="296" class="b">alex-docs</text>
+<text x="58" y="315" class="s">agent for Alex</text>
+<path d="M190 299 L226 250" class="ln" marker-end="url(#ar)"/>
+<text x="20" y="378" class="s">Each files and updates work</text>
+<text x="20" y="396" class="s">through Atlas's MCP server.</text>
+<rect x="230" y="50" width="380" height="300" rx="12" class="card"/>
+<text x="246" y="80" class="h">One plan, on one board</text>
+<text x="246" y="104" class="s">Epic lane: Search by meaning</text>
+<text x="285" y="132" class="s c">To do</text>
+<text x="377" y="132" class="s c">In progress</text>
+<path d="M331 118 L331 338" class="card"/>
+<text x="469" y="132" class="s c">Blocked</text>
+<path d="M423 118 L423 338" class="card"/>
+<text x="561" y="132" class="s c">Done</text>
+<path d="M515 118 L515 338" class="card"/>
+<rect x="242" y="142" width="86" height="50" rx="6" class="card"/>
+<text x="252" y="163" class="b">Task</text>
+<text x="252" y="182" class="s">Alex</text>
+<rect x="242" y="200" width="86" height="50" rx="6" class="card"/>
+<text x="252" y="221" class="b">Task</text>
+<text x="252" y="240" class="s">Alex</text>
+<rect x="334" y="142" width="86" height="50" rx="6" class="card"/>
+<text x="344" y="163" class="b">Task</text>
+<text x="344" y="182" class="s">Alex</text>
+<rect x="426" y="142" width="86" height="50" rx="6" class="no"/>
+<text x="436" y="163" class="b">Task</text>
+<text x="436" y="182" class="s tno">Blocked</text>
+<text x="502" y="164" class="b tno r">!</text>
+<rect x="518" y="142" width="86" height="50" rx="6" class="ok"/>
+<text x="528" y="163" class="b">Task</text>
+<text x="528" y="182" class="s tok">Done</text>
+<use href="#i-tick" x="584" y="146" width="16" height="16" class="kok"/>
+<path d="M377 192 L377 260" class="ln d"/>
+<rect x="300" y="262" width="176" height="52" rx="8" class="pe d"/>
+<text x="312" y="284" class="b">Proposed criteria</text>
+<text x="312" y="303" class="s">only Alex can approve</text>
+<path d="M388 314 L388 380 L640 380" class="ln" marker-end="url(#ar)"/>
+<text x="398" y="372" class="s">waits on a person</text>
+<rect x="640" y="340" width="140" height="74" rx="8" class="pe"/>
+<use href="#i-person" x="652" y="352" width="24" height="24" class="kp"/>
+<text x="684" y="370" class="b">Alex</text>
+<text x="684" y="389" class="s">the person it</text>
+<text x="684" y="405" class="s">is assigned to</text>
+<path d="M710 340 L710 288 L478 288" class="ln" marker-end="url(#ar)"/>
+<text x="632" y="312" class="s">Alex</text>
+<text x="632" y="329" class="s">approves</text>
+<text x="20" y="438" class="s">An agent cannot assign work, or approve its own criteria: a person does.</text>
+</svg>

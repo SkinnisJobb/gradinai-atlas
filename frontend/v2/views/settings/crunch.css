@@ -1,0 +1,92 @@
+/* views/settings/crunch.css — the crunch-week tab, its confirmation dialog and
+   the board banner (STORY-atlas-crunch-mode). Loaded by crunch.js and
+   crunch-banner.js on first use. Colours are the theme tokens (tokens.css), so
+   light and dark both follow; every font size is calc(<N>px * var(--ui-scale)). */
+
+.crunch-red { color: var(--att-red); font-weight: 600; }
+/* A deeper red for white text: --att-red under white reads below 4.5:1 in
+   both themes, and the banner and the danger buttons carry white text. */
+:root { --crunch-strong: #a8322c; }
+
+/* -- state --------------------------------------------------------------- */
+.crunch-status { margin: 14px 0 4px; padding: 10px 14px; border-radius: 10px;
+  border: 1px solid var(--line-strong); background: var(--panel-2);
+  font-size: calc(13px * var(--ui-scale)); color: var(--ink); }
+.crunch-status.is-on { border-color: var(--att-red); }
+.crunch-status.is-on > strong { color: var(--att-red); }
+.crunch-status .settings-dl { margin-top: 8px; }
+
+/* SVG text sizes below are in the diagram's own units: the whole drawing is
+   sized in --ui-scale units (.crunch-svg's width), so its type scales with it. */
+/* -- the diagram --------------------------------------------------------- */
+.crunch-fig { margin: 16px 0 0; }
+.crunch-svg { display: block; width: calc(720px * var(--ui-scale)); max-width: 100%; height: auto; }
+.crunch-svg .cf-box rect { fill: var(--panel-2); stroke: var(--line-strong); stroke-width: 1.5; }
+.crunch-svg .cf-label { fill: var(--ink); font-family: var(--font-sans); font-size: 13px; }
+.crunch-svg .cf-gate rect { stroke: var(--accent); }
+.crunch-svg .cf-prod rect { stroke: var(--att-red); stroke-width: 2; }
+.crunch-svg .cf-prod .cf-label { fill: var(--att-red); font-weight: 600; }
+.crunch-svg .cf-skipped rect { fill: none; stroke: var(--ink-faint); stroke-dasharray: 5 4; }
+.crunch-svg .cf-skipped .cf-label { fill: var(--ink-faint); text-decoration: line-through; }
+.crunch-svg .cf-line { stroke: var(--ink-soft); stroke-width: 1.8; }
+.crunch-svg .cf-direct { stroke: var(--att-red); stroke-width: 2.4; }
+.crunch-svg .cf-arrowhead { fill: var(--ink-soft); }
+.crunch-svg .cf-lane { fill: var(--ink-soft); font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+  letter-spacing: .03em; text-transform: uppercase; }
+.crunch-svg .cf-lane-red { fill: var(--att-red); }
+.crunch-svg .cf-note { fill: var(--ink-faint); font-family: var(--font-sans); font-size: 12px; font-style: italic; }
+.crunch-fig figcaption { margin-top: 6px; }
+
+.crunch-holds { margin: 0; padding-left: 1.2em; font-size: calc(13px * var(--ui-scale)); color: var(--ink-soft); }
+.crunch-holds li { margin: 3px 0; }
+.crunch-holds strong { color: var(--ink); font-weight: 600; }
+
+/* -- the configuration boxes ---------------------------------------------- */
+.crunch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(calc(250px * var(--ui-scale)), 1fr));
+  gap: 12px; margin-top: 4px; }
+.crunch-box { margin: 0; min-width: 0; padding: 10px 12px 12px; border: 1px solid var(--line-strong);
+  border-radius: 10px; background: var(--panel-2); font-size: calc(13px * var(--ui-scale)); color: var(--ink); }
+.crunch-box legend { padding: 0 4px; font-weight: 600; font-size: calc(12.5px * var(--ui-scale)); color: var(--ink); }
+.crunch-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 6px 0; }
+.crunch-opt { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.crunch-hint { color: var(--ink-faint); font-size: calc(12px * var(--ui-scale)); }
+.crunch-box > .crunch-hint { margin: 8px 0 0; }
+.crunch-num { width: calc(64px * var(--ui-scale)); }
+.crunch-dt { min-width: 0; }
+.crunch-fixed { margin: 2px 0 6px; color: var(--ink-soft); font-size: calc(12px * var(--ui-scale)); }
+.crunch-preview { margin: 8px 0 0; color: var(--ink-soft); font-size: calc(12px * var(--ui-scale)); }
+.crunch-preview.is-bad { color: var(--att-orange); }
+
+.crunch-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 14px; }
+.btn.crunch-go { background: var(--crunch-strong); border-color: var(--crunch-strong); color: #fff; font-weight: 600; padding: 6px 14px; }
+.btn.crunch-go:hover { filter: brightness(1.08); }
+.btn.crunch-go:disabled { opacity: .55; }
+.crunch-err { margin: 6px 0 0; color: var(--att-red); font-size: calc(12.5px * var(--ui-scale)); }
+.crunch-err:empty { display: none; }
+
+.crunch-hist { margin: 0 0 10px; padding-left: 1.4em; font-size: calc(12.5px * var(--ui-scale)); color: var(--ink-soft); }
+.crunch-hist strong { color: var(--ink); }
+
+/* -- the confirmation dialog ---------------------------------------------- */
+.crunch-confirm { z-index: 210; }
+.crunch-confirm-sheet { width: min(640px, 100%); }
+.crunch-confirm-top { display: flex; gap: 16px; align-items: flex-start; margin-top: 14px; }
+.crunch-warn-ico { flex: none; width: calc(76px * var(--ui-scale)); height: calc(76px * var(--ui-scale)); }
+.crunch-warn-ico .cw-tri { fill: var(--att-red); stroke: var(--att-red); stroke-width: 3; stroke-linejoin: round; }
+.crunch-warn-ico .cw-mark { stroke: var(--panel); stroke-width: 5; stroke-linecap: round; }
+.crunch-warn-ico .cw-dot { fill: var(--panel); }
+.crunch-summary { margin: 0; padding-left: 1.1em; font-size: calc(13px * var(--ui-scale)); color: var(--ink); }
+.crunch-summary li { margin: 4px 0; }
+.crunch-confirm-form { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
+.crunch-confirm-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+
+/* -- the board banner ----------------------------------------------------- */
+.crunch-banner { flex: 1 0 100%; order: -1; display: flex; align-items: center; gap: 8px;
+  margin: -8px -16px 0; padding: 6px 16px; background: var(--crunch-strong); color: #fff;
+  font-size: calc(12.5px * var(--ui-scale)); font-weight: 600; }
+.crunch-banner-ico { font-size: calc(14px * var(--ui-scale)); }
+
+@media (max-width: 760px) {
+  .crunch-confirm-top { flex-direction: column; align-items: center; }
+  .crunch-grid { grid-template-columns: minmax(0, 1fr); }
+}

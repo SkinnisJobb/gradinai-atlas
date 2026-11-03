@@ -1,0 +1,24 @@
+  deploy-@@ENV@@:
+    # @@WHO@@
+    name: deploy @@ENV@@
+@@NEEDS@@
+    if: @@IF@@
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # ENFORCED BY GITHUB: the environment's protection rules run before this job starts, and
+    # its secrets (DEPLOY_CREDENTIAL) exist only inside it.@@GATE_NOTE@@
+    environment:
+      name: @@ENV@@
+    concurrency:
+      group: deploy-@@ENV@@
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+@@BACKUP_STEP@@
+      # TODO(atlas): replace the next line with the deploy to @@ENV@@, using DEPLOY_CREDENTIAL.
+      - name: deploy to @@ENV@@
+        env:
+          DEPLOY_CREDENTIAL: ${{ secrets.DEPLOY_CREDENTIAL }}
+        run: |
+          test -n "$DEPLOY_CREDENTIAL" || { echo "DEPLOY_CREDENTIAL is not set on environment @@ENV@@" >&2; exit 1; }
+          echo "TODO(atlas) the deploy to @@ENV@@ is not configured yet" && exit 1

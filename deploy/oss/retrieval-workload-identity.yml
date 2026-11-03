@@ -1,0 +1,34 @@
+# Azure workload identity for the retrieval add-on in entra mode (TASK-1375, OSS-26 A): an
+# OVERLAY, added AFTER retrieval.yml by an install whose embedding endpoint (Azure OpenAI / Azure
+# AI Foundry) accepts only Entra ID tokens and whose host gets them through a federated
+# credential, not a managed identity:
+#
+#   docker compose -f docker-compose.yml -f retrieval.yml -f retrieval-workload-identity.yml up -d
+#
+# What the add-on needs (backend/retrieval/entra.py, flow "workload identity"): AZURE_TENANT_ID,
+# AZURE_CLIENT_ID and AZURE_FEDERATED_TOKEN_FILE in atlas-api's environment, and that file
+# readable. It exchanges the file's JWT at https://login.microsoftonline.com/<tenant>/
+# oauth2/v2.0/token (AZURE_AUTHORITY_HOST for a sovereign cloud) and reads the file again at every
+# exchange, because the platform rotates it. What this file adds, and nothing else:
+#   * the DIRECTORY that holds the token, read-only, at /var/run/secrets/azure/tokens (the path
+#     AKS uses). A directory and not the file: a rotation that replaces the file (a new inode)
+#     would leave a single-file bind mount showing the old token forever.
+#   * AZURE_FEDERATED_TOKEN_FILE pointing into it.
+# Set in .env: AZURE_TENANT_ID, AZURE_CLIENT_ID (they reach atlas-api through env_file),
+# AZURE_FEDERATED_TOKEN_DIR (the host directory) and, if the file is not called
+# azure-identity-token, AZURE_FEDERATED_TOKEN_NAME. The directory and file must be readable by
+# atlas-api's UID, which is not yours (0755 / 0644, as init-secrets.sh does for ./secrets/).
+#
+# Managed identity (an Azure VM's IMDS, App Service, Container Apps) needs none of this: entra.py
+# finds it on its own, through the `egress` network retrieval.yml already gives atlas-api.
+services:
+  atlas-api:
+    environment:
+      AZURE_FEDERATED_TOKEN_FILE: /var/run/secrets/azure/tokens/${AZURE_FEDERATED_TOKEN_NAME:-azure-identity-token}
+    volumes:
+      - type: bind
+        source: ${AZURE_FEDERATED_TOKEN_DIR:?set AZURE_FEDERATED_TOKEN_DIR in .env (the host directory holding the federated token)}
+        target: /var/run/secrets/azure/tokens
+        read_only: true
+        bind:
+          create_host_path: false

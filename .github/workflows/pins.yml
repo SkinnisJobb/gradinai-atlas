@@ -1,0 +1,88 @@
+# Pin gate and Dependabot config check (TASK-1357, enforced since TASK-1420).
+#
+# `pins` runs tools/ci/check_pins.py --enforce: every image reference in a
+# Dockerfile or compose file (deploy/*.yml overrides and mcp/ included) must be
+# pinned by tag + digest, every first-party (actions/, github/) workflow `uses:`
+# by a commit SHA or a version tag, and every third-party `uses:` by a commit SHA.
+# Any unpinned, floating or third-party-tag reference fails the job (exit 1); the
+# table goes to the log and the run summary either way.
+#
+# NO `paths:` FILTER, on purpose: a new reference can appear in any workflow,
+# compose file, Dockerfile or deploy/* file, and the check reads every tracked
+# file, so it runs on every pull request. The job takes seconds. Adding a
+# `paths:` list here would let a reference in a file it forgot slip through.
+#
+# `dependabot-schema` validates .github/dependabot.yml against the published
+# schema (schemastore's dependabot-2.0, vendored in check-jsonschema), so a typo
+# there is a red check here rather than a silently ignored config on GitHub.
+#
+# A separate file from verify.yml on purpose: this is a static check over the
+# tracked tree that needs no database and no suite.
+
+name: pins
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE (2026-10-25, after the account ran out of Actions minutes; narrowed
+# 2026-10-26). A pull request runs on `pull_request` only, and its superseded runs are
+# cancelled. A master push does NOT run this workflow: it already ran on the pull request that
+# made the commit, and on the shared self-hosted runner pool every master run queues behind the PR runs.
+# Only verify.yml runs on a master push, because tools/deploy.sh gates on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  pins:
+    name: pins
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # The self-test first: a classifier that stopped telling `postgres:16` from
+      # `postgres:16@sha256:...` would report a clean tree forever. It also runs
+      # --enforce end to end on throwaway trees: an unpinned image and an unpinned
+      # third-party action must exit 1, a pinned tree must exit 0.
+      - name: self-test
+        run: python tools/ci/check_pins.py --self-test
+
+      - name: pin gate
+        run: python tools/ci/check_pins.py --enforce
+
+      # The public repository's own CI rules (tools/ci/check_public_ci.py): hosted runners only, no
+      # pull_request_target or workflow_run, explicit permissions, pinned actions. Added by the
+      # export; the self-test first, so a check that stopped failing on bad input is red.
+      - name: public CI rules (self-test)
+        run: |
+          python -m pip install --quiet "pyyaml==6.0.3"
+          python tools/ci/check_public_ci.py --self-test
+
+      - name: public CI rules
+        run: python tools/ci/check_public_ci.py
+
+  dependabot-schema:
+    name: dependabot.yml schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: validate
+        run: |
+          python -m pip install --quiet "check-jsonschema==0.38.2"
+          check-jsonschema --builtin-schema vendor.dependabot .github/dependabot.yml

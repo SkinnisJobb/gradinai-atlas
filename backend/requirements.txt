@@ -1,0 +1,28 @@
+# TASK-1361 (2026-10-25): moved off fastapi 0.115 / uvicorn 0.34 / SQLAlchemy 2.0 together,
+# superseding Dependabot #110/#119. fastapi 0.162 resolves starlette 1.x. The one break it
+# brought: `include_router` no longer copies routes onto the app, so `app.routes` holds one
+# `_IncludedRouter` per router; route-enumerating verifies read `route_table.live_routes`.
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+# Pinned here as well as in mcp/requirements.txt, at the SAME version: CI installs both
+# files into one environment (verify.yml, the mcp job), so two different pins would not
+# resolve. mcp==1.30.0 (TASK-1366) needs >=2.11 on Python 3.12 and >=2.12 on 3.14.
+pydantic==2.14.1
+SQLAlchemy==2.1.6
+psycopg2-binary==2.9.13
+PyYAML==6.0.3
+jsonschema==4.26.0
+httpx==0.28.1
+# Password verifier for the local-credential login (ADR 0025, TASK-965/966).
+# argon2id is the KDF; parameters are TASK-965's to measure on the server.
+# 25.1.0 ships an abi3 wheel (cp39-abi3, manylinux_2_28_x86_64) so the
+# python:3.12-slim image needs no compiler, and the same wheel imports cleanly
+# on the workstation's Python 3.14.
+argon2-cffi==25.1.0
+# OIDC login (ADR 0041 §5, STORY-oss-13): ID-token signature and claim validation, and the
+# private_key_jwt client assertion. Imported only when ATLAS_AUTH_PROVIDERS includes oidc;
+# backend/identity/oidc.py's docstring says why PyJWT and not a full OAuth framework.
+# cryptography is PyJWT's RSA/EC backend, pinned here so the image is reproducible. Both
+# are >= 1.0, so neither is in dependabot.yml's 0.x group.
+PyJWT[crypto]==2.15.1
+cryptography==50.0.2

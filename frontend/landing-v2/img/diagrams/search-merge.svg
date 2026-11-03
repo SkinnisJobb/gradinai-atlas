@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 676" role="img" aria-labelledby="search-merge-t search-merge-d">
+<title id="search-merge-t">Words and meaning, merged</title>
+<desc id="search-merge-d">A search for sign-in. The keyword list ranks Sign-in page, Session cookie, Login service and Password rules; the meaning list ranks Login service, Sign-in page, SSO setup and Account recovery. Hybrid search merges them: each list adds one over sixty plus the rank to an item's score, so Sign-in page and Login service, found by both, rise to the top, followed by the rest. When the semantic add-on is off, the answer uses the keyword ranking only and says so with a degraded note: retrieval is off on this instance.</desc>
+<style>
+svg{--bg:#ffffff;--surface:#f4f5f7;--ink:#1d2127;--muted:#58616c;--line:#c5cbd3;--agent:#2457c5;--agent-soft:#e7eefc;--person:#0a7565;--person-soft:#e0f3ef;--ok:#1b7a34;--ok-soft:#e3f3e7;--warn:#a85300;--warn-soft:#fdf0e0;--bad:#bf2a2a;--bad-soft:#fbe9e9}
+@media (prefers-color-scheme:dark){svg{--bg:#16191e;--surface:#21252c;--ink:#e8eaed;--muted:#a6aeb8;--line:#3d444f;--agent:#86abff;--agent-soft:#1d2a45;--person:#55cdb8;--person-soft:#15322d;--ok:#5cc777;--ok-soft:#173020;--warn:#f2a457;--warn-soft:#3a2a15;--bad:#ff8585;--bad-soft:#3d1d1d}}
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:15px;fill:var(--ink)}
+.m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:13px}
+.s{font-size:13px;fill:var(--muted)}
+.b{font-weight:600}
+.h{font-size:17px;font-weight:700}
+.c{text-anchor:middle}
+.r{text-anchor:end}
+.bg{fill:var(--bg)}
+.card{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+.ln{fill:none;stroke:var(--muted);stroke-width:1.5}
+.d{stroke-dasharray:5 4}
+.ah{fill:var(--muted)}
+.ag{fill:var(--agent-soft);stroke:var(--agent);stroke-width:1.5}
+.pe{fill:var(--person-soft);stroke:var(--person);stroke-width:1.5}
+.ok{fill:var(--ok-soft);stroke:var(--ok);stroke-width:2}
+.wa{fill:var(--warn-soft);stroke:var(--warn);stroke-width:2}
+.no{fill:var(--bad-soft);stroke:var(--bad);stroke-width:2}
+.ta{fill:var(--agent)}.tp{fill:var(--person)}.tok{fill:var(--ok)}.twa{fill:var(--warn)}.tno{fill:var(--bad)}.tm{fill:var(--muted)}
+.ka{color:var(--agent)}.kp{color:var(--person)}.kok{color:var(--ok)}.kno{color:var(--bad)}.kwa{color:var(--warn)}.km{color:var(--muted)}
+</style>
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+<symbol id="i-agent" viewBox="0 0 20 20"><rect x="3" y="6" width="14" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="7.8" cy="11.5" r="1.5" fill="currentColor"/><circle cx="12.2" cy="11.5" r="1.5" fill="currentColor"/><path d="M10 6V2.5" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-person" viewBox="0 0 20 20"><circle cx="10" cy="6.5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.2 18.5c0-4.2 3-6.6 6.8-6.6s6.8 2.4 6.8 6.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-tick" viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-cross" viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+<symbol id="i-doc" viewBox="0 0 20 20"><path d="M5 2.5h7l3.5 3.5v11.5h-10.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M7.5 9.5h5M7.5 12.5h5" stroke="currentColor" stroke-width="1.3"/></symbol>
+<symbol id="i-key" viewBox="0 0 20 20"><circle cx="6.5" cy="10" r="3.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.3 10H18M15 10v3M17.5 10v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+</defs>
+<rect class="bg" width="400" height="676" rx="12"/>
+<text x="14" y="32" class="h">A search for “sign-in”</text>
+<rect x="14" y="46" width="180" height="206" rx="10" class="card"/>
+<text x="26" y="72" class="b">By keyword</text>
+<rect x="22" y="86" width="164" height="32" rx="6" class="pe"/>
+<text x="32" y="107" class="b">1  Sign-in page</text>
+<rect x="22" y="126" width="164" height="32" rx="6" class="card"/>
+<text x="32" y="147">2  Session cookie</text>
+<rect x="22" y="166" width="164" height="32" rx="6" class="pe"/>
+<text x="32" y="187" class="b">3  Login service</text>
+<rect x="22" y="206" width="164" height="32" rx="6" class="card"/>
+<text x="32" y="227">4  Password rules</text>
+<rect x="206" y="46" width="180" height="206" rx="10" class="card"/>
+<text x="218" y="72" class="b">By meaning</text>
+<rect x="214" y="86" width="164" height="32" rx="6" class="pe"/>
+<text x="224" y="107" class="b">1  Login service</text>
+<rect x="214" y="126" width="164" height="32" rx="6" class="pe"/>
+<text x="224" y="147" class="b">2  Sign-in page</text>
+<rect x="214" y="166" width="164" height="32" rx="6" class="card"/>
+<text x="224" y="187">3  SSO setup</text>
+<rect x="214" y="206" width="164" height="32" rx="6" class="card"/>
+<text x="224" y="227">4  Account recovery</text>
+<path d="M104 252 L180 290" class="ln" marker-end="url(#ar)"/>
+<path d="M296 252 L220 290" class="ln" marker-end="url(#ar)"/>
+<rect x="14" y="292" width="372" height="228" rx="10" class="card"/>
+<text x="28" y="318" class="b">Hybrid: one merged list</text>
+<rect x="22" y="332" width="356" height="26" rx="6" class="pe"/>
+<text x="32" y="350" class="b">1  Sign-in page</text>
+<text x="368" y="350" class="s r">in both</text>
+<rect x="22" y="362" width="356" height="26" rx="6" class="pe"/>
+<text x="32" y="380" class="b">2  Login service</text>
+<text x="368" y="380" class="s r">in both</text>
+<rect x="22" y="392" width="356" height="26" rx="6" class="card"/>
+<text x="32" y="410">3  Session cookie</text>
+<rect x="22" y="422" width="356" height="26" rx="6" class="card"/>
+<text x="32" y="440">4  SSO setup</text>
+<rect x="22" y="452" width="356" height="26" rx="6" class="card"/>
+<text x="32" y="470">5  Password rules</text>
+<rect x="22" y="482" width="356" height="26" rx="6" class="card"/>
+<text x="32" y="500">6  Account recovery</text>
+<text x="14" y="544" class="s">Each list adds 1 / (60 + rank) to an item's</text>
+<text x="14" y="562" class="s">score, so an item ranked well in either rises.</text>
+<rect x="14" y="580" width="372" height="82" rx="10" class="wa"/>
+<rect x="28" y="594" width="40" height="22" rx="11" class="card"/><circle cx="39" cy="605" r="7" fill="var(--muted)"/>
+<text x="78" y="611" class="b">Semantic add-on off</text>
+<text x="28" y="636" class="s">Keyword ranking only, and the answer says so:</text>
+<text x="28" y="654" class="m">degraded: "retrieval is off on this instance"</text>
+</svg>

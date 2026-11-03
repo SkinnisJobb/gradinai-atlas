@@ -1,0 +1,46 @@
+# The retrieval add-on on the OSS install (ADR 0044, STORY-atlas-retrieval-indexing): an OVERLAY,
+# added on the command line by an install that turns semantic retrieval on. The base install
+# (docker-compose.yml alone) is unchanged by this file's existence: keyword search only, and
+# atlas-api with no route out of the node.
+#
+#   docker compose -f docker-compose.yml -f retrieval.yml up -d
+#
+# What it adds, and nothing else:
+#   * atlas-api joins `egress`, its one route to the embedding endpoint. The add-on runs INSIDE
+#     atlas-api; no model and no embedding service ships in any image here.
+#   * the key as the compose secret `embed_key` (./secrets/embed_key, never committed), which
+#     .env names as ATLAS_EMBED_KEY_FILE=/run/secrets/embed_key. A key in a plain variable is
+#     refused, and ATLAS_REQUIRE_SECRET_FILES=1 already refuses every other secret that way.
+#
+# Set the rest in .env (the "Retrieval" block of .env.example): ATLAS_RETRIEVAL=on, the https
+# endpoint, the model, the dimension. The endpoint is either hosted (Azure AI Foundry / Azure
+# OpenAI: ATLAS_EMBED_AUTH_HEADER=api-key) or a separate embedding node on your network over TLS
+# (ATLAS_EMBED_CA_BUNDLE when its certificate is from a private CA, e.g. /run/secrets/atlas_ca
+# for one issued by this install's CA). Which one is configuration only.
+#
+# ENTRA MODE (ATLAS_EMBED_AUTH_HEADER=entra) takes no key: set ATLAS_EMBED_KEY_SOURCE=/dev/null in
+# .env and leave ATLAS_EMBED_KEY_FILE unset (the add-on refuses both at once). The secret is then
+# an empty mount nothing reads, and ./secrets/embed_key need not exist. The token comes from the
+# identity the container runs as: managed identity needs nothing more; workload identity needs
+# AZURE_TENANT_ID and AZURE_CLIENT_ID in .env and the federated token file mounted, which the
+# overlay retrieval-workload-identity.yml does.
+services:
+  atlas-api:
+    networks:
+      egress: {}
+    secrets:
+      - db_url
+      - password_pepper
+      - token_pepper
+      - tls_cert            # the base file's list, repeated (TASK-1419: cert_warnings)
+      - embed_key
+      # The install CA (defined in docker-compose.yml), so ATLAS_EMBED_CA_BUNDLE=/run/secrets/atlas_ca
+      # works for an embedding node whose certificate this install's CA issued, as .env.example
+      # says. Harmless when unused: the add-on reads it only when ATLAS_EMBED_CA_BUNDLE names it.
+      # (Found by the install smoke's retrieval leg, TASK-1386.)
+      - atlas_ca
+
+secrets:
+  embed_key:
+    # ./secrets/embed_key unless .env names another host file (/dev/null in entra mode).
+    file: ${ATLAS_EMBED_KEY_SOURCE:-./secrets/embed_key}

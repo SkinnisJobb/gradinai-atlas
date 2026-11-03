@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Project Atlas — the board: the world as a graph, its work as a board, and a dashboard for every node.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%2335699f' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%2335699f'/%3E%3C/svg%3E">
+<title>Project Atlas</title>
+<!-- Board v2 (ADR 0043). Markup only: every behaviour is in app.js and the
+     modules it imports. The one classic script is the pre-paint theme read. -->
+<script src="/assets/v2/prepaint.js"></script>
+<link rel="stylesheet" href="/assets/v2/styles/tokens.css">
+<link rel="stylesheet" href="/assets/v2/styles/layout.css">
+<link rel="stylesheet" href="/assets/v2/styles/graph.css">
+<link rel="stylesheet" href="/assets/v2/styles/board.css">
+<link rel="stylesheet" href="/assets/v2/styles/panel.css">
+<link rel="stylesheet" href="/assets/v2/styles/overlays.css">
+<link rel="stylesheet" href="/assets/v2/styles/dashboard.css">
+</head>
+<body>
+<div class="app">
+  <header class="bar" id="bar">
+    <a class="brand" href="/board" aria-label="Atlas, back to the roots"><b>Atlas</b></a>
+    <div class="search-slot" id="searchSlot"></div>
+    <nav class="crumbs" id="crumbs" aria-label="Focus history"></nav>
+    <div class="bar-tools" id="barTools"></div>
+    <div class="bar-end" id="barEnd"><a class="legacy-link" href="/board/legacy" title="The previous board. Frozen and unsupported (ADR 0043)">Legacy board</a><span class="who" id="who"></span></div>
+  </header>
+  <main class="stage" id="stage">
+    <!-- Each pane follows its bar: a click collapses or expands it, a drag resizes it (ui/panes.js). -->
+    <div class="split" data-split="dashboard" role="separator" aria-orientation="vertical" aria-controls="paneDashboard" aria-label="Collapse the dashboard" tabindex="0" hidden></div>
+    <section class="pane pane-dashboard" data-pane="dashboard" id="paneDashboard" aria-label="Dashboard" hidden></section>
+    <div class="split" data-split="graph" role="separator" aria-orientation="vertical" aria-controls="paneGraph" aria-label="Collapse the graph" tabindex="0" hidden></div>
+    <section class="pane pane-graph" data-pane="graph" id="paneGraph" aria-label="Graph"></section>
+    <div class="split" data-split="board" role="separator" aria-orientation="vertical" aria-controls="paneBoard" aria-label="Resize the work board" tabindex="0" hidden></div>
+    <section class="pane pane-board" data-pane="board" id="paneBoard" aria-label="Work board"></section>
+    <div class="split" data-split="panel" role="separator" aria-orientation="vertical" aria-controls="panePanel" aria-label="Resize the node panel" tabindex="0" hidden></div>
+    <aside class="pane pane-panel" data-pane="panel" id="panePanel" aria-label="Node panel" hidden></aside>
+  </main>
+</div>
+<script src="/assets/d3.min.js"></script>
+<script src="/assets/marked.min.js"></script>
+<script type="module" src="/assets/v2/app.js"></script>
+</body>
+</html>

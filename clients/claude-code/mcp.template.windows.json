@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "atlas": {
+      "type": "http",
+      "url": "https://atlas.example.com/mcp/",
+      "headersHelper": "powershell -NoProfile -ExecutionPolicy Bypass -File \"%USERPROFILE%\\.config\\atlas\\atlas-mcp-headers.ps1\""
+    }
+  }
+}

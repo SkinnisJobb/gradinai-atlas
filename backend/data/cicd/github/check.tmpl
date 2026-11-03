@@ -1,0 +1,11 @@
+  @@ID@@:
+    # @@ROLE@@
+    name: @@ID@@
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+@@CONTINUE@@
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      # TODO(atlas): replace the next line with the project's @@LABEL@@ command.
+      - name: @@LABEL_Q@@
+        run: echo "TODO(atlas) @@LABEL@@ is not configured yet" && exit 1

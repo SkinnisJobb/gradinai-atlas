@@ -1,0 +1,889 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The product website (TASK-1463): served at "/" only when ATLAS_LANDING=v2; unset, "/" serves
+     frontend/landing.html exactly as before. Words: docs/site/content.md (v2), sources in
+     docs/site/sources.md.
+
+     Rules (ADR 0035 as amended by ADR 0049), checked by backend/verify_landing_v2.py:
+       * first-party only: every file this page loads is under /site/ on this origin, or the
+         public /favicon.ico. No CDN, font, analytics, widget or external image;
+       * no inline script, no inline style, no on*= handler, no style= attribute: the response's
+         Content-Security-Policy (routers/landing.PAGE_CSP) would refuse them anyway;
+       * everything the page says is in this file; landing.js only animates two pictures and
+         marks a picture that has not been drawn yet;
+       * no reflected input, no count of anything in a running install, no name of a project,
+         host, employer, customer or person. The demo's "Alex" is not printed here;
+       * served byte for byte (FileResponse), never templated.
+
+     The product name: "Atlas" in prose, always as that one word, never punned on, so a rename is
+     a find-and-replace of the word. {{PACKAGE_NAME}} and {{GITHUB_URL}} are placeholders until
+     the name and the public repository exist. -->
+<title>Atlas: a plan your agents work from</title>
+<meta name="description" content="Atlas is where a team and its AI agents plan and track the work together. People see the plan on the board; agents read and write the same plan through Atlas's MCP server, ask it for the context a task needs, and reach only their person's access plus any grants of their own. Self-hosted.">
+<meta name="referrer" content="same-origin">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="/site/landing.css">
+<script src="/site/landing.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/" aria-label="Atlas, home">
+      <svg class="brand-mark" viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false"><circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="16" cy="16" r="4" fill="currentColor"/></svg>
+      <span>Atlas</span>
+    </a>
+    <nav class="topnav" aria-label="Sections">
+      <a href="#plan">Plan</a>
+      <a href="#context">Context</a>
+      <a href="#access">Access</a>
+      <a href="#getting-started">Get started</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="cta" href="/auth/login">Log in</a>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- 1. Hero -->
+<section class="hero" aria-labelledby="hero-title">
+  <div class="wrap hero-grid">
+    <div class="hero-text">
+      <p class="eyebrow">Atlas, for teams that work with AI agents</p>
+      <h1 id="hero-title">A plan your agents work from. Context they can ask for. Access they cannot exceed.</h1>
+      <p class="lede">Atlas is where a team and its AI agents plan and track the work together: epics,
+        stories and tasks, each tied to the part of your systems it changes. People see the plan on
+        the board; agents read and write the same plan through Atlas's own MCP server, ask it for
+        exactly the context a task needs, and reach only their person's access plus any grants of
+        their own. It runs on your own server, starts with a map of itself, and you plan your work on
+        top of that map.</p>
+      <ul class="actions">
+        <li><a class="button primary" href="#getting-started">Install it</a></li>
+        <li><a class="button" href="/docs/">Read the handbook</a></li>
+        <li><a class="button" href="#open-source">Source on GitHub</a></li>
+        <li><a class="button quiet" href="/auth/login">Log in</a></li>
+      </ul>
+      <aside class="explain" aria-label="What is MCP?">
+        <p><strong>What is MCP?</strong> The Model Context Protocol is an open standard that lets an
+          AI assistant call tools on a server: "look this up", "file this task". Atlas ships an MCP
+          server, so any agent that speaks MCP can read and write Atlas directly.</p>
+      </aside>
+    </div>
+    <figure class="visual diagram hero-visual" id="hero-figure">
+      <picture>
+        <source media="(max-width: 700px)" srcset="/site/img/diagrams/hero-one-plan-narrow.svg" width="400" height="670">
+        <img src="/site/img/diagrams/hero-one-plan.svg" width="800" height="456" decoding="async"
+             alt="Three agents, each working for the same person, file task cards into one board: one epic lane with To do, In progress, Blocked and Done columns, every task assigned to that person. A blocked card shows red, a done card green. On the in-progress task an agent has proposed new acceptance criteria, which wait on the item for a person; the proposal goes to the person the task is assigned to, who approves it. Agents cannot assign work or approve their own criteria.">
+      </picture>
+      <figcaption>One plan, many agents: every agent works on the same board, and what only a person
+        may decide, such as an agent's proposed acceptance criteria, waits on the item for that person.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 2. The problem -->
+<section class="band" id="problem" aria-labelledby="problem-title">
+  <div class="wrap">
+    <h2 id="problem-title">The problem</h2>
+    <p class="intro">Working with several AI agents at once breaks the way most teams plan. Told plainly:</p>
+    <div class="split">
+      <div class="stack">
+        <div class="card">
+          <h3>The plan lives in five chat windows.</h3>
+          <p>You have three agent sessions open, each on its own piece. What each one is doing, and
+            what is finished, exists only in its own conversation. Nobody, including you, can see the whole.</p>
+        </div>
+        <div class="card">
+          <h3>Agents stop on questions, and the questions get lost.</h3>
+          <p>An agent reaches something only a person can decide and asks in its chat. If you are
+            looking at another window, the question waits there, unseen, and the work stops with it.</p>
+        </div>
+        <div class="card">
+          <h3>The to-do list and the systems drift apart.</h3>
+          <p>The description of your systems sits in a wiki, the work sits in a tracker, and within a
+            week they disagree. Nothing tells you which open work touches which part of the system.</p>
+        </div>
+        <div class="card">
+          <h3>Every new session starts from zero.</h3>
+          <p>Monday you explain how a service is put together and which rule nobody may break.
+            Tuesday a new session knows none of it.</p>
+        </div>
+        <div class="card">
+          <h3>Nobody can say who may see what.</h3>
+          <p>An agent given a shared key can read everything, and the log says "the bot did it", not
+            whose agent, with which access.</p>
+        </div>
+      </div>
+      <figure class="visual diagram">
+      <img src="/site/img/diagrams/problem-before-after.svg" width="400" height="694" loading="lazy" decoding="async"
+           alt="Before: five separate chat bubbles, each holding a task and a question mark, with nothing connecting them, so nobody sees the whole and a question waits unseen. After: the same five tasks as cards on one board with To do, In progress, Blocked and Done columns, each assigned to a person. Blocked work shows red, and a proposed change to one task&#39;s acceptance criteria waits on the item until a person approves or rejects it.">
+      <figcaption>Five chats, no plan; then one board, where what waits on a person waits on the item.</figcaption>
+    </figure>
+    </div>
+    <p class="punch">Atlas makes each of these a property of the tool rather than a habit people are asked to keep.</p>
+  </div>
+</section>
+<!-- 3. One plan -->
+<section class="band alt" id="plan" aria-labelledby="plan-title">
+  <div class="wrap">
+    <h2 id="plan-title">One plan: epic, story, task</h2>
+    <div class="split">
+      <div>
+        <p>Work in Atlas has three levels:</p>
+        <ul>
+          <li>an <strong>epic</strong> is a body of work with one outcome;</li>
+          <li>a <strong>story</strong> is a deliverable slice of it;</li>
+          <li>a <strong>task</strong> is one unit a person or an agent picks up.</li>
+        </ul>
+        <p>A level may be skipped but never repeated or turned upside down, and Atlas refuses a move
+          that would break that.</p>
+        <p>Each piece of work is tied to the one part of your systems it changes (Atlas calls this
+          link <strong>works on</strong>). A task under a story that works on the search service
+          works on it too, without saying so again. Select any part of the system and you see exactly
+          the work that touches it.</p>
+      </div>
+      <figure class="visual diagram">
+      <img src="/site/img/diagrams/hierarchy-tree.svg" width="400" height="612" loading="lazy" decoding="async"
+           alt="A three-level tree: one epic, Search by meaning, contains two stories, and each story contains two tasks. The epic has a solid works-on arrow to Search, a part of your system; the stories and tasks inherit that link, drawn dashed, unless one names its own. Below: a level may be skipped, such as a task directly under an epic, but a repeated or inverted level, such as a story under a story or an epic under a task, is refused.">
+      <figcaption>Epic, story, task, each tied to what it changes.</figcaption>
+    </figure>
+    </div>
+    <div class="split">
+      <div>
+        <p>What a piece of work carries:</p>
+        <ul>
+          <li><strong>acceptance criteria</strong>: the short list of statements that must be true
+            for it to count as done;</li>
+          <li>a <strong>result</strong>: what was actually delivered, kept apart from the
+            specification, so recording an outcome can never overwrite the plan;</li>
+          <li>a <strong>status</strong>, a <strong>priority</strong>, labels, and
+            <strong>dependencies</strong> ("this waits on that");</li>
+          <li>an <strong>assignee</strong>, which is always a person.</li>
+        </ul>
+        <p><strong>Work rolls up.</strong> Finish a task and its story, its epic and the system above
+          them all show the progress.</p>
+      </div>
+      <figure class="visual shot">
+        <picture>
+          <source media="(max-width: 600px)" srcset="/site/img/shots/backlog-view-390.png" width="390" height="520">
+          <img src="/site/img/shots/backlog-view.png" width="1440" height="900" loading="lazy" decoding="async"
+               alt="Screenshot of the work board&#39;s Backlog view for a demo epic: the epic, its stories and their tasks as an indented tree, each row with its status.">
+        </picture>
+        <figcaption>The work board&#39;s Backlog view: epic, story and task as a tree.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+<!-- 4. People and agents -->
+<section class="band" id="people-and-agents" aria-labelledby="people-title">
+  <div class="wrap split">
+    <div>
+      <h2 id="people-title">People and agents work the same plan</h2>
+      <p>There is one plan, and people and agents both work in it.</p>
+      <ul class="points">
+        <li><strong>An agent files work where it belongs.</strong> One call creates the item with its
+          parent, its link to the system, its dependencies and its acceptance criteria, in one step
+          that either happens completely or not at all. The server picks a task's number; an agent
+          cannot invent one.</li>
+        <li><strong>An agent works for a person.</strong> Work is assigned to people. An agent is its
+          own account linked to one person and works on that person's behalf; its MCP tools cannot
+          assign work.</li>
+        <li><strong>Everything is signed.</strong> Every change records the account that made it, and
+          the History tab on any item shows who changed what and on whose authority: a person, or a
+          named agent acting for a named person.</li>
+        <li><strong>Comments</strong> on work come from people and agents alike, each naming its author.</li>
+        <li><strong>Sessions end with a sign-off.</strong> One call lists everything an agent wrote
+          since a given time, with the steps for recording the session's work in the plan before the
+          chat is closed. An operator can switch it off.</li>
+      </ul>
+    </div>
+    <figure class="visual shot narrow">
+      <picture>
+        <source media="(max-width: 600px)" srcset="/site/img/shots/history-tab-390.png" width="390" height="520">
+        <img src="/site/img/shots/history-tab.png" width="960" height="1200" loading="lazy" decoding="async"
+             alt="Screenshot of the History tab on a demo task: entries made by a person, and entries made by that person&#39;s agent marked &#39;on behalf of&#39; the person, among them an acceptance proposal by the agent and its approval by the person.">
+      </picture>
+      <figcaption>Who did this: an agent's change names the person it works for.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 5. Decisions -->
+<section class="band alt" id="decisions" aria-labelledby="decisions-title">
+  <div class="wrap">
+    <h2 id="decisions-title">Decisions wait on a person, not in a chat</h2>
+    <p class="intro">Some things are kept for people on purpose, and Atlas enforces it rather than asking nicely.</p>
+    <div class="split">
+      <ul class="points">
+        <li><strong>Acceptance criteria.</strong> An agent can <em>propose</em> new or changed
+          acceptance criteria. The proposal appears on the item as a line-by-line comparison with the
+          current list, and only a signed-in person can approve or reject it. An agent that tries to
+          set the criteria directly is refused. Approving leaves two entries in the item&#39;s History:
+          the proposal, by the agent on behalf of its person, and the approval, by the person.</li>
+        <li><strong>Decision records.</strong> Larger decisions are kept as <strong>ADRs</strong>
+          (architecture decision records: short documents that say what was decided, why, and what
+          else was considered). They are searchable by people and agents, and listed on the project
+          they belong to. A decision drafted by an agent, for example from the setup interview, stays
+          <em>Proposed</em> until a person accepts it.</li>
+        <li><strong>Where to look.</strong> What waits on a person today is a pending acceptance
+          proposal, shown on the item it belongs to until someone approves or rejects it. Blocked work
+          shows red, and in a chain of dependencies the work queued behind the red item shows orange.
+          These colours are worked out from the plan, never painted by hand.</li>
+      </ul>
+      <figure class="visual diagram">
+      <img src="/site/img/diagrams/decide-approve.svg" width="400" height="652" loading="lazy" decoding="async"
+           alt="An agent proposes new acceptance criteria on a task. The proposal is stored and shown on the task as a line-by-line comparison: one line removed, one added, one unchanged, with Approve and Reject buttons. A person signed in on the board approves, and the list is replaced as that person&#39;s own edit; the History tab records the agent&#39;s proposal, made on the person&#39;s behalf, and the person&#39;s approval. The API refuses an agent&#39;s token two things: setting the criteria directly, and approving or rejecting a proposal.">
+      <figcaption>Agents propose, people decide.</figcaption>
+    </figure>
+    </div>
+    <div class="split">
+      <p class="roadmap-note"><strong>On the roadmap:</strong> a dedicated <em>decision</em> item, for a
+        question an agent cannot answer alone. It hangs under the work it concerns, the work waiting on
+        it points at it, it is always assigned to the person who must answer, and only that person (and
+        their own agents) can see it. An administrator can open someone else&#39;s decision only through a
+        separate, logged audit step that states its purpose. This design is agreed but not built yet.</p>
+      <figure class="visual shot narrow">
+        <picture>
+          <source media="(max-width: 600px)" srcset="/site/img/shots/proposal-overview-390.png" width="390" height="520">
+          <img src="/site/img/shots/proposal-overview.png" width="960" height="1200" loading="lazy" decoding="async"
+               alt="Screenshot of a demo story&#39;s Overview with a pending acceptance proposal: removed lines and added lines compared with the current list, and Approve and Reject buttons.">
+        </picture>
+        <figcaption>An agent&#39;s proposal, shown line by line, waiting for a person to approve or reject it.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+<!-- 6. The board -->
+<section class="band" id="board" aria-labelledby="board-title">
+  <div class="wrap">
+    <h2 id="board-title">The board</h2>
+    <p class="intro">The board is where the plan is visible at a glance. It has three panes side by
+      side, and a fourth you can open.</p>
+    <figure class="visual shot wide">
+      <picture>
+        <source media="(max-width: 600px)" srcset="/site/img/shots/board-whole-390.png" width="390" height="520">
+        <img src="/site/img/shots/board-whole.png" width="1440" height="900" loading="lazy" decoding="async"
+             alt="Screenshot of the whole board: the radial graph on the left with one part selected, and the work board in Board view with five status columns and two epic lanes. One card in Blocked is red; the card queued behind it is orange.">
+      </picture>
+      <figcaption>The plan at a glance: three panes, one scope. The red card is the next thing to do.</figcaption>
+    </figure>
+    <div class="split">
+      <ul class="points">
+        <li><strong>The graph</strong>: a radial picture of your systems, with each part's colour,
+          progress ring and count of things that need a look.</li>
+        <li><strong>The work board</strong>, showing the work for whatever you select in the graph,
+          and everything inside it. It has three views: <strong>Epics</strong> (one card per epic
+          with its progress), <strong>Board</strong> (columns by status, one lane per epic: Proposed,
+          To do, In progress, Blocked, Done; drag a card to change its status) and
+          <strong>Backlog</strong> (epic, story and task as a tree). Filter it to everyone's work,
+          your own, or what nobody holds yet.</li>
+        <li><strong>The node panel</strong>: one item's overview and acceptance criteria, its rules,
+          comments, history, documents, links, and on a project its decision records.</li>
+      </ul>
+      <div>
+        <p>Hover a card and the graph marks the system it works on; hover a system and the cards that
+          touch it light up.</p>
+        <p><strong>Attention, worked out for you.</strong> Each item's colour answers "do I need to
+          look at this?", the ring answers "how done is it?", and a badge counts what below needs a
+          look. In a chain of dependencies only one item is red: the one whose own dependencies are
+          done, which is the one to do next; the items queued behind it are orange.</p>
+      </div>
+    </div>
+
+    <figure class="visual scope-demo" id="scope-demo" data-selected="search">
+      <div class="scope-stage">
+        <div class="scope-graph" role="group" aria-label="Parts of the system">
+          <svg class="scope-links" viewBox="0 0 200 200" aria-hidden="true" focusable="false">
+            <line x1="100" y1="100" x2="100" y2="28"/>
+            <line x1="100" y1="100" x2="172" y2="100"/>
+            <line x1="100" y1="100" x2="100" y2="172"/>
+            <line x1="100" y1="100" x2="28" y2="100"/>
+          </svg>
+          <span class="scope-node centre" data-part="all">Atlas</span>
+          <button type="button" class="scope-node n-top" data-part="api" aria-pressed="false">API</button>
+          <button type="button" class="scope-node n-right" data-part="search" aria-pressed="true">Search</button>
+          <button type="button" class="scope-node n-bottom" data-part="mcp" aria-pressed="false">MCP server</button>
+          <button type="button" class="scope-node n-left" data-part="db" aria-pressed="false">Database</button>
+        </div>
+        <div class="scope-work">
+          <p class="scope-label" aria-live="polite">Showing the work on: <strong class="scope-current">Search</strong></p>
+          <ul class="scope-cards">
+            <li class="scope-card st-progress" data-part="search"><span class="st">In progress</span> Rank exact title matches first</li>
+            <li class="scope-card st-blocked" data-part="search"><span class="st">Blocked</span> Index acceptance criteria</li>
+            <li class="scope-card st-proposed" data-part="search"><span class="st">Proposed</span> Show a snippet with each hit</li>
+            <li class="scope-card st-todo is-out" data-part="api"><span class="st">To do</span> Add a route for labels</li>
+            <li class="scope-card st-done is-out" data-part="api"><span class="st">Done</span> Return 400 naming the field</li>
+            <li class="scope-card st-todo is-out" data-part="mcp"><span class="st">To do</span> Describe the new tool</li>
+            <li class="scope-card st-progress is-out" data-part="db"><span class="st">In progress</span> Add an index for search</li>
+          </ul>
+        </div>
+      </div>
+      <figcaption>Selecting scopes the work: select a part of the system and the work board narrows to
+        the work on it. The graph and the work are one thing seen two ways.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 7. My dashboard -->
+<section class="band alt" id="dashboard" aria-labelledby="dashboard-title">
+  <div class="wrap split">
+    <div>
+      <h2 id="dashboard-title">My dashboard: what is mine</h2>
+      <p>The dashboard is a pane you open when you want it, made of boxes. Today it has one:
+        <strong>My tasks</strong>, the open work assigned to you, in progress first, then by priority.
+        Click a row and the board selects that item.</p>
+      <p class="roadmap-note"><strong>On the roadmap:</strong> boxes for the decisions waiting on
+        you, and for the flow of work and what your agents are doing.</p>
+    </div>
+    <figure class="visual shot">
+      <picture>
+        <source media="(max-width: 600px)" srcset="/site/img/shots/my-tasks-390.png" width="390" height="520">
+        <img src="/site/img/shots/my-tasks.png" width="1440" height="900" loading="lazy" decoding="async"
+             alt="Screenshot of the dashboard pane open beside the graph, with a My tasks box listing a few demo tasks: one in progress at the top, the rest ordered by priority.">
+      </picture>
+      <figcaption>What is mine: your own open work, ordered for you, one click from the board.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 8. Starts with a map -->
+<section class="band" id="map" aria-labelledby="map-title">
+  <div class="wrap">
+    <h2 id="map-title">Atlas starts with a map of itself</h2>
+    <div class="split">
+      <div>
+        <p>A fresh install is not empty. It starts with a map of its own parts: the Atlas system and
+          one node for each part (the API, the MCP server, the database, the gateway, search and
+          retrieval), each with its documents. The handbook served at <code>/docs</code> is the
+          shipped text of those same documents, so a new install&#39;s board, its agents and the
+          handbook start out saying the same thing.</p>
+        <p>You plan your work on top of that map, and add the parts of your own systems beside it.
+          The map is ordinary content: you, or your agents on your behalf, can change it as the system
+          changes, and agents can keep it current with the same tools they use to file work. Your edits
+          show on the board and through MCP; the handbook at <code>/docs</code> keeps showing the
+          shipped text.</p>
+        <p><strong>Opt-in:</strong> a richer starting map. Set <code>ATLAS_SEED=self</code> before the
+          first start and the install begins with the world model Atlas keeps of itself: its parts,
+          their documents, the links between them and a reviewed set of rules, with no work items.</p>
+      </div>
+      <figure class="visual shot">
+        <picture>
+          <source media="(max-width: 600px)" srcset="/site/img/shots/fresh-seed-graph-390.png" width="390" height="520">
+          <img src="/site/img/shots/fresh-seed-graph.png" width="1440" height="900" loading="lazy" decoding="async"
+               alt="Screenshot of the graph on a fresh demo install before any work is added: the Atlas system node in the centre and its six parts around it.">
+        </picture>
+        <figcaption>A fresh install describes itself.</figcaption>
+      </figure>
+    </div>
+    <div class="split">
+      <aside class="explain" aria-label="What is a node?">
+        <p><strong>What is a node?</strong> Atlas keeps everything in one graph: a set of
+          <strong>nodes</strong> joined by labelled links (<strong>edges</strong>). Some nodes
+          describe <em>what exists</em> (a system, a service, a database); others describe
+          <em>what is being done</em> (epics, stories, tasks).</p>
+      </aside>
+      <figure class="visual diagram">
+      <img src="/site/img/diagrams/plan-on-top.svg" width="400" height="670" loading="lazy" decoding="async"
+           alt="A fresh install starts with a map of its own parts: the Atlas system node and six children, atlas-api, atlas-mcp, Search, atlas-postgres, atlas-gateway and the Retrieval add-on, each with its documents. Two epics of your own work sit on top, each with a works-on arrow to the part it changes. An agent edits one part&#39;s document with atlas_doc_write. The handbook at /docs is the shipped text of the same documents; edits made in your install show on the board and through MCP.">
+      <figcaption>You do not start from an empty page: the map is there, you plan on it, and agents can keep it current.</figcaption>
+    </figure>
+    </div>
+  </div>
+</section>
+<!-- 9. Going deeper: context -->
+<section class="band alt" id="context" aria-labelledby="context-title">
+  <div class="wrap">
+    <h2 id="context-title">Going deeper: context your agents can ask for</h2>
+    <p class="intro">The plan is half of it. The other half is that an agent never has to be told your systems again.</p>
+
+    <div class="split">
+      <div>
+        <h3>One call: "tell me about X"</h3>
+        <p>An agent asks in its own words, and gets one bounded answer: the best-matching nodes, what
+          sits around them, what would be affected by a change, the rules that apply, the decisions
+          that bear on them, and the documents to read next. Each part is a short list of pointers with
+          a cap on how many items it holds, and says when the cap cut it short; the answer also reports
+          its own total size in bytes. The agent reads the pointers first and opens the full text only
+          for what it needs, so a question costs little.</p>
+      </div>
+      <figure class="visual diagram">
+        <img src="/site/img/diagrams/context-ask-open.svg" width="400" height="680" loading="lazy" decoding="async"
+             alt="An agent asks one question, what touches search, with one call, atlas_context. The answer is six short lists of pointers: seeds (the best matches, cap 5), neighbourhood (what sits around them, cap 20), impact (what a change would affect, cap 20), intents (the rules that apply, cap 20), decisions (decision records, cap 5) and docs (documents to read next, cap 10). Each list has a cap and says when it was cut. The agent then opens one document with atlas_doc_read, and only that document&#39;s full text is returned.">
+        <figcaption>Ask, then open: one bounded call, pointers first, full text only on demand.</figcaption>
+      </figure>
+    </div>
+
+    <div class="split">
+      <div>
+        <h3>Search by words, and by meaning</h3>
+        <ul class="points">
+          <li><strong>Keyword search</strong> is built in, over names, descriptions, acceptance
+            criteria, results, labels, decision records and documents. It answers with pointers, not pages.</li>
+          <li><strong>Semantic search</strong> (search by meaning, not exact words) is an add-on you
+            switch on and point at an embeddings service of your choice; no model ships with Atlas, and
+            Atlas works fully without it.</li>
+          <li><strong>Hybrid search</strong> combines the two: it takes the keyword ranking and the
+            meaning ranking and merges them, so a result that does well on either rises. The "tell me
+            about X" call uses hybrid by default, and falls back to keyword search with a note when the
+            add-on is off.</li>
+        </ul>
+        <aside class="explain" aria-label="What is an embedding?">
+          <p><strong>What is an embedding?</strong> A list of numbers a language model computes for a
+            piece of text, so that texts with similar meaning get similar numbers. It lets a search for
+            "sign-in" find a document about "login".</p>
+        </aside>
+      </div>
+      <figure class="visual diagram">
+        <img src="/site/img/diagrams/search-merge.svg" width="400" height="676" loading="lazy" decoding="async"
+             alt="A search for sign-in. The keyword list ranks Sign-in page, Session cookie, Login service and Password rules; the meaning list ranks Login service, Sign-in page, SSO setup and Account recovery. Hybrid search merges them: each list adds one over sixty plus the rank to an item&#39;s score, so Sign-in page and Login service, found by both, rise to the top, followed by the rest. When the semantic add-on is off, the answer uses the keyword ranking only and says so with a note.">
+        <figcaption>Words and meaning, merged; and still useful when the add-on is off.</figcaption>
+      </figure>
+    </div>
+
+    <div class="split">
+      <div>
+        <h3>Rules that every part inherits</h3>
+        <p>A rule stated on a node is an <strong>intent</strong>: a constraint, a principle, a
+          non-goal or an outcome. State it once on a system and every part inside it is bound by it.
+          Rules roll <em>down</em> the way work rolls <em>up</em>. Agents are told to read the rules on
+          what they change, inherited ones included, before they change it, and the shipped agent guide
+          says to propose a change to a rule, not to make one.</p>
+      </div>
+      <figure class="visual diagram">
+        <img src="/site/img/diagrams/rules-down-work-up.svg" width="400" height="648" loading="lazy" decoding="async"
+             alt="Top: the Atlas system carries a rule, secrets are files, and its parts atlas-api and atlas-mcp carry the same rule, inherited: a rule stated once on a part binds every part inside it. Bottom: one of the two tasks in a story is done, so the story shows 1 of 2 items done and the epic 1 of 3; Search, the part the work is bound to, counts 1 of 4, and so does every part that contains it. Rules flow down, progress flows up, and neither is set by hand.">
+        <figcaption>Rules roll down, work rolls up.</figcaption>
+      </figure>
+    </div>
+
+    <div class="split">
+      <div>
+        <h3>Documents on nodes</h3>
+        <p>How a part works, how to operate it, why it was built that way: documents live on the node
+          they describe, with diagrams, and read the same on the board and through MCP. The handbook at
+          <code>/docs</code> is the shipped text of Atlas&#39;s own documents.</p>
+      </div>
+      <figure class="visual shot narrow">
+        <picture>
+          <source media="(max-width: 600px)" srcset="/site/img/shots/docs-tab-390.png" width="390" height="520">
+          <img src="/site/img/shots/docs-tab.png" width="1280" height="1600" loading="lazy" decoding="async"
+               alt="Screenshot of the Docs tab on one of Atlas's own parts: a rendered document with a diagram in it.">
+        </picture>
+        <figcaption>Documents live with the part they describe, and render diagrams.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- 10. Access -->
+<section class="band" id="access" aria-labelledby="access-title">
+  <div class="wrap">
+    <h2 id="access-title">Access they cannot exceed</h2>
+
+    <div class="split">
+      <div>
+        <h3>Every agent has its own key, and it never exceeds its person</h3>
+        <p>An agent is its own account, linked to a person. It signs in with its own token, never with
+          the person's password, and what it writes is recorded against the agent, and so against that
+          person. The token is limited by <strong>scope</strong> (read, write or admin), and the scope
+          caps the role the agent can act with. The agent reaches its person&#39;s access, plus any grants
+          of its own; it never takes on its person&#39;s role. Tokens expire, can be revoked at once, and are stored only as keyed fingerprints, so a copy of the
+          database gives an attacker no working key.</p>
+        <aside class="explain" aria-label="What is a scope?">
+          <p><strong>What is a scope?</strong> A label on a token that says what kind of action it may
+            take: <code>read</code> looks, <code>write</code> changes, <code>admin</code> deletes and
+            manages access.</p>
+        </aside>
+      </div>
+      <figure class="visual diagram">
+        <img src="/site/img/diagrams/agent-key.svg" width="400" height="714" loading="lazy" decoding="async"
+             alt="An agent holds its own token, with scopes read and write, an expiry, and the option to revoke it. The token is linked to its person. atlas-mcp passes the token on and holds no rules. atlas-api checks every call: the token is valid, not expired and not revoked; the scope allows the action; the agent sees what its person may see, plus anything granted to the agent itself; and the person is not disabled. When the person loses a project, the agent&#39;s next call no longer sees it. A token&#39;s scope caps its role: read to viewer, write to editor, admin to maintainer; no token acts as owner.">
+        <figcaption>The agent&#39;s own key: the API decides, and the agent never takes on its person&#39;s role.</figcaption>
+      </figure>
+    </div>
+
+    <div class="split">
+      <div>
+        <h3>Who may see what: projects, roles and sign-in</h3>
+        <p>In a team install, the <strong>project</strong> is the unit of access. Each person has a
+          role on a project: viewer, editor, maintainer or owner, each allowed a little more than the
+          one before. Roles can be given to <strong>groups</strong>, and those groups can come straight
+          from your company sign-in. A project can be shared or kept private. If you may not see
+          something, Atlas answers exactly as if it did not exist: no "access denied" that would confirm
+          it is there, and nothing hidden is counted in a total or a search.</p>
+        <aside class="explain" aria-label="What are RBAC, SSO and OIDC?">
+          <p><strong>What are RBAC, SSO and OIDC?</strong> <em>RBAC</em> (role-based access control)
+            means permissions come from the role you hold, not from a list kept per person.
+            <em>SSO</em> (single sign-on) means people sign in with the account they already have at
+            work. <em>OIDC</em> (OpenID Connect) is the standard that makes SSO work with providers such
+            as Microsoft Entra ID or Keycloak.</p>
+        </aside>
+      </div>
+      <figure class="visual diagram">
+        <img src="/site/img/diagrams/access-projects.svg" width="400" height="646" loading="lazy" decoding="async"
+             alt="A person signs in with the company account and belongs to a group that comes from sign-in. The group holds the editor role on project A, so the person can read and change its work, and the viewer role on project B, so the person can read but not change it. Project C is private and the person holds no role there: for them it does not exist, answered with a 404 like a missing page, never counted in a total and never found by search. The roles, each allowing a little more: viewer, editor, maintainer, owner.">
+        <figcaption>Access follows the structure: roles on projects, groups from sign-in, and hidden means absent.</figcaption>
+      </figure>
+    </div>
+
+    <div class="split">
+      <div>
+        <h3>Guardrails the agent cannot talk its way past</h3>
+        <p>The API, not the agent, enforces them: a read token cannot write; no token can grant roles
+          or mint another token; deleting through MCP is absent unless an operator turns it on, and then
+          needs the admin scope; approving acceptance criteria and accepting a decision record need a person.</p>
+      </div>
+      <figure class="visual diagram">
+        <img src="/site/img/diagrams/guardrails.svg" width="400" height="600" loading="lazy" decoding="async"
+             alt="Five things an agent might try, each refused by the API: a read-only token writing gets 403 forbidden, missing required scope write; an agent setting acceptance criteria gets 403 acceptance_is_not_yours_to_write; an agent approving a proposal gets 403 decision_needs_a_person; a token minting another token gets 403 session_required; and deleting through MCP has no tool at all unless an operator turns it on, and then needs the admin scope.">
+        <figcaption>Refused, not discouraged: the server enforces the rules, not the agent's good manners.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- 11. How it works -->
+<section class="band alt" id="how-it-works" aria-labelledby="how-title">
+  <div class="wrap split">
+    <div>
+      <h2 id="how-title">How it works</h2>
+      <ul class="points">
+        <li><strong>One graph in Postgres.</strong> Everything (the map, the work, rules, documents,
+          comments, history) is rows in one database. No file feeds it.</li>
+        <li><strong>One API decides.</strong> The board, the handbook, scripts and the MCP server all go
+          through the same API, and it checks every request itself. The MCP server holds no rules of
+          its own: it passes the agent's token on, and the API decides.</li>
+        <li><strong>Behind any gateway.</strong> Atlas works with its own bundled TLS front, your
+          reverse proxy, or an MCP gateway that gathers several tool servers behind one address. It
+          trusts no identity a proxy claims, so a misconfigured edge can refuse requests but cannot
+          widen anyone's access.</li>
+        <li><strong>One machine, one port.</strong> One Linux virtual machine with Docker, one published
+          <code>https://</code> port, every hop that carries a token encrypted.</li>
+      </ul>
+      <aside class="explain" aria-label="What is TLS?">
+        <p><strong>What is TLS?</strong> The encryption behind <code>https://</code>.</p>
+      </aside>
+    </div>
+    <figure class="visual diagram">
+      <img src="/site/img/diagrams/how-it-works.svg" width="400" height="638" loading="lazy" decoding="async"
+           alt="Three kinds of caller: the board in a browser, scripts using the REST API, and agents in any MCP client. All arrive through a front door you can swap: the bundled TLS ingress or your own reverse proxy, and for agents optionally an MCP gateway. Agents pass through atlas-mcp, which holds no rules. Everything reaches atlas-api, which runs one deny-by-default check on every request and knows a caller only by a session cookie or a Bearer token. Behind it, Postgres holds one graph. A forged header claiming to be admin is ignored; a misconfigured front can refuse requests but cannot widen access.">
+      <figcaption>One graph, one gate: everything goes through one check, and the edge cannot widen access.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 12. Roadmap -->
+<section class="band" id="roadmap" aria-labelledby="roadmap-title">
+  <div class="wrap">
+    <h2 id="roadmap-title">Ways forward (roadmap)</h2>
+    <div class="split">
+      <div>
+        <p class="intro">Everything in this section is <strong>not built yet</strong>. It is here because
+          it is agreed or being worked on, and the page says so.</p>
+        <ul class="points">
+          <li><strong>Decision items</strong> with private, per-person visibility and a logged audit
+            path (see <a href="#decisions">decisions</a>).</li>
+          <li><strong>More dashboard boxes</strong>: decisions waiting on you, the flow of work, what
+            agents are doing (see <a href="#dashboard">the dashboard</a>).</li>
+          <li><strong>A colour for "waiting on a human decision"</strong> on the board, reserved today
+            and not yet shown.</li>
+        </ul>
+        <p>The richer starting map that used to be listed here is built, as an opt-in (see
+          <a href="#map">the starting map</a>).</p>
+      </div>
+      <figure class="visual diagram">
+      <img src="/site/img/diagrams/roadmap.svg" width="400" height="520" loading="lazy" decoding="async"
+           alt="Built today: epics, stories and tasks; the board with graph, work board and panel; My tasks on the dashboard; agent-proposed acceptance; one-call context answers; hybrid search as an opt-in add-on; projects, roles and company sign-in; a starting map of Atlas itself; and a richer map with rules, as an opt-in. Next, agreed but not built: decision items private to one person, more dashboard boxes, and a colour for waiting on a person.">
+      <figcaption>Built, and next: honest about what exists today.</figcaption>
+    </figure>
+    </div>
+  </div>
+</section>
+<!-- 13. Who it is for -->
+<section class="band alt" id="who" aria-labelledby="who-title">
+  <div class="wrap">
+    <h2 id="who-title">Who it is for</h2>
+    <div class="cards three">
+      <div class="card">
+        <p><strong>A person or a small team running several AI agents at once</strong>, who wants one
+          plan those agents work from, with the questions only people can answer kept visible instead
+          of lost in a chat.</p>
+      </div>
+      <div class="card">
+        <p><strong>Teams that self-host.</strong> One Linux virtual machine with Docker; your data stays
+          in your Postgres database, on your server.</p>
+      </div>
+      <div class="card">
+        <p><strong>Teams at work, behind company sign-in.</strong> It signs people in through your
+          identity provider, maps directory groups onto project roles, keeps a security log, and exports
+          its audit trail for your security tooling.</p>
+      </div>
+    </div>
+    <p>It is probably not for you if you want a hosted service someone else runs, or a project tracker
+      with no interest in AI agents.</p>
+  </div>
+</section>
+
+<!-- 14. What you get -->
+<section class="band" id="features" aria-labelledby="features-title">
+  <div class="wrap">
+    <h2 id="features-title">What you get</h2>
+    <p class="intro">Every feature is one sentence. <span class="tag">Default</span> means on in a plain
+      install; <span class="tag opt">Opt-in</span> means you switch it on; <span class="tag prof">Install
+      profile</span> means the shipped work configuration (<code>deploy/oss/.env.example</code>) turns it
+      on while the code default is off.</p>
+    <div class="feature-grid">
+      <div class="feature-group">
+        <h3>Planning and orchestration</h3>
+        <ul>
+          <li><strong>Epics, stories and tasks</strong>, each tied to what it changes, with acceptance
+            criteria, a separate result, priority, labels and dependencies. <span class="tag">Default</span></li>
+          <li><strong>The board</strong>: graph, work board (Epics, Board and Backlog views) and node
+            panel. <span class="tag">Default</span></li>
+          <li><strong>Attention signals</strong> worked out from the plan; one red item in a dependency
+            chain. <span class="tag">Default</span></li>
+          <li><strong>My dashboard</strong> with a My tasks box. <span class="tag">Default, opened by
+            each person when wanted</span></li>
+          <li><strong>Agent-proposed acceptance</strong>, approved or rejected by a person on the board.
+            <span class="tag">Default</span></li>
+          <li><strong>History and comments</strong> on every item, each entry naming its author.
+            <span class="tag">Default</span></li>
+          <li><strong>Session sign-off</strong> for agents. <span class="tag">Default; can be switched off</span></li>
+          <li><strong>Panes in separate windows</strong>, for example the board on a second screen, kept
+            in step. <span class="tag">Default</span></li>
+        </ul>
+      </div>
+      <div class="feature-group">
+        <h3>Context for agents</h3>
+        <ul>
+          <li><strong>A starting map of Atlas itself</strong>, with its handbook as node documents.
+            <span class="tag">Default on a new install</span></li>
+          <li><strong>A richer starting map</strong>: Atlas&#39;s own world model with a reviewed set
+            of rules, no work (<code>ATLAS_SEED=self</code>). <span class="tag opt">Opt-in</span></li>
+          <li><strong>Documents on nodes</strong>, with diagrams. <span class="tag">Default</span></li>
+          <li><strong>Intents</strong> (rules) every part inside a node inherits. <span class="tag">Default</span></li>
+          <li><strong>Context answers</strong>: one bounded "tell me about X" call. <span class="tag">Default</span></li>
+          <li><strong>Keyword search</strong> answering with pointers. <span class="tag">Default</span></li>
+          <li><strong>Semantic and hybrid search</strong> through an embeddings service you choose.
+            <span class="tag opt">Opt-in</span></li>
+        </ul>
+      </div>
+      <div class="feature-group">
+        <h3>Decisions</h3>
+        <ul>
+          <li><strong>Decision records (ADRs)</strong> in a searchable registry, readable by agents.
+            <span class="tag">Default</span></li>
+          <li><strong>A setup guide</strong> that interviews whoever installed Atlas and records each
+            answer as a <em>Proposed</em> decision for a person to accept. <span class="tag opt">Opt-in (you run it)</span></li>
+        </ul>
+      </div>
+      <div class="feature-group">
+        <h3>MCP and agent tokens</h3>
+        <ul>
+          <li><strong>An MCP server</strong> with tools to read, search, file and update work, write
+            documents and rules, and comment. <span class="tag">Default</span></li>
+          <li><strong>One token per agent</strong>, linked to a person, scoped, expiring and revocable on
+            the next request. <span class="tag">Default</span></li>
+          <li><strong>Agents can sign in through your identity provider</strong> instead of a minted
+            token. <span class="tag opt">Opt-in</span></li>
+          <li><strong>A ready-made Claude Code pack</strong>: the connection template, a helper that
+            reads the token from a file so it never lands in a config file, and skills for working with
+            Atlas. <span class="tag">Default</span></li>
+          <li><strong>Deleting through MCP</strong> is absent unless an operator enables it, and then
+            needs admin. <span class="tag off">Off by default</span></li>
+        </ul>
+      </div>
+      <div class="feature-group">
+        <h3>Sign-in, groups and access</h3>
+        <ul>
+          <li><strong>Local accounts with passwords</strong>, checked against a list of known-breached
+            passwords. <span class="tag">Default</span></li>
+          <li><strong>Single sign-on (OIDC)</strong> with Entra ID, Keycloak or another OpenID provider,
+            with a break-glass password account. <span class="tag opt">Opt-in</span></li>
+          <li><strong>Directory groups</strong> synchronised at every sign-in, through an allow-list you
+            control. <span class="tag opt">Opt-in (with SSO)</span></li>
+          <li><strong>Project roles (RBAC)</strong> granted to people or groups. <span class="tag prof">Install profile</span></li>
+          <li><strong>Private by default</strong> projects. <span class="tag prof">Install profile</span></li>
+        </ul>
+      </div>
+      <div class="feature-group">
+        <h3>Audit</h3>
+        <ul>
+          <li><strong>Every change to the graph is recorded</strong> with the account that made it,
+            taken from the authenticated caller, never from the request. <span class="tag">Default</span></li>
+          <li><strong>Every sign-in and access change is recorded</strong> in a security log.
+            <span class="tag">Default</span></li>
+          <li><strong>Read audit</strong>: which agent read which node, when, without storing content or
+            search text. <span class="tag prof">Install profile</span></li>
+          <li><strong>Export</strong> of all audit trails as a stream for your security tooling.
+            <span class="tag">Default (owner only)</span></li>
+        </ul>
+      </div>
+      <div class="feature-group">
+        <h3>Operations</h3>
+        <ul>
+          <li><strong>TLS on every hop</strong> that carries a token; one published port. <span class="tag">Default</span></li>
+          <li><strong>Verified backups</strong>: each dump is restored into a scratch database and
+            checked before it counts. The command ships by default; scheduled backups are opt-in.
+            <span class="tag">Default</span> <span class="tag opt">Opt-in schedule</span></li>
+          <li><strong>Restore and rollback</strong> commands. <span class="tag">Default</span></li>
+          <li><strong>Upgrade</strong>: a schema step that only adds what is missing and is safe to run
+            twice. <span class="tag">Default</span></li>
+          <li><strong>Released images</strong> pinned by digest, or build from the checkout.
+            <span class="tag">Your choice</span></li>
+          <li><strong>An optional MCP gateway</strong> with a tool allow-list. <span class="tag opt">Opt-in</span></li>
+          <li><strong>Agent guardrails per environment</strong> as a checked matrix, exported as policy
+            files. <span class="tag opt">Opt-in</span></li>
+          <li><strong>A first CI/CD pipeline</strong> generated from that matrix. <span class="tag opt">Opt-in</span></li>
+          <li><strong>A settings panel</strong> that shows the owner every setting, its value and where it
+            comes from; changing safe ones from the board is opt-in. <span class="tag">Default</span>
+            <span class="tag opt">Opt-in changes</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 15. Security and operations -->
+<section class="band alt" id="security" aria-labelledby="security-title">
+  <div class="wrap">
+    <h2 id="security-title">Security and operations, in plain words</h2>
+    <ul class="points two-col">
+      <li><strong>It is yours.</strong> Self-hosted: one virtual machine, your database, your sign-in.
+        No hosted service behind it.</li>
+      <li><strong>It does not phone home.</strong> The base install opens no connection out of its own
+        networks once running, and the install test fails if anything tries. No analytics, no trackers.
+        Outbound traffic happens only for what you switch on: semantic search, sign-in through your
+        identity provider, and automatic public certificates if you choose that mode.</li>
+      <li><strong>The gate fails closed.</strong> Every route is behind one check that denies by
+        default, including routes added later. No switch turns it off and there is no default account.</li>
+      <li><strong>Secrets are files, not settings.</strong> The install reads every secret from a file
+        and refuses one given as an ordinary setting.</li>
+      <li><strong>A supply chain you can check.</strong> Images pinned by digest; an SBOM for every image
+        and lock; a scan fails the build on any fixable critical or high CVE; runtimes near end of life
+        fail it too.</li>
+      <li><strong>Honest limits.</strong> Atlas does not defend against someone with root on the host,
+        and it does not judge an agent's intent: an agent can do what its access allows. The controls
+        for that are narrow scopes, short expiry, instant revocation and the audit trail.</li>
+    </ul>
+    <aside class="explain" aria-label="What are SBOM and CVE?">
+      <p><strong>What are SBOM and CVE?</strong> An <em>SBOM</em> (software bill of materials) is a list
+        of every component and version inside a piece of software. A <em>CVE</em> is a publicly
+        catalogued security flaw. Together they let you answer "are we affected?" in minutes.</p>
+    </aside>
+  </div>
+</section>
+
+<!-- 16. Getting started -->
+<section class="band" id="getting-started" aria-labelledby="start-title">
+  <div class="wrap split">
+    <div>
+      <h2 id="start-title">Getting started</h2>
+      <p>What you need: a 64-bit Linux VM with Docker Engine and Docker Compose v2, 2 vCPU, 4 GiB of
+        memory (2 GiB minimum) and 20 GiB of disk plus room for backups; a DNS name; port 443 free.
+        Sized from a measured install run, not an estimate.</p>
+      <ol class="steps">
+        <li><strong>Clone and configure.</strong> Copy <code>deploy/oss/.env.example</code> to
+          <code>.env</code> and put your DNS name in it.</li>
+        <li><strong>Make the secrets and certificates</strong> with <code>scripts/init-secrets.sh</code>,
+          which never prints a secret. Or bring your own certificates.</li>
+        <li><strong>Start it</strong> with <code>docker compose up -d --build --wait</code>.</li>
+        <li><strong>Create the first owner</strong> with <code>atlas-admin user add &lt;name&gt; --role
+          owner</code>. It prints a temporary password, once.</li>
+        <li><strong>Sign in and set your password.</strong> Open your address, sign in with the
+          temporary password and choose your own: Atlas sends you to the change form first. The board
+          opens with Atlas&#39;s own map already there; file your first epic on top of it.</li>
+        <li><strong>Connect your agent.</strong> Mint a token into a file, point the Claude Code template
+          at your install, and add it. Any MCP client that can send a bearer token works the same way.</li>
+        <li><strong>Add what you need, when you need it (optional):</strong> the MCP gateway, semantic
+          search, single sign-on.</li>
+      </ol>
+      <p>INSTALL.md has nine sections: the prerequisites, then the required steps (configure, secrets,
+        start, first owner, connect Claude Code) and three optional ones (gateway, semantic retrieval,
+        single sign-on). Scheduled backups are set up after install, in the operations guide.</p>
+      <p>Full guide: <strong>INSTALL.md</strong> in the repository · Everything after install:
+        <a href="/docs/">the handbook at <code>/docs</code></a> · Every setting: <strong>CONFIG.md</strong>.</p>
+    </div>
+    <figure class="visual diagram">
+      <img src="/site/img/diagrams/getting-started.svg" width="400" height="712" loading="lazy" decoding="async"
+           alt="What you need: one Linux virtual machine with Docker, a DNS name and port 443 free. Then seven steps, each with its command: 1, clone and configure; 2, make secrets and certificates; 3, start it, docker compose up -d --build --wait; 4, create the first owner, atlas-admin user add; 5, open your address in a browser, sign in and set your password; 6, connect your agent; 7, optional, add the gateway, semantic search or single sign-on when you need them. The result is a working board with Atlas&#39;s own map already on it.">
+      <figcaption>Seven steps, one machine: install is short and ends on a working board.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- 17. Open source -->
+<section class="band alt" id="open-source" aria-labelledby="oss-title">
+  <div class="wrap">
+    <h2 id="oss-title">Open source</h2>
+    <ul class="points">
+      <li><strong>Licence:</strong> Apache-2.0.</li>
+      <li><strong>Package name:</strong> <code>{{PACKAGE_NAME}}</code> (placeholder until the rename
+        question is settled).</li>
+      <li><strong>Source:</strong> <code>{{GITHUB_URL}}</code> (placeholder; the public repository does
+        not exist yet).</li>
+      <li><strong>Contributions</strong> are welcome under the Developer Certificate of Origin (sign your
+        commits with <code>git commit -s</code>).</li>
+      <li><strong>Third-party code</strong> is vendored, unmodified and listed with its own licence in
+        <code>NOTICE</code>: D3 (ISC), marked and Mermaid (MIT).</li>
+    </ul>
+  </div>
+</section>
+
+<!-- 18. FAQ -->
+<section class="band" id="faq" aria-labelledby="faq-title">
+  <div class="wrap">
+    <h2 id="faq-title">FAQ</h2>
+    <div class="faq">
+      <h3>Does Atlas run my agents?</h3>
+      <p>No. Your agents run where they run today, in Claude Code or any MCP client. Atlas is the plan
+        they work from, the context they ask for and the gate on what they may touch.</p>
+      <h3>How do my agents and I share the work?</h3>
+      <p>Work is assigned to people. Your agent works on your behalf: it files and updates work,
+        comments, and proposes acceptance criteria; you approve, assign and decide. Every change shows
+        who made it.</p>
+      <h3>Does any of our data leave our network?</h3>
+      <p>Not with the base install, and the install test proves it. Semantic search and single sign-on
+        call out only to the services you configure for them.</p>
+      <h3>Which AI agents work with it?</h3>
+      <p>Any agent that speaks MCP and can send a bearer token. A ready-made pack is included for Claude
+        Code. Scripts can use the REST API directly.</p>
+      <h3>Can an agent see more than I can?</h3>
+      <p>Only what someone grants the agent itself. An agent reaches its person&#39;s access plus any
+        grants of its own, never its person&#39;s role, and its token&#39;s scope caps what it may do. Remove
+        the person&#39;s access and the agent loses it on its next call.</p>
+      <h3>Can we use our company sign-in?</h3>
+      <p>Yes, through OIDC (Microsoft Entra ID, Keycloak or any OpenID provider), with directory groups
+        mapped onto project roles and one break-glass account.</p>
+      <h3>What does it need to run?</h3>
+      <p>One Linux VM with Docker: 2 vCPU and 4 GiB of memory recommended, 2 GiB as the floor.</p>
+      <h3>How do we back it up and upgrade it?</h3>
+      <p>A backup command takes a dump and proves it restores before it counts; it can run on a
+        schedule. An upgrade is a new release, a rebuild and a schema step that never changes existing data.</p>
+      <h3>Who owns it, and can we change it?</h3>
+      <p>It is open source under Apache-2.0, so you may run, change and redistribute it under that licence.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <p class="footer-brand">Atlas</p>
+    <nav aria-label="Footer">
+      <a href="#getting-started">Install</a>
+      <a href="/docs/">Handbook</a>
+      <a href="/auth/privacy">Privacy</a>
+      <a href="/auth/login">Log in</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

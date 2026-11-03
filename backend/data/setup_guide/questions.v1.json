@@ -1,0 +1,300 @@
+{
+  "version": "1",
+  "about": "The setup guide's shipped question set (STORY-atlas-setup-guide-adrs). Data, read by setup_guide.py; an install adds its own topics through ATLAS_SETUP_QUESTIONS_FILE without editing this file. Topic and question ids, and option values, are a CONTRACT: other parts of Atlas read answers by `<topic>.<question>` (the guardrail matrix, the first CI/CD flow), so a new meaning gets a new id or a new version of this file, never a reused one. setup_guide.py's header lists the keys.",
+  "topics": [
+    {
+      "id": "guardrails",
+      "title": "Guardrails for agents",
+      "summary": "What agents may do on their own, where a person must approve, and who merges and deploys.",
+      "questions": [
+        {
+          "id": "agent_actions",
+          "type": "multi",
+          "prompt": "Which of these may an agent do without asking a person first?",
+          "options": [
+            {"value": "read", "label": "read code, documents and the backlog"},
+            {"value": "file_work", "label": "file and update work items"},
+            {"value": "write_docs", "label": "write documentation"},
+            {"value": "open_pr", "label": "push a branch and open a pull request"},
+            {"value": "merge", "label": "merge a pull request"},
+            {"value": "deploy_nonprod", "label": "deploy to a non-production environment"},
+            {"value": "deploy_prod", "label": "deploy to production"},
+            {"value": "change_config", "label": "change server or service configuration"}
+          ]
+        },
+        {
+          "id": "approval_gates",
+          "type": "multi",
+          "prompt": "Which of these always need a person's explicit approval, whoever performs them?",
+          "options": [
+            {"value": "merge", "label": "merging to the main branch"},
+            {"value": "deploy_nonprod", "label": "deploying to a non-production environment"},
+            {"value": "deploy_prod", "label": "deploying to production"},
+            {"value": "schema_change", "label": "a database schema change"},
+            {"value": "acceptance_change", "label": "changing a work item's acceptance criteria"},
+            {"value": "secret_change", "label": "adding, rotating or revoking a secret"},
+            {"value": "access_change", "label": "changing who may see or do what"}
+          ]
+        },
+        {
+          "id": "who_merges",
+          "type": "choice",
+          "prompt": "Who merges a pull request?",
+          "options": [
+            {"value": "human_only", "label": "only a person"},
+            {"value": "agent_after_approval", "label": "an agent, after a person has approved it"},
+            {"value": "agent_when_green", "label": "an agent, once every required check is green"}
+          ]
+        },
+        {
+          "id": "who_deploys",
+          "type": "choice",
+          "prompt": "Who deploys to production?",
+          "options": [
+            {"value": "human_only", "label": "only a person"},
+            {"value": "agent_after_approval", "label": "an agent, after a person has approved it"},
+            {"value": "pipeline_on_merge", "label": "the pipeline, automatically after a merge"}
+          ]
+        },
+        {
+          "id": "notes",
+          "type": "text",
+          "required": false,
+          "prompt": "Anything else an agent must never do, or must always ask about?"
+        }
+      ],
+      "adr": {
+        "title": "Guardrails for agents",
+        "context": "Agents work in this organisation's repositories and services. Without a recorded rule, each agent decides for itself what it may do alone, and a person finds out afterwards.",
+        "decision": "Agents may do the following without asking: {agent_actions}. These always need a person's explicit approval: {approval_gates}. Who merges a pull request: {who_merges}. Who deploys to production: {who_deploys}. Further rules: {notes}.",
+        "consequences": "An agent asks before anything outside the allowed list, and stops at every approval gate even when it could technically continue. Changing these rules is a new answer in the setup guide, which records a new decision superseding this one."
+      }
+    },
+    {
+      "id": "cicd",
+      "title": "Continuous integration and delivery",
+      "summary": "Where checks run, which of them block a merge, and what starts a deploy.",
+      "questions": [
+        {
+          "id": "ci_platform",
+          "type": "choice",
+          "prompt": "Where do automated checks run?",
+          "options": [
+            {"value": "github_actions", "label": "GitHub Actions"},
+            {"value": "gitlab_ci", "label": "GitLab CI"},
+            {"value": "jenkins", "label": "Jenkins"},
+            {"value": "azure_pipelines", "label": "Azure Pipelines"},
+            {"value": "other", "label": "another CI service"},
+            {"value": "none", "label": "nowhere yet"}
+          ]
+        },
+        {
+          "id": "checks",
+          "type": "multi",
+          "prompt": "Which checks run on a change?",
+          "options": [
+            {"value": "build", "label": "build"},
+            {"value": "unit_tests", "label": "unit tests"},
+            {"value": "integration_tests", "label": "integration tests"},
+            {"value": "lint", "label": "lint and formatting"},
+            {"value": "type_check", "label": "type checking"},
+            {"value": "sast", "label": "static security analysis"},
+            {"value": "dependency_scan", "label": "dependency vulnerability scan"},
+            {"value": "secret_scan", "label": "secret scanning"}
+          ]
+        },
+        {
+          "id": "gates",
+          "type": "multi",
+          "prompt": "Which of those checks must pass before a change can merge?",
+          "options": [
+            {"value": "build", "label": "build"},
+            {"value": "unit_tests", "label": "unit tests"},
+            {"value": "integration_tests", "label": "integration tests"},
+            {"value": "lint", "label": "lint and formatting"},
+            {"value": "type_check", "label": "type checking"},
+            {"value": "sast", "label": "static security analysis"},
+            {"value": "dependency_scan", "label": "dependency vulnerability scan"},
+            {"value": "secret_scan", "label": "secret scanning"}
+          ]
+        },
+        {
+          "id": "deploy_trigger",
+          "type": "choice",
+          "prompt": "What starts a deploy to production?",
+          "options": [
+            {"value": "manual", "label": "a person starts it by hand"},
+            {"value": "on_merge", "label": "a merge to the main branch"},
+            {"value": "on_tag", "label": "a release tag"},
+            {"value": "scheduled", "label": "a schedule"}
+          ]
+        }
+      ],
+      "adr": {
+        "title": "Continuous integration and delivery",
+        "context": "Agents and people both change code here, and both need to know which checks judge a change and which of them can stop it.",
+        "decision": "Where checks run: {ci_platform}. The checks a change runs: {checks}. The checks that must pass before it merges: {gates}. What starts a production deploy: {deploy_trigger}.",
+        "consequences": "A change is not done until its gating checks are green, and a check that is not a gate is information, not a blocker. The first pipeline can be generated from these answers."
+      }
+    },
+    {
+      "id": "environments",
+      "title": "Environments",
+      "summary": "The environments this organisation runs, by its own names.",
+      "questions": [
+        {
+          "id": "names",
+          "type": "text",
+          "prompt": "Which environments do you run? Give your own names, comma-separated, from the least to the most protected (for example: dev, test, prod)."
+        },
+        {
+          "id": "production",
+          "type": "text",
+          "prompt": "Which of those names is production?"
+        },
+        {
+          "id": "promotion",
+          "type": "choice",
+          "prompt": "How does a change reach production?",
+          "options": [
+            {"value": "sequential", "label": "through every environment in order"},
+            {"value": "independent", "label": "each environment is deployed on its own"}
+          ]
+        }
+      ],
+      "adr": {
+        "title": "Environments",
+        "context": "Rules about deploying and approving are written per environment, so the environments need names everyone, people and agents, uses the same way.",
+        "decision": "The environments are, from the least to the most protected: {names}. Production is {production}. How a change reaches production: {promotion}.",
+        "consequences": "Guardrails and pipelines name these environments and no others. Adding or renaming one is a new answer, which supersedes this decision."
+      }
+    },
+    {
+      "id": "identity",
+      "title": "Identity and access",
+      "summary": "How people sign in, and whether access is decided per project.",
+      "questions": [
+        {
+          "id": "login",
+          "type": "choice",
+          "prompt": "How do people sign in to Atlas?",
+          "options": [
+            {"value": "local", "label": "Atlas's own accounts and passwords"},
+            {"value": "oidc", "label": "the organisation's identity provider (OIDC single sign-on)"},
+            {"value": "both", "label": "single sign-on, with local accounts kept for break-glass"}
+          ]
+        },
+        {
+          "id": "rbac",
+          "type": "choice",
+          "prompt": "Should access be decided per project, with roles?",
+          "options": [
+            {"value": "off", "label": "no: every signed-in person sees what is shared"},
+            {"value": "projects", "label": "yes: roles on projects"}
+          ]
+        },
+        {
+          "id": "default_visibility",
+          "type": "choice",
+          "prompt": "Is a new project visible to everyone, or only to the people given a role on it?",
+          "options": [
+            {"value": "shared", "label": "visible to everyone"},
+            {"value": "private", "label": "only to people with a role on it"}
+          ]
+        }
+      ],
+      "adr": {
+        "title": "Identity and access",
+        "context": "Who can sign in, and what each person and their agents can see, has to be decided before people start working in Atlas.",
+        "decision": "How people sign in: {login}. Access per project: {rbac}. A new project is: {default_visibility}.",
+        "consequences": "The install's identity and access settings follow this decision; an agent acts with its person's access, never more. Changing it is a new answer, which supersedes this decision."
+      }
+    },
+    {
+      "id": "secrets",
+      "title": "Secrets handling",
+      "summary": "Where secrets live, and what an agent may do with them.",
+      "questions": [
+        {
+          "id": "storage",
+          "type": "choice",
+          "prompt": "Where are secrets kept?",
+          "options": [
+            {"value": "files", "label": "files readable only by the service that needs them"},
+            {"value": "vault", "label": "a secrets vault"},
+            {"value": "cloud_secret_manager", "label": "a cloud provider's secret manager"},
+            {"value": "ci_secrets", "label": "the CI service's secret store"},
+            {"value": "other", "label": "somewhere else"}
+          ]
+        },
+        {
+          "id": "agent_access",
+          "type": "choice",
+          "prompt": "What may an agent do with a secret?",
+          "options": [
+            {"value": "never", "label": "nothing: agents never handle secrets"},
+            {"value": "path_only", "label": "pass a secret's path to a tool, never read the value"},
+            {"value": "scoped", "label": "read a secret scoped to its own task"}
+          ]
+        },
+        {
+          "id": "rotation",
+          "type": "choice",
+          "prompt": "When are secrets rotated?",
+          "options": [
+            {"value": "manual", "label": "by hand, when someone decides to"},
+            {"value": "scheduled", "label": "on a schedule"},
+            {"value": "on_incident", "label": "after a suspected leak"}
+          ]
+        }
+      ],
+      "adr": {
+        "title": "Secrets handling",
+        "context": "Agents run commands and write files, so a secret handled carelessly ends up in a log, a transcript or a repository.",
+        "decision": "Where secrets are kept: {storage}. What an agent may do with a secret: {agent_access}. When secrets are rotated: {rotation}.",
+        "consequences": "No secret is written into a repository, a command line, a work item or Atlas. Changing the rule is a new answer, which supersedes this decision."
+      }
+    },
+    {
+      "id": "work_hierarchy",
+      "title": "Work hierarchy",
+      "summary": "How work is broken down, and who files and judges it.",
+      "questions": [
+        {
+          "id": "levels",
+          "type": "choice",
+          "prompt": "How is work broken down?",
+          "options": [
+            {"value": "epic_story_task", "label": "epics contain stories, stories contain tasks"},
+            {"value": "story_task", "label": "stories contain tasks"},
+            {"value": "task_only", "label": "tasks only"}
+          ]
+        },
+        {
+          "id": "who_files",
+          "type": "multi",
+          "prompt": "Who files work items?",
+          "options": [
+            {"value": "people", "label": "people"},
+            {"value": "agents", "label": "agents"}
+          ]
+        },
+        {
+          "id": "acceptance",
+          "type": "choice",
+          "prompt": "Who decides a work item's acceptance criteria?",
+          "options": [
+            {"value": "people", "label": "a person writes them"},
+            {"value": "agent_proposes", "label": "an agent proposes them and a person approves"}
+          ]
+        }
+      ],
+      "adr": {
+        "title": "Work hierarchy",
+        "context": "People and agents file work in the same backlog, so they need one way to break it down and one rule for who judges it.",
+        "decision": "How work is broken down: {levels}. Who files work items: {who_files}. Who decides acceptance criteria: {acceptance}.",
+        "consequences": "The board and the agents use this breakdown. Changing it is a new answer, which supersedes this decision."
+      }
+    }
+  ]
+}

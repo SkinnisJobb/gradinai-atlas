@@ -1,0 +1,7 @@
+{
+  "_about": "An example config for tools/adr_sync.py (ADR 0045). Copy it, list your own repos, and pass it with --config PATH or the ATLAS_ADR_SOURCES environment variable. One entry per repo whose docs/adr/ feeds the Atlas ADR registry. `dir` is the checkout's folder name under --root (default: the folder that holds this repo). `project` is the Atlas node the ADRs hang off and whose visibility governs them. `prefix` makes the per-project id (MP001): 2-4 capital letters, unique across this list, and FIXED once applied, because the API refuses to change a project's prefix. `github` is owner/repo, for the link on the board.",
+  "repos": [
+    {"dir": "my-repo",    "project": "my-project",    "prefix": "MP", "github": "owner/repo"},
+    {"dir": "other-repo", "project": "other-project", "prefix": "OP", "github": "owner/other-repo"}
+  ]
+}

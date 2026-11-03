@@ -1,0 +1,64 @@
+# TLS terminator for the Atlas LAN origin (TASK-964).
+#
+# The whole reason this exists: the Atlas session cookie is `__Host-` prefixed,
+# which REQUIRES the Secure attribute, and Secure cookies are never sent over
+# plain HTTP. So http://<server-lan-ip>:8095 cannot carry a login at all — a
+# browser would accept the form, silently drop the cookie, and loop back to the
+# login page with no error. backend/auth.py says it outright: "Do NOT 'fix' a
+# cookie that fails to appear by dropping Secure." This is the fix instead.
+#
+# Certificates come from ACME DNS-01 (see the Dockerfile for why that is the
+# only option for a private-IP host).
+
+{
+	# No admin API. It is unauthenticated on localhost by default, and this
+	# container's whole job is to sit in front of an authenticated app.
+	admin off
+}
+
+{$CADDY_SITE} {
+	tls {
+		dns cloudflare {env.CF_DNS_API_TOKEN}
+		# Resolve the challenge against public resolvers rather than the
+		# container's. The LAN resolver answers authoritatively for this zone's
+		# names and would make Caddy's self-check fail while the record is
+		# perfectly correct at Cloudflare.
+		resolvers 1.1.1.1 8.8.8.8
+	}
+
+	encode gzip
+
+	reverse_proxy {$CADDY_UPSTREAM} {
+		# Strip Cloudflare Access identity headers arriving from the LAN side.
+		# Atlas never reads them — it authenticates for itself, which is exactly
+		# why the forged-header privilege escalation does not exist here — but a
+		# proxy that forwards attacker-settable auth headers is one refactor away
+		# from mattering. Cheap, permanent.
+		header_up -Cf-Access-Jwt-Assertion
+		header_up -Cf-Access-Authenticated-User-Email
+		header_up -Cf-Access-Client-Id
+		header_up -Cf-Access-Client-Secret
+
+		# Tell the app who the real LAN client is.
+		#
+		# The app reads `CF-Connecting-IP` and DELIBERATELY never reads
+		# `X-Forwarded-For` (passwords.py: "on the LAN vhost nothing legitimately
+		# sets it"), because X-Forwarded-For is trivially forged and append-only.
+		# So Caddy sets CF-Connecting-IP itself, from the actual socket peer.
+		#
+		# `header_up` REPLACES rather than appends, so a LAN client sending its own
+		# CF-Connecting-IP cannot smuggle a false address past this. Without this
+		# line every LAN request is attributed to Caddy's own container address and
+		# the per-IP rate limit degrades into a global one — measured on 2026-07-31
+		# (TASK-971), where auth_event recorded one docker bridge address (172.18.0.x) for every LAN attempt.
+		#
+		# Only believed because atlas-api trusts this container's network via
+		# ATLAS_TRUSTED_PROXY_CIDRS. The public path does not pass through here —
+		# cloudflared talks to atlas-api directly and forwards Cloudflare's own
+		# CF-Connecting-IP.
+		header_up CF-Connecting-IP {remote_host}
+
+		# Atlas builds only RELATIVE redirects (auth.py), so no scheme rewriting
+		# is needed.
+	}
+}

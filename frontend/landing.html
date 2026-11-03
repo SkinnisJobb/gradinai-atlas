@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The public landing page (ADR 0035). Same posture as frontend/login.html's own
+     comment block, and for the same reasons — this is the first thing an anonymous
+     request on the open internet can reach at "/", so it carries, deliberately and
+     permanently:
+       * NO script element of any kind;
+       * NO third-party request — no font, no CDN, no analytics beacon. The only
+         "asset" this page needs is the inline favicon below (a data: URI), so
+         nothing under /assets/ has to become public to serve it;
+       * NO reflected input of any kind — this file is served byte-for-byte via
+         FileResponse (backend/app.py), never templated, never substituted;
+       * NO count of anything in the running system (AGENTS.md: "never write a
+         count a query could answer" — doubly true on a page nobody comes back to
+         fix), and no project, host, IP address, employer system or person named.
+
+     This page IS meant to be indexed — unlike login.html it carries no
+     `noindex`, on purpose: it is the public description of the product, not a
+     credential form.
+
+     House rules that also apply here (AGENTS.md): every font-size is
+     calc(<N>px * var(--ui-scale)); no arrow function, no const/let, no template
+     literal — trivially satisfied by a page with no script at all. -->
+<title>Atlas &middot; a graph for your systems and the work on them</title>
+<meta name="description" content="Atlas holds what a system is made of and the work being done on it in one graph, instead of a wiki next to a ticket tracker. Map what exists, track work against any part of it, and see both at whatever level of detail you need.">
+<meta name="referrer" content="same-origin">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%2335699f' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%2335699f'/%3E%3C/svg%3E">
+<style>
+  /*
+    Palette echoes frontend/board.css's custom properties (light/dark pair,
+    --accent, --ink family) but is copied rather than linked — a stylesheet
+    request would be an external request, and this page must make none.
+
+    The CTA colour is new here and deliberate: the owner asked for the Log-in
+    button to read as high-contrast ORANGE against a product that is
+    otherwise very blue (--accent below). #b54708 was chosen and checked
+    against both things it sits next to:
+      - white label text on #b54708            -> 5.43:1  (passes WCAG AA
+        4.5:1 for normal-size text, in EITHER theme, since the button itself
+        does not change colour with the theme)
+      - #b54708 against the light --ground (#eef1f5)  -> 4.79:1
+      - #b54708 against the dark  --ground (#10141a)  -> 3.41:1
+      - #b54708 against the dark  --panel  (#191f27)  -> 3.06:1
+    all >= 3:1, so the button reads as a distinct shape against the bar it
+    sits in as well as carrying a legible label. The hover colour is DARKER
+    than the resting one (not lighter, the more common hover idiom) precisely
+    because lightening it would push the white-label ratio toward AA's
+    4.5:1 floor rather than away from it (checked: a lighter hover measured
+    4.44:1, i.e. FAILING) — darkening moves the same label to 6.81:1 instead.
+  */
+  :root {
+    --ground: #eef1f5; --panel: #ffffff; --panel-2: #f7f9fb;
+    --ink: #1b2531; --ink-soft: #56626f; --ink-faint: #8a94a1;
+    --line: #dde2e9; --line-strong: #cbd2dc;
+    --accent: #35699f;
+    --cta: #b54708; --cta-ink: #ffffff; --cta-hover: #9c3d06;
+    --shadow: 0 1px 2px rgba(20,32,48,.04), 0 6px 20px rgba(20,32,48,.06);
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, monospace;
+    /* No script on this page to restore a stored --ui-scale, so it is authored
+       at the fixed 1.0 baseline — same reasoning as frontend/login.html. */
+    --ui-scale: 1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #10141a; --panel: #191f27; --panel-2: #151a21;
+      --ink: #e7ebf1; --ink-soft: #9aa5b3; --ink-faint: #6d7783;
+      --line: #29313b; --line-strong: #363f4a;
+      --accent: #6ea0dc;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.32);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--font-sans); font-size: calc(15px * var(--ui-scale));
+    line-height: 1.6;
+  }
+  a { color: var(--accent); }
+  .skip-link {
+    position: absolute; left: -999px; top: auto;
+    background: var(--panel); color: var(--ink); padding: 8px 14px;
+    border-radius: 8px; border: 1px solid var(--line-strong);
+  }
+  .skip-link:focus { left: 12px; top: 12px; z-index: 10; }
+
+  /* ---------- top bar: brand left, short nav centre, Log in hard right --- */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 14px clamp(16px, 4vw, 40px);
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .brand {
+    display: flex; align-items: center; gap: 9px; flex: none;
+    font-family: var(--font-mono); font-size: calc(13px * var(--ui-scale));
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink);
+    font-weight: 700; white-space: nowrap;
+  }
+  .brand .dot {
+    width: 11px; height: 11px; border-radius: 50%; flex: none;
+    background: var(--accent);
+  }
+  .topbar nav {
+    display: flex; gap: 22px; flex-wrap: wrap;
+    font-size: calc(13.5px * var(--ui-scale)); color: var(--ink-soft);
+  }
+  .topbar nav a { text-decoration: none; color: inherit; }
+  .topbar nav a:hover, .topbar nav a:focus-visible { color: var(--ink); }
+  .cta {
+    flex: none; display: inline-block; text-decoration: none;
+    padding: 9px 20px; border-radius: 999px;
+    background: var(--cta); color: var(--cta-ink);
+    font-family: var(--font-sans); font-size: calc(14px * var(--ui-scale));
+    font-weight: 700; letter-spacing: .02em; border: 1px solid var(--cta);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .cta { transition: background-color .15s ease, transform .1s ease; }
+    .cta:hover { transform: translateY(-1px); }
+  }
+  .cta:hover { background: var(--cta-hover); border-color: var(--cta-hover); }
+  .cta:focus-visible {
+    outline: 2px solid var(--ink); outline-offset: 2px;
+  }
+  @media (max-width: 700px) {
+    .topbar nav { display: none; }
+  }
+
+  /* ---------- page body -------------------------------------------------- */
+  .wrap { max-width: min(980px, 92vw); margin: 0 auto; padding: clamp(28px, 6vw, 64px) 0 60px; }
+  .eyebrow {
+    font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-scale));
+    letter-spacing: .16em; text-transform: uppercase; color: var(--accent); font-weight: 700;
+  }
+  h1 {
+    margin: 10px 0 0; font-size: clamp(calc(26px * var(--ui-scale)), calc(4.4vw * var(--ui-scale)), calc(42px * var(--ui-scale)));
+    line-height: 1.12; letter-spacing: -.02em; font-weight: 720;
+  }
+  .lede {
+    margin: 16px 0 0; max-width: 62ch; color: var(--ink-soft);
+    font-size: clamp(calc(15px * var(--ui-scale)), calc(1.6vw * var(--ui-scale)), calc(18px * var(--ui-scale)));
+  }
+  .lede strong { color: var(--ink); font-weight: 650; }
+
+  .features {
+    margin: clamp(36px, 6vw, 56px) 0 0; display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 18px;
+  }
+  .feature {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: var(--shadow); padding: 20px 22px;
+  }
+  .feature h2 {
+    margin: 0 0 8px; font-size: calc(16.5px * var(--ui-scale)); letter-spacing: -.01em;
+  }
+  .feature p {
+    margin: 0; color: var(--ink-soft); font-size: calc(14px * var(--ui-scale));
+  }
+
+  .who {
+    margin: clamp(40px, 6vw, 64px) 0 0; padding: 22px 24px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px;
+  }
+  .who h2 { margin: 0 0 8px; font-size: calc(17px * var(--ui-scale)); }
+  .who p { margin: 0; color: var(--ink-soft); font-size: calc(14.5px * var(--ui-scale)); max-width: 68ch; }
+
+  footer {
+    border-top: 1px solid var(--line); margin-top: clamp(40px, 6vw, 64px);
+    padding: clamp(20px, 4vw, 40px) clamp(16px, 4vw, 40px);
+    display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center;
+    color: var(--ink-faint); font-size: calc(12.5px * var(--ui-scale));
+  }
+  footer a { color: var(--ink-soft); }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="topbar">
+  <div class="brand"><span class="dot" aria-hidden="true"></span>Atlas</div>
+  <nav aria-label="Page sections">
+    <a href="#capabilities">What you can do</a>
+    <a href="#who">Who it's for</a>
+    <a href="/auth/privacy">Privacy</a>
+  </nav>
+  <a class="cta" href="/auth/login">Log in</a>
+</header>
+
+<main id="main" class="wrap">
+  <p class="eyebrow">Project Atlas</p>
+  <h1>One graph for your systems, and everything left to do to them.</h1>
+  <p class="lede">
+    Most teams keep a description of their systems in one place and the list of
+    work against them in another, and the two drift apart within a week.
+    Atlas holds both as <strong>one graph</strong>: what exists, how it's
+    organised, and every open piece of work bound to the part of it that
+    changes &mdash; at whatever level of detail you need, from the whole
+    system down to one small part of it.
+  </p>
+
+  <section id="capabilities" class="features" aria-label="What you can do with Atlas">
+    <article class="feature">
+      <h2>Map what you're actually running</h2>
+      <p>
+        Build a picture of your systems piece by piece, as deep as it needs
+        to go, and keep it as one live structure instead of a document that
+        only describes it. See what's healthy and what needs attention at a
+        glance, or drop into one part and see nothing but what's relevant
+        there.
+      </p>
+    </article>
+    <article class="feature">
+      <h2>Track work against any part of it</h2>
+      <p>
+        File work as epics, stories and tasks, each bound to the part of the
+        system it actually changes. Closing a task updates the story above
+        it, the epic above that, and the system it all belongs to &mdash;
+        automatically, with no second board to keep in sync by hand.
+      </p>
+    </article>
+    <article class="feature">
+      <h2>See only what's yours</h2>
+      <p>
+        A personal view pulled from the same graph everyone else works from:
+        every open item assigned to you, wherever in the system it lives,
+        without having to go looking for it project by project.
+      </p>
+    </article>
+    <article class="feature">
+      <h2>State a purpose once, everywhere it applies</h2>
+      <p>
+        Attach a durable statement of intent, a constraint or a rule to any
+        part of the system, and every piece underneath it inherits it
+        automatically. Say it once at the right level instead of repeating
+        it on every child that needs to know.
+      </p>
+    </article>
+    <article class="feature">
+      <h2>Share what makes sense, keep the rest private</h2>
+      <p>
+        Open a system to everyone you work with, or keep it private and hand
+        out access one person at a time. Access follows the structure, so
+        granting a whole system grants everything inside it in one step.
+      </p>
+    </article>
+    <article class="feature">
+      <h2>Let an agent work the same graph you do</h2>
+      <p>
+        Give an automated agent its own credential instead of sharing yours.
+        It sees exactly what the person behind it is allowed to see &mdash;
+        never more &mdash; and reads and writes through the same interface a
+        person would, so nothing it does happens out of sight.
+      </p>
+    </article>
+    <article class="feature">
+      <h2>Know who changed what, and when</h2>
+      <p>
+        Every change to the graph and every sign-in is recorded, so you can
+        look back at the history of a system or a piece of work without
+        having to ask around for it.
+      </p>
+    </article>
+  </section>
+
+  <section id="who" class="who" aria-label="Who Atlas is for">
+    <h2>Who it's for</h2>
+    <p>
+      Anyone running more than one system who is tired of the description
+      living in one place and the to-do list living in another. Atlas is
+      built for a single person or a small team who want one place that
+      shows both what exists and what's being done about it &mdash; not a
+      wiki next to a ticket tracker, one graph doing both jobs.
+    </p>
+  </section>
+</main>
+
+<footer>
+  <span>Invite-only. Accounts are created by an administrator.</span>
+  <a href="/auth/privacy">How your data is handled</a>
+</footer>
+</body>
+</html>

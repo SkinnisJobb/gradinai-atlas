@@ -1,0 +1,2006 @@
+<meta charset="utf-8">
+<!-- Without this the mobile breakpoints below never fire on a real phone: the layout
+     viewport falls back to 980px and the whole board renders shrunk-to-fit. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Project Atlas — a shared plan for people and agents: the world tree and backlog as one semantic-zoom graph.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%2335699f' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%2335699f'/%3E%3C/svg%3E">
+<title>Project Atlas — Attention Board (semantic zoom)</title>
+<script>
+  // Runs before first paint: an explicitly chosen theme or text size must not flash
+  // the default one first, then jump. Kept deliberately tiny and dependency-free.
+  (function () {
+    document.documentElement.lang = "en";
+    try {
+      var t = localStorage.getItem("atlas.theme");
+      if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+    } catch (e) { /* private mode — fall back to the system preference */ }
+    try {
+      var s = parseFloat(localStorage.getItem("atlas.uiScale"));
+      if (isFinite(s) && s > 0) document.documentElement.style.setProperty("--ui-scale", String(s));
+    } catch (e) { /* private mode — default 1 */ }
+    try {
+      // overview strip (h1 + lede + summary) defaults to COLLAPSED — the map gets
+      // the screen back until the user explicitly asks for it; only a stored
+      // "open" wins. Set pre-paint so the strip doesn't flash open then collapse.
+      var ov = localStorage.getItem("atlas.overview");
+      document.documentElement.setAttribute("data-overview", ov === "open" ? "open" : "closed");
+    } catch (e) { document.documentElement.setAttribute("data-overview", "closed"); }
+  })();
+</script>
+<link rel="stylesheet" href="/assets/board.css">
+
+<div class="wrap">
+  <header class="appbar" id="appbar">
+    <div class="appbar-brand">
+      <div class="eyebrow">Atlas · work-graph</div>
+    </div>
+    <div class="tabbar" role="group" aria-label="Which tree to show">
+      <button id="tab-world" type="button" aria-pressed="true">World tree</button>
+      <button id="tab-work" type="button" aria-pressed="false">Work tree</button>
+      <button id="tab-mine" type="button" aria-pressed="false" title="Work assigned to you">Mine</button>
+    </div>
+    <div class="appbar-actions">
+      <!-- compose.js is lazy-imported on click, same seam as the Settings item
+           in the account menu below: the file form is opened by a fraction of
+           board loads, and the board's no-build-step design means every
+           static import is bytes on the critical path of the map drawing. -->
+      <button class="composebtn" id="composeOpen" type="button">+ File work</button>
+      <div class="search-wrap" id="searchWrap">
+        <input id="nodeSearch" class="search-input" type="text" placeholder="Find a node…" autocomplete="off"
+               role="combobox" aria-haspopup="listbox" aria-expanded="false" aria-controls="searchResults"
+               aria-autocomplete="list" aria-label="Find a node by name or id — press slash or Ctrl+K" />
+        <ul class="search-results" id="searchResults" role="listbox" aria-label="Matching nodes" hidden></ul>
+      </div>
+      <div class="scalectl" role="group" aria-label="Text size">
+        <button class="scalebtn" id="scaleDown" type="button" aria-label="Decrease text size">A−</button>
+        <span class="scale-readout" id="scaleReadout" aria-live="polite">100%</span>
+        <button class="scalebtn" id="scaleUp" type="button" aria-label="Increase text size">A+</button>
+      </div>
+      <button class="themebtn" id="themebtn" type="button" aria-label="Toggle light or dark theme">◐ theme</button>
+      <!-- The account control. Empty in the markup and filled from GET /api/me by
+           api.js's renderAccount() (TASK-1023 moved it out of this file): the
+           board is a static file, so the signed-in username can only come from
+           the API. It stays empty (and keeps its reserved 30px) if that call
+           fails, because a control with nothing behind it lies — which is
+           exactly why this slot sat empty until TASK-969. -->
+      <span class="appbar-account-slot" id="accountSlot"></span>
+    </div>
+  </header>
+
+  <button class="overview-toggle" id="overviewToggle" type="button" aria-expanded="false" aria-controls="overviewStrip">
+    <span class="ov-chevron" aria-hidden="true">⌄</span> Overview
+  </button>
+  <div class="overview-strip" id="overviewStrip">
+    <h1>The attention board — semantic zoom</h1>
+    <p class="lede" id="ledeline">Loading the live backlog…</p>
+    <div class="summary reveal" id="summary" aria-live="polite"></div>
+  </div>
+
+  <section class="stage">
+    <div class="canvas-wrap" id="canvasWrap" data-detail="3">
+      <div class="detail-ctl">
+        <label class="detail-eyebrow" for="detailSlider">DETAIL</label>
+        <input id="detailSlider" class="detail-slider" type="range" min="1" max="3" step="1" value="3"
+               aria-label="Node detail level (1 compact, 2 standard, 3 full)" />
+      </div>
+      <div class="map-ctl" id="mapCtl" role="group" aria-label="Map controls">
+        <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+        <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+        <button id="zoom-fit" type="button">Fit</button>
+        <button id="collapse-all" type="button">Collapse all</button>
+        <button id="collapse-others" type="button" title="Collapse all but the selected node's branch">Collapse others</button>
+        <button id="workGroupToggle" type="button" hidden title="Group the work tree by project, keeping the backlog's own epic/story/task shape beneath — or by the world object each item changes">Group: backlog</button>
+        <!-- Both controls only ever act on the world tree — map.js's drawXEdges
+             returns early for any other tab — so updateHint() below hides
+             them there, the same per-tab idiom it already uses for the map
+             legend's attachment glyphs. -->
+        <button id="xedgeToggle" type="button" aria-pressed="true" title="Cycle which non-containment edges are drawn: off · the selected node's only · all of them">Links: selected</button>
+        <span class="filter-ctl">
+          <label for="xedgeType">Kind</label>
+          <!-- `works_on` and `serves` were removed (verified against the live
+               edge table, not assumed): both run workitem -> object, and the
+               world-tree fetch's WORLD_EDGES list (board.html, boot block)
+               never requests either — its own comment says why: the workitem
+               end of that relationship isn't a node in this tree, so the
+               both-endpoints-visible rule that /api/graph applies would drop
+               every one of them regardless of what this dropdown asks for.
+               Every option left below IS in WORLD_EDGES, so each is capable
+               of drawing on this tree; `for` has zero rows in the live
+               database right now (`goal`, its only source type, was retired
+               by ADR 0032) but is a live edge_type the fetch still requests,
+               unlike the two removed above — a `for` edge would draw the
+               moment one existed, so it stays. -->
+          <select id="xedgeType" title="Limit the drawn links to one relationship type">
+            <option value="">all kinds</option>
+            <option value="hosted_on">hosted on</option>
+            <option value="contributes_to">contributes to</option>
+            <option value="uses">uses</option>
+            <option value="for">for</option>
+          </select>
+        </span>
+        <span class="filter-ctl">
+          <label for="doneFilter">Finished</label>
+          <select id="doneFilter" title="Hide work that finished more than this long ago">
+            <option value="0">show all</option>
+            <option value="7">hide &gt; 1 week</option>
+            <option value="14">hide &gt; 2 weeks</option>
+            <option value="30">hide &gt; 1 month</option>
+            <option value="90">hide &gt; 3 months</option>
+          </select>
+        </span>
+        <!-- Status and node-type filters (the board-filter work). Multi-select, so
+             a native <select> won't do — a button opens a checkbox menu, same
+             idiom as the find-a-node dropdown (#searchResults) but positioned
+             to open UPWARD (map-ctl sits at the canvas's bottom edge). -->
+        <span class="filter-ctl multiselect-ctl" id="statusFilterCtl">
+          <label id="statusFilterLabel" for="statusFilterBtn">Status</label>
+          <button class="multiselect-btn" id="statusFilterBtn" type="button" aria-haspopup="true"
+                  aria-expanded="false" aria-controls="statusFilterMenu"
+                  title="Restrict the map to one or more statuses">all</button>
+          <div class="multiselect-menu" id="statusFilterMenu" hidden></div>
+        </span>
+        <span class="filter-ctl multiselect-ctl" id="typeFilterCtl">
+          <label id="typeFilterLabel" for="typeFilterBtn">Type</label>
+          <button class="multiselect-btn" id="typeFilterBtn" type="button" aria-haspopup="true"
+                  aria-expanded="false" aria-controls="typeFilterMenu"
+                  title="Restrict the map to one or more node types">all</button>
+          <div class="multiselect-menu" id="typeFilterMenu" hidden></div>
+        </span>
+        <span class="zoom-indicator" id="zoomIndicator">—%</span>
+      </div>
+      <!-- Always on screen while the filter is hiding anything: a map that
+           silently omits nodes reads as the whole picture. Click to show all. -->
+      <button class="filter-hint" id="filterHint" type="button" hidden></button>
+      <!-- The hint sits outside the control pill: inside it, its full-width flex row
+           stretched the pill across most of the canvas. -->
+      <span class="hint-text">scroll to zoom · drag to pan · click a node to open it / collapse its children</span>
+      <svg id="mapsvg" role="img" aria-label="Collapsible tidy-tree map of epics, stories and tasks"></svg>
+      <!-- ONE ELEMENT, TWO MEANINGS: "there is nothing here" and "the fetch
+           failed". They read the same to whoever is looking at the board and
+           mean opposite things to whoever gets called about it, so this
+           element's own copy commits to NEITHER — every site that unhides it
+           writes the sentence (showCanvasEmpty, below). It used to read "Could
+           not load the backlog graph.", which reported a fault at an empty
+           store and said "backlog" while the reader was on the World tab
+           (TASK-1129). -->
+      <div class="canvas-empty" id="canvasEmpty" hidden>Nothing to show here.</div>
+    </div>
+    <!-- The Mine view (TASK-1124). A LIST, not a map — it sits beside the
+         canvas rather than inside it, and switchTab() shows one or the other.
+         Reusing canvas-wrap would put a list inside a container whose whole
+         job is d3 zoom/pan arithmetic. -->
+    <div class="mine-wrap" id="mineWrap" hidden></div>
+    <div class="map-legend" id="mapLegend" aria-label="Legend for the node glyphs">
+      <span class="leg-group">
+        <span class="leg-eyebrow" id="legFill">fill = health</span>
+        <span class="leg-item"><span class="leg-dot" style="background:var(--att-green)"></span>healthy</span>
+        <span class="leg-item"><span class="leg-dot" style="background:var(--att-orange)"></span>warning</span>
+        <span class="leg-item"><span class="leg-dot" style="background:var(--att-red)"></span>needs attention</span>
+        <span class="leg-item"><span class="leg-dot" style="background:var(--att-grey)"></span>idle</span>
+        <span class="leg-item"><span class="leg-dot" style="background:var(--att-purple)"></span>decision</span>
+      </span>
+      <span class="leg-sep"></span>
+      <span class="leg-group">
+        <span class="leg-item"><span class="leg-ring full"></span>ring = completion</span>
+        <span class="leg-item"><span class="leg-badge">3</span>needs attention below</span>
+      </span>
+      <span class="leg-sep" id="legSepAttach"></span>
+      <span class="leg-group" id="legAttach">
+        <span class="leg-eyebrow">attachments</span>
+        <span class="leg-item"><span class="leg-ic intent">◎</span>intent</span>
+        <span class="leg-item"><span class="leg-ic skill">✦</span>skill</span>
+        <span class="leg-item"><span class="leg-ic doc">▤</span>doc</span>
+      </span>
+    </div>
+  </section>
+</div>
+
+<div class="panel-scrim" id="panelScrim"></div>
+<div class="panel-resizer" id="panelResizer" role="separator" aria-orientation="vertical" tabindex="0"
+     aria-label="Resize the detail panel (drag, or arrow keys; double-click to reset)"
+     title="Drag to resize · double-click to reset"></div>
+<!-- `inert` is the actual mechanism that keeps a closed panel out of the tab
+     order — aria-hidden alone only tells assistive tech the subtree is gone
+     while leaving its buttons genuinely focusable, which is invalid ARIA and
+     was reachable by Tab while the panel sat off-screen. `inert` disables
+     focus AND hit-testing on the whole subtree regardless of what panel.js
+     renders into #panelBody, so it does not need updating every time that
+     content changes shape. Toggled off/on in board.html alongside .open and
+     aria-hidden — see mapHooks.renderPanel and closePanel below. -->
+<aside class="detail-panel" id="detailPanel" aria-hidden="true" inert aria-label="Node detail">
+  <button class="panel-copylink" id="panelCopyLink" type="button" aria-label="Copy link to this node">Copy link</button>
+  <button class="panel-close" id="panelClose" type="button" aria-label="Close detail panel">×</button>
+  <div id="panelBody"></div>
+</aside>
+
+<!-- All three vendored locally under frontend/vendor/ and served from the
+     four-entry /assets/ allowlist in app.py — NOT from a mount, and NOT from a
+     CDN. marked + mermaid were vendored by TASK-871; D3 7.9.0 followed in
+     TASK-969, because a CSP worth having (default-src 'self') is impossible
+     while any third-party script is loaded, and "later" would have meant never.
+     The old /static/vendor/* paths are dead: TASK-967 DELETED the /static mount
+     (it was also serving an unauthenticated byte-identical copy of this board). -->
+<script src="/assets/d3.min.js"></script>
+<script src="/assets/marked.min.js"></script>
+<script src="/assets/mermaid.min.js"></script>
+<script type="module">
+  // A module script (not the pre-paint one above, which must stay classic — see
+  // its own comment). Module scope replaces the old `(function () { "use strict";
+  // ... })();` IIFE: a module's top level is already an isolated scope and always
+  // strict, so wrapping it again would do nothing. That also means this script is
+  // now DEFERRED — it does not run until the document is parsed — but it already
+  // sat at the very end of <body> with nothing after it, so nothing here observably
+  // changes timing (see state.js / util.js for what moved and why).
+  import {
+    state, FILTER_DEFAULT_DAYS, BRIDGE_TYPES, isAgedOut, isStatusHidden, isTypeHidden,
+    OBJECT_TYPES, STATUS_CHOICES
+  } from "/assets/state.js";
+  // escapeHtml is deliberately NOT imported any more: the one place this shell built
+  // markup from server-supplied strings — the search dropdown's rows — builds DOM
+  // nodes instead as of the prose-search work, so there is no HTML string left here
+  // to escape into. util.js still exports it for the modules that do use it.
+  import { remember, recall } from "/assets/util.js";
+  import { attentionOf } from "/assets/glyph.js";
+  // map.js owns the D3 hierarchy/layout/zoom/pan/collapse state (TASK-1022); this
+  // module reaches it only through the exports below and the `hooks` it fills in
+  // just after this import block — see map.js's own header comment for why (it
+  // can't import anything back from here: an inline <script type="module"> has no
+  // URL for another module to import).
+  import {
+    hooks as mapHooks, buildTree, selectNode, hasNode, getSelectedId, clearSelection,
+    currentTransform, restoreTransform, withMapAnchored, fit, collapseUnboundBucket,
+    setWorldXEdges, rescaleLayout
+  } from "/assets/map.js";
+  // panel.js owns the detail panel — rendering, the tab machinery, the status
+  // control (TASK-1023). Same seam as map.js: `hooks` is filled in below for
+  // the two calls back into board.html (navigateTo, refreshGraph) that panel.js
+  // cannot import — see panel.js's own header comment.
+  import { hooks as panelHooks, renderPanel } from "/assets/panel.js";
+  // mine.js owns the Mine view (TASK-1124) — a LIST, not a map, which is why it
+  // has its own container and its own module rather than another buildTree
+  // projection. Same hooks seam as map.js/panel.js.
+  import { hooks as mineHooks, initMine, load as loadMine } from "/assets/mine.js";
+  // api.js owns every fetch plus CSRF token handling (TASK-1023). initAccount()
+  // fetches GET /api/me once and paints the app-bar account slot; postJSON isn't
+  // imported here because board.html itself never POSTs — only panel.js's status
+  // control does, importing it (and CSRF_TOKEN) directly from api.js.
+  import { fetchJSON, initAccount } from "/assets/api.js";
+
+  // `host` added 2026-08-02 with the host node type. OBJECT_TYPES lives in
+  // state.js now (TASK-1023) — see that file's header for why (panel.js needs
+  // it too, and board.html can't export anything for panel.js to import).
+  //
+  // WORLD_ROOT_ID is GONE. It named one fixed root node as the seed to BFS out
+  // from; /api/graph now derives its own seeds when `focus` is omitted. See the
+  // world fetch at the boot block below for what that fixes.
+
+  // Which INPUT MODALITY opened the panel decides whether focus should follow it
+  // in — a mouse click or a boot deep link must leave focus where it already was,
+  // a keyboard activation must not strand focus behind the panel. Nothing that
+  // can open the panel (map.js's node click/keydown, this file's search-result
+  // mousedown/Enter, mine.js's row activation, a boot deep link) hands
+  // hooks.renderPanel the triggering event, so there is nothing to branch on
+  // there directly. Instead this tracks the last relevant input seen ANYWHERE on
+  // the page, in two document-level CAPTURE-phase listeners — capture always
+  // runs before the target's own bubble-phase listener (map.js's `.on("click"/
+  // "keydown", ...)` and this file's `searchInput.addEventListener("keydown", ...)`
+  // both register on bubble), so by the time any of them calls into
+  // hooks.renderPanel this is already current for that exact activation.
+  // pointerdown covers mouse AND touch, and always fires before the "click" a
+  // node/row activates on, so it correctly overwrites a stale "keyboard" left
+  // over from earlier typing. Only Enter/Space count as a keyboard ACTIVATION —
+  // Tab, arrow keys and ordinary typing move focus or filter text without asking
+  // to open anything, and must not be mistaken for the keystroke that did.
+  // Starts false, so a boot deep link — which opens the panel with no input at
+  // all yet — never steals focus (criterion 3).
+  var lastInputWasKeyboard = false;
+  document.addEventListener("pointerdown", function () { lastInputWasKeyboard = false; }, true);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") lastInputWasKeyboard = true;
+  }, true);
+
+  // Wire the map's and panel's selection/navigation hooks once, ahead of their
+  // textual definitions below: renderPanel/updateUrl/revealFiltered/navigateTo/
+  // refreshGraph are all function DECLARATIONS, so they're fully hoisted and
+  // already callable here. See map.js's "SEAM 2" and panel.js's header comment
+  // for why this indirection exists at all.
+  // Where opening the closed panel moves focus IN restores it OUT again on
+  // close — see closePanel() further down for the other half. This wraps the
+  // imported renderPanel rather than passing it straight through because the
+  // "was the panel already open" question can only be answered HERE, in the
+  // instant before map.js's selectD3 flips .open/aria-hidden (map.js calls
+  // hooks.renderPanel first, then opens the panel itself — see its own
+  // source): re-selecting a different node while the panel is already open
+  // must not steal focus or overwrite where a later Escape should return it.
+  var panelOpenerEl = null;
+  mapHooks.renderPanel = function (nodeData) {
+    var panelEl = document.getElementById("detailPanel");
+    var wasOpen = panelEl.classList.contains("open");
+    if (!wasOpen) panelOpenerEl = document.activeElement;
+    renderPanel(nodeData);
+    if (!wasOpen) {
+      panelEl.removeAttribute("inert");
+      // Only a keyboard activation moves focus into the panel — a mouse/touch
+      // open (lastInputWasKeyboard false) leaves focus exactly where the click
+      // put it (typically the node itself), and a boot deep link leaves it
+      // wherever the page started. See the tracker above for how this is known.
+      if (lastInputWasKeyboard) {
+        // map.js adds .open and flips aria-hidden to "false" immediately after
+        // this hook returns, still inside the same synchronous call — so focus
+        // has to land on the NEXT tick, once that has actually happened, not
+        // while the panel is still marked aria-hidden="true".
+        setTimeout(function () {
+          var closeBtn = document.getElementById("panelClose");
+          // preventScroll: true — map.js's anchoring arithmetic (withMapAnchored)
+          // just finished measuring getBoundingClientRect() for this same open; an
+          // unguarded .focus() that scrolls a container to reveal the close button
+          // would invalidate that measurement out from under it (criterion 4).
+          if (closeBtn) closeBtn.focus({ preventScroll: true });
+        }, 0);
+      }
+    }
+  };
+  mapHooks.updateUrl = updateUrl;
+  mapHooks.revealFiltered = revealFiltered;
+  panelHooks.navigateTo = navigateTo;
+  panelHooks.refreshGraph = refreshGraph;
+
+  // ================================================================== app state
+  // state.TREE, state.byId, state.allNodes, state.currentTree, state.worldRoot, state.workData, state.workByObjectData,
+  // state.TREE_OF, state.NODE_INDEX and state.FILTER moved to state.js (TASK-1021) — see that file's
+  // header for the mutation idiom (mutate `state.<name>`, never reassign an
+  // imported binding). workGrouping, filterHidden and DONE_STATUSES stay local:
+  // they aren't on the list the task named, and nothing outside this script reads
+  // them.
+  var workGrouping = recall("atlas.workGroup") === "object" ? "object" : "backlog";
+  var filterHidden = 0;        // how many nodes the last prune dropped
+  var FILTER_KEY = "atlas.doneFilterDays";  // the localStorage key, not shared state — stays local
+
+  var DONE_STATUSES = { done: 1, accepted: 1, closed: 1 };
+
+  // isAgedOut()/isStatusHidden()/isTypeHidden() moved to state.js (TASK-1022, extended
+  // by the board-filter work) — map.js's node-label rendering needs
+  // isAgedOut too, and board.html can't export any of them for map.js to
+  // import.
+
+  // Prune for the map. A node survives if none of the three filter axes hide
+  // it OR if anything below it survived — an old story with one reopened task
+  // stays on the map, as the route to that task, and the same now holds for a
+  // story that itself doesn't match the status/type filter but contains a
+  // task that does. Every axis shares this one leaf decision, so
+  // ancestor-preservation is automatic for all three at once.
+  function pruneTree(node) {
+    var kids = [];
+    (node.children || []).forEach(function (c) {
+      var kept = pruneTree(c);
+      if (kept) kids.push(kept);
+    });
+    if (!kids.length && (isAgedOut(node) || isStatusHidden(node) || isTypeHidden(node))) {
+      filterHidden++; return null;
+    }
+    var out = {};
+    for (var k in node) { if (Object.prototype.hasOwnProperty.call(node, k)) out[k] = node[k]; }
+    out.children = kids;
+    return out;
+  }
+
+  // ---- work, grouped by the object it changes ---------------------------------
+  // The backlog tree answers "how was this work PLANNED" (epic -> story -> task).
+  // This one answers "what is outstanding ON THIS THING" — the world's own shape,
+  // with each workitem hanging off the object its `works_on` edge points at.
+  //
+  // The workitems are attached as RENDERING children only. They are NOT `contains`
+  // children and must never become them: attention.derive() rolls worst-child up
+  // `contains`, so a red task would drag its object's health red even when the
+  // service is fine. Object health and workitem attention are different questions.
+  //
+  // Leaves are flat — a bound story does not drag its tasks along, so one workitem
+  // appears in exactly one place.
+  function projectWorkByObject(workRoots) {
+    if (!state.worldRoot || !workRoots) return null;
+    var wi = {};
+    workRoots.forEach(function (r) {
+      (function walk(n) { if (n.id) wi[n.id] = n; (n.children || []).forEach(walk); })(r);
+    });
+
+    var bound = {};
+    function leafOf(n) {
+      var o = {};
+      for (var k in n) { if (Object.prototype.hasOwnProperty.call(n, k)) o[k] = n[k]; }
+      o.children = [];
+      return o;
+    }
+    function copy(o) {
+      var kids = [];
+      (o.children || []).forEach(function (c) { kids.push(copy(c)); });
+      var wl = o.work_load || {};
+      (wl.workitems || []).forEach(function (w) {
+        var real = wi[w.id];
+        if (real) { bound[w.id] = 1; kids.push(leafOf(real)); }
+      });
+      var out = {};
+      for (var k in o) { if (Object.prototype.hasOwnProperty.call(o, k)) out[k] = o[k]; }
+      out.children = kids;
+      return out;
+    }
+    var root = copy(state.worldRoot);
+
+    // Everything with no works_on edge. This is not a leftovers bin — it is the
+    // worklist for the bindings still to be made, in the place you would look.
+    var orphans = [];
+    for (var id in wi) {
+      if (!Object.prototype.hasOwnProperty.call(wi, id)) continue;
+      if (bound[id]) continue;
+      if (!wi[id].type || wi[id].type === "root") continue;
+      orphans.push(leafOf(wi[id]));
+    }
+    orphans.sort(function (a, b) { return String(a.id).localeCompare(String(b.id)); });
+    if (orphans.length) {
+      root.children = (root.children || []).concat([{
+        id: "__unbound", name: "Not bound to any object (" + orphans.length + ")",
+        type: "root", _attach: {}, work_load: { count: 0, done: 0, completion: 0 },
+        completion_counts: { done: 0, in_progress: 0, todo: 0 }, completion: 0,
+        children: orphans
+      }]);
+    }
+    return root;
+  }
+
+  // ---- work, grouped by the PROJECT it belongs to -----------------------------
+  // The DEFAULT shape of the Work tab. Every epic used to hang off one synthetic
+  // "Backlog" hub, which said nothing except "this is work": eleven epics from
+  // five unrelated projects on a single fan, with no way to see which was which
+  // without opening them one at a time.
+  //
+  // This buckets them by WORLD ROOT. An epic's effective binding (its own
+  // `works_on`, or the nearest bound ancestor's — attention.effective_bindings)
+  // points at an object somewhere in the world tree, and the root above that
+  // object is the project. So the egress-control epic, bound to `seat-privacy`,
+  // lands under "AI Developer Seat" with no second edge authored anywhere.
+  //
+  // NO NODE ID APPEARS HERE. The buckets are whatever /api/graph hands back as
+  // roots (AGENTS.md: no module may encode the graph), so a sixth project shows
+  // up as a sixth bucket on its own, and ADR 0030 renaming one changes nothing.
+  //
+  // THE BUCKET IS THE WORLD NODE — same id, glyph and name, so clicking it opens
+  // the project's own panel. It is deliberately NOT re-indexed into TREE_OF /
+  // NODE_INDEX (see the boot block): the node belongs to the World tab, and
+  // search and deep links must keep taking you there rather than to a copy.
+  //
+  // The top is the same INVISIBLE anchor the world tree uses, for the same reason
+  // — a visible hub above the buckets would re-assert on screen the single owner
+  // this change exists to remove. Work still rolls up (ADR 0028) exactly as
+  // before: a bucket is a rendering parent, not a `contains` edge, and nothing
+  // here feeds a rollup.
+  function groupWorkByProject(workRoots) {
+    if (!state.worldRoot || !workRoots || !workRoots.length) return null;
+    var worldRoots = state.worldRoot._anchor ? (state.worldRoot.children || []) : [state.worldRoot];
+    if (!worldRoots.length) return null;
+
+    // workitem id -> the world root it sits under. `work_load.workitems` is the
+    // EFFECTIVE binding already (attention.py), so a task with no edge of its own
+    // is listed against whatever its story binds to — which is what lets an epic
+    // whose children are half-bound still land in exactly one bucket.
+    //
+    // A world node with two `contains` parents is projected under both (ADR 0030:
+    // several parents is the normal case), so first-write-wins. worldRoots is in
+    // the sorted order projectWorld built, so "first" is stable across reloads
+    // instead of depending on traversal luck. This is a MAX-shaped read — pick
+    // one — never a sum, so no double-count is possible here.
+    var rootOf = {};
+    worldRoots.forEach(function (r) {
+      (function walk(n) {
+        (((n.work_load || {}).workitems) || []).forEach(function (w) {
+          if (!Object.prototype.hasOwnProperty.call(rootOf, w.id)) rootOf[w.id] = r.id;
+        });
+        (n.children || []).forEach(walk);
+      })(r);
+    });
+
+    var buckets = {}, unassigned = [];
+    workRoots.forEach(function (e) {
+      var rid = rootOf[e.id];
+      if (rid) { (buckets[rid] = buckets[rid] || []).push(e); }
+      else { unassigned.push(e); }
+    });
+
+    var groups = [];
+    worldRoots.forEach(function (r) {
+      var kids = buckets[r.id];
+      // A project with no work of its own is not drawn. This is the work tab; an
+      // empty bucket is a dot that answers nothing, and the project is one click
+      // away on the World tab either way.
+      if (!kids || !kids.length) return;
+      var g = {};
+      for (var k in r) { if (Object.prototype.hasOwnProperty.call(r, k)) g[k] = r[k]; }
+      g.children = kids;     // in THIS tab the project's children are its epics
+      g._group = true;
+      groups.push(g);
+    });
+
+    // Not a leftovers bin, same as the by-object view's `__unbound`: it is the
+    // worklist of epics still to be bound, in the place you would look for them.
+    if (unassigned.length) {
+      groups.push({
+        id: "__unassigned", name: "Not bound to a project (" + unassigned.length + ")",
+        type: "root", _attach: {}, _group: true,
+        work_load: { count: 0, done: 0, completion: 0 },
+        completion_counts: { done: 0, in_progress: 0, todo: 0 }, completion: 0,
+        children: unassigned
+      });
+    }
+
+    if (!groups.length) return null;
+    if (groups.length === 1) return groups[0];
+    return {
+      id: "__work", name: "", type: "root", _anchor: true, _attach: {},
+      work_load: { count: 0, done: 0, completion: 0 },
+      completion_counts: { done: 0, in_progress: 0, todo: 0 }, completion: 0,
+      children: groups
+    };
+  }
+
+  // Install a freshly-fetched work tree. Boot and refreshGraph both land here so
+  // the two cannot drift: before this existed, refreshGraph rebuilt the backlog
+  // shape but NOT the by-object one, so a status click left the "Group: object"
+  // view showing the state from page load.
+  //
+  // state.TREE / state.byId / state.allNodes stay the EPIC roots, not the
+  // buckets — the summary counts epics, and the buckets are world nodes that
+  // would not belong in a count of work.
+  //
+  // The flat "Backlog" hub is the fallback, not dead code: the world fetch is
+  // allowed to fail (see the boot block), and a work tab that renders nothing
+  // because the world tree is missing would be a worse failure than an ungrouped
+  // one.
+  function installWorkTrees(workRoots) {
+    state.TREE = { roots: workRoots };
+    state.byId = {}; state.allNodes = flatten(workRoots, []);
+    state.workData = groupWorkByProject(workRoots) ||
+      { id: "__root", name: "Backlog", type: "root", children: workRoots };
+    state.workByObjectData = projectWorkByObject(workRoots);
+  }
+
+  // The root for a tab BEFORE the filter — also what the type-filter menu
+  // walks to find out which types are actually on screen (refreshTypeFilterOptions,
+  // in the age/status/type filter section below).
+  function unfilteredRootFor(which) {
+    return which === "world" ? state.worldRoot
+         : (workGrouping === "object" && state.workByObjectData ? state.workByObjectData : state.workData);
+  }
+
+  // The root the map should draw for a tab, with the filter applied.
+  function treeRootFor(which) {
+    var root = unfilteredRootFor(which);
+    if (!root) return root;
+    filterHidden = 0;
+    var pruned = pruneTree(root);
+    // The root itself can never be pruned away — an all-finished backlog would
+    // otherwise render as a blank canvas with no way back.
+    return pruned || (function () { var o = {}; for (var k in root) { if (Object.prototype.hasOwnProperty.call(root, k)) o[k] = root[k]; } o.children = []; return o; })();
+  }
+
+  // visibleWorkLoad() moved to map.js (TASK-1022) — it's only ever used inside
+  // the node-label rendering in update(), which moved with it.
+
+  // ---------------------------------------------------------------- data fetch
+  // safeLocalPath/authFailure/fetchJSON/CSRF_TOKEN/postJSON/renderAccount all
+  // moved to api.js (TASK-1023) — see that file's header for why they stayed
+  // adjacent to each other. fetchJSON is imported above; board.html is the
+  // only caller left of it (the boot fetch below and refreshGraph) now that
+  // panel.js imports its own copy directly from api.js.
+  // initAccount() now RESOLVES with the principal, which is what decides
+  // whether the Settings item does anything. settings.js is imported lazily
+  // rather than at the top of this module for one reason worth keeping: the
+  // access overlay is opened by a fraction of a fraction of board loads, and
+  // the board's whole no-build-step design means every static import is bytes
+  // on the critical path of the map drawing. A failure to load it disables the
+  // menu item and leaves the rest of the board untouched.
+  initAccount().then(function (me) {
+    // The Mine view needs to know which account is the caller's own — to mark
+    // it "(me)" and to default the selector to it. Stashed on `state` by
+    // property assignment, the house idiom (ES module bindings are live but
+    // not assignable across modules).
+    state.me = me || null;
+    // Returning from "Sign in with GitHub": the server redirects to
+    // /board?settings=account&github=<linked|error>[&reason=...]. Open Settings on
+    // the Account pane with the outcome, then drop the params so a reload is quiet.
+    var gh = /[?&]github=([a-z]+)(?:&reason=([a-z_]+))?/.exec(location.search);
+    if (gh && me) {
+      var outcome = gh[1] === "linked" ? "linked" : (gh[2] || "github");
+      try { history.replaceState(null, "", location.pathname + location.hash); } catch (e) { /* ignore */ }
+      import("/assets/settings.js").then(function (mod) { mod.openSettings(me, outcome); });
+    }
+    var item = document.getElementById("acctSettings");
+    if (!item) return;
+    item.addEventListener("click", function () {
+      var menu = document.getElementById("acctMenu");
+      if (menu) menu.hidden = true;
+      import("/assets/settings.js").then(function (mod) { mod.openSettings(me); },
+        function () { item.disabled = true; item.textContent = "Settings unavailable"; });
+    });
+  });
+
+  // ------------------------------------------------------- "File work" (compose.js)
+  // Same lazy-import seam as Settings above, for the same reason: the file form
+  // is opened by a fraction of board loads. compose.js owns its own DOM and
+  // never touches this file's markup; the only coupling is the two hooks below
+  // (SEAM 2, same shape as mapHooks/panelHooks/mineHooks near the top of this
+  // script) — compose.js cannot import refreshGraph/navigateTo (an inline
+  // <script type="module"> has no URL for another module to import), so it
+  // calls back through hooks board.html fills in.
+  var composeOpenBtn = document.getElementById("composeOpen");
+  var composeModPromise = null;
+  if (composeOpenBtn) {
+    composeOpenBtn.addEventListener("click", function () {
+      if (!composeModPromise) {
+        composeModPromise = import("/assets/compose.js").catch(function (err) {
+          composeOpenBtn.disabled = true;
+          composeOpenBtn.textContent = "File work unavailable";
+          throw err;
+        });
+      }
+      composeModPromise.then(function (mod) {
+        // afterCreate: refetch both trees (so the new id is in TREE_OF/byId/
+        // NODE_INDEX), then navigate to it — same navigateTo the search box,
+        // Mine and the panel's own links use, so "where did it go" has one
+        // answer everywhere on the board. refreshGraph() now RETURNS its
+        // promise (see its own comment) for exactly this chain; the `|| ...`
+        // covers the rare case a panel.js status write is refreshing at the
+        // same instant (refreshInFlight), in which case the create still
+        // succeeded — compose.js's own success text already said so — and
+        // this falls back to navigating against whatever is indexed yet.
+        mod.hooks.afterCreate = function (id) {
+          (refreshGraph() || Promise.resolve()).then(function () { navigateTo(id); });
+        };
+        mod.openCompose(state.me || null);
+      });
+    });
+  }
+
+  function flatten(list, out) {
+    list.forEach(function (n) { out.push(n); state.byId[n.id] = n; if (n.children && n.children.length) flatten(n.children, out); });
+    return out;
+  }
+
+  // Project the flat `/api/graph?...&edges=contains` neighbourhood into a nested
+  // tree rooted at the org node. Each node keeps `attention` (health fill) and
+  // `work_load`; the completion ring is fed from work_load so it matches the
+  // readout. Bridge-family children (skill/doc/vision) ALSO surface as
+  // attachment-icon flags on the parent (_attach), derived from the live graph.
+  function projectWorld(graph) {
+    var nodesById = {}; (graph.nodes || []).forEach(function (n) { nodesById[n.id] = n; });
+    var kids = {};
+    (graph.edges || []).forEach(function (e) {
+      if (e.edge_type === "contains") { (kids[e.src] = kids[e.src] || []).push(e.dst); }
+    });
+    function build(id, seen) {
+      var n = nodesById[id];
+      var wl = n.work_load || { count: 0, done: 0, completion: 0 };
+      var out = {
+        id: n.id, name: n.name, type: n.type, attention: n.attention,
+        // ADR 0020 (TASK-864/866): carry the authored prose + docs[] through so
+        // the detail panel can render them for world-tree (object) nodes.
+        summary: n.summary, abstract: n.abstract, detail: n.detail, attributes: n.attributes,
+        attention_count: n.attention_count, work_load: wl,
+        // ring = work-load done/total, so it agrees with the "· N tasks · X%" readout
+        completion_counts: { done: wl.done || 0, in_progress: 0, todo: Math.max(0, (wl.count || 0) - (wl.done || 0)) },
+        completion: wl.completion || 0,
+        _attach: {}, children: []
+      };
+      // ADR 0032: own-intent count from /api/graph, surfaced as the same `◎`
+      // the retired `goal` type used. Not a bridge child — an intent is a row
+      // ON this node, which is exactly why `goal` stopped being a node.
+      if (n.intent_count) out._attach.intent = true;
+      (kids[id] || []).slice().sort().forEach(function (cid) {
+        var cn = nodesById[cid]; if (!cn) return;
+        if (BRIDGE_TYPES[cn.type]) out._attach[cn.type] = true;   // surfaces as an icon on the parent
+        if (seen.indexOf(cid) === -1) out.children.push(build(cid, seen.concat(id)));
+      });
+      return out;
+    }
+
+    // MULTI-ROOT (2026-08-02). The world has no single owner node, and the DATA
+    // never required one — /api/graph/tree has always derived roots as "nodes with
+    // no incoming contains edge" (app.py:869). Only this projection insisted.
+    // Roots are computed the same way here, and wrapped in a synthetic hub exactly
+    // as the work tree wraps its epic roots, so d3.hierarchy still sees one tree.
+    //
+    // The hub is a RENDERING artifact and must never look like an owner: it is
+    // typed "root" (no glyph, no fill), carries zero counts so it contributes to
+    // no rollup, and is skipped by indexTreeNode's search index below.
+    //
+    // The single-root case returns EXACTLY what it returned before, so today's
+    // board is byte-identical until the manifest actually grows a second root.
+    var hasParent = {};
+    (graph.edges || []).forEach(function (e) {
+      if (e.edge_type === "contains") { hasParent[e.dst] = 1; }
+    });
+    var rootIds = Object.keys(nodesById).filter(function (id) { return !hasParent[id]; }).sort();
+    if (!rootIds.length) return null;
+    if (rootIds.length === 1) return build(rootIds[0], []);
+    return {
+      id: "__world", name: "", type: "root", _anchor: true, _attach: {},
+      work_load: { count: 0, done: 0, completion: 0 },
+      completion_counts: { done: 0, in_progress: 0, todo: 0 }, completion: 0,
+      children: rootIds.map(function (id) { return build(id, []); })
+    };
+  }
+
+  function indexTreeNode(node, tree) {
+    // The world anchor is not a thing in the world — it must never be findable by
+    // search, nor be a deep-link target. Its children still index normally.
+    if (!node._anchor) {
+      state.TREE_OF[node.id] = tree;
+      state.NODE_INDEX[node.id] = { id: node.id, name: node.name, type: node.type, tree: tree };
+    }
+    (node.children || []).forEach(function (c) { indexTreeNode(c, tree); });
+  }
+
+  // ================================================================== D3 tidy tree
+  // The whole D3 hierarchy/layout/zoom/pan/collapse-state machinery — buildTree,
+  // update, the cross-edge overlay, the Detail slider, node activation/selection,
+  // fit/zoomBy/collapseAll(ButSelected) — moved to map.js (TASK-1022). This
+  // script now only calls its exported buildTree/selectNode/fit/etc and reads
+  // its state through hasNode()/getSelectedId(); see map.js's header for the
+  // two seams that forced that (the D3 internals staying private there, and
+  // the `hooks` board.html wires in above for the calls the map still needs to
+  // make back into this script).
+
+  // ---------------------------------------------------------------- summary header
+  function renderSummary() {
+    var hist = { grey: 0, green: 0, orange: 0, red: 0 };
+    var frontiers = 0;
+    state.allNodes.forEach(function (n) {
+      var a = attentionOf(n);
+      hist[a] = (hist[a] || 0) + 1;
+      if (n.urgency === "red") frontiers++;
+    });
+    var order = [["red", "attention"], ["orange", "warning"], ["green", "healthy"], ["grey", "idle"]];
+    var mx = Math.max.apply(null, order.map(function (o) { return hist[o[0]] || 0; })) || 1;
+    var bars = order.map(function (o) {
+      var v = hist[o[0]] || 0;
+      return '<div class="bar"><div class="k"><span class="dot" style="background:var(--att-' + o[0] + ')"></span>' +
+        o[1] + '</div><div class="track"><div class="fill" style="width:' + (v / mx * 100) +
+        '%;background:var(--att-' + o[0] + ')"></div></div><div class="v">' + v + '</div></div>';
+    }).join("");
+    document.getElementById("summary").innerHTML =
+      '<div class="headline"><span class="big"><em>' + frontiers + '</em> ready to start now</span>' +
+      'the actionable frontier — do these to unblock a live goal · ' + state.allNodes.length + ' nodes total</div>' +
+      '<div class="bars">' + bars + '</div>';
+  }
+
+  // The lede describes whichever tree is on screen — the two count different things,
+  // and quoting epics/tasks while looking at the world tree just misreads the map.
+  function renderLede(which) {
+    var el = document.getElementById("ledeline"), html;
+    if (which === "mine") {
+      // No counts here on purpose: the Mine view prints its own total from
+      // what the SERVER returned, and a second number computed over the trees
+      // in memory would be a different, unreconcilable one.
+      el.innerHTML = '<b>Assigned work</b> — everything handed to one person, ' +
+        'nested under the epic and story it belongs to so an id always comes with its context. ' +
+        'Click a row to open it on the map.';
+      return;
+    }
+    if (which === "world" && state.worldRoot) {
+      var objects = 0, bridges = 0;
+      (function walk(n) {
+        if (!n) return;
+        if (BRIDGE_TYPES[n.type]) bridges++; else if (n.type !== "root") objects++;
+        (n.children || []).forEach(walk);
+      })(state.worldRoot);
+      html = '<b>' + objects + ' objects · ' + bridges + ' attachments</b>, the world as it actually runs — ' +
+        'fill = health rolled up from the children below, icons = the intent authored on a node plus the skills and docs bridged onto ' +
+        'each object. Click any node for its authored documentation.';
+    } else {
+      html = '<b>' + state.TREE.roots.length + ' epics · ' + state.allNodes.length + ' nodes</b>, drawn as one glyph each — ' +
+        'fill = attention (state ⊔ goal-directed urgency), ring = completion, badge = how much is lit below. ' +
+        'Zoom out for the shape of the whole backlog; zoom in for names; click any node for the full picture.';
+    }
+    el.innerHTML = html;
+  }
+
+  // Refetch both trees after a write and redraw, keeping the camera and the
+  // selection. A status change is not local: it moves worst-child rollups, the
+  // goal-directed urgency frontier and every work-load readout above it.
+  // Called from panel.js's status control via panelHooks.refreshGraph — see
+  // the hook wiring near the top of this script.
+  //
+  // RETURNS the promise (added for compose.js's "File work" flow, which needs
+  // to know when TREE_OF/NODE_INDEX have been rebuilt before it can navigate
+  // to a just-created id — see composeOpenBtn's click handler below). Every
+  // existing caller ignores the return value, so this is additive: `return`
+  // in front of the chain, nothing else about the function changed. `null`
+  // (not `undefined`) on the early-return branch so a caller can write
+  // `(refreshGraph() || Promise.resolve())` without an `=== undefined` check.
+  var refreshInFlight = false;
+  function refreshGraph(selectId) {
+    if (refreshInFlight) return null;
+    refreshInFlight = true;
+    return Promise.all([
+      fetchJSON("/api/graph/tree"),
+      fetchJSON(WORLD_URL).catch(function () { return null; })
+    ]).then(function (res) {
+      var treeData = res[0] || { roots: [] };
+      var workRoots = (treeData.roots || []).filter(function (r) { return !OBJECT_TYPES[r.type]; });
+      // World before work, for the reason spelled out in the boot block: the
+      // buckets are world nodes, so a stale world root would rebuild the work
+      // tab around the previous shape.
+      if (res[1]) state.worldRoot = projectWorld(res[1]);
+      installWorkTrees(workRoots);
+      state.TREE_OF = {}; state.NODE_INDEX = {};
+      if (state.worldRoot) indexTreeNode(state.worldRoot, "world");
+      workRoots.forEach(function (r) { indexTreeNode(r, "work"); });
+      renderSummary();
+      renderLede(state.currentTree);
+      rebuildMap(selectId);
+      if (selectId && state.byId[selectId]) renderPanel(state.byId[selectId]);
+    }).catch(function () {
+      // The write already succeeded — a failed refresh must not read as a
+      // failed save. The panel keeps the server's answer for this node; the
+      // rest of the map is simply one reload behind.
+    }).then(function () { refreshInFlight = false; });
+  }
+
+  // ---------------------------------------------------------------- detail panel
+  // chip/renderSubnodeRow/renderLinkRow/connRow/connGroup/renderConnections/
+  // renderWorkList/renderWorkItemRow/the status control/the doc viewer/
+  // renderPanel itself all moved to panel.js (TASK-1023) — see that file's
+  // header for the two hooks (navigateTo, refreshGraph) it calls back into
+  // this script through. `panel` and `panelScrim` stay here for closePanel,
+  // just below; panelBody moved with renderPanel (panel.js grabs its own
+  // reference to the same element).
+  var panel = document.getElementById("detailPanel");
+  var panelScrim = document.getElementById("panelScrim");
+
+  function closePanel() {
+    panel.classList.remove("open"); panel.setAttribute("aria-hidden", "true");
+    // Set BEFORE restoring focus below: if focus is currently on something
+    // inside the panel (e.g. a mouse click on panelClose itself), making the
+    // subtree inert drops focus first, so the explicit restore that follows
+    // is the only thing that decides where it lands next.
+    panel.setAttribute("inert", "");
+    panelScrim.classList.remove("open");
+    withMapAnchored(function () { document.body.classList.remove("panel-open"); });
+    clearSelection();
+    updateUrl();
+    // Restore focus to whatever had it before the panel opened — a keyboard
+    // user who pressed Enter on a map node, or Enter/click on a search
+    // result, must not be left with focus stranded on nothing. Skip silently
+    // if that element is gone (the tree rebuilt under it) or was never
+    // recorded (panel opened by a deep link, before anything had focus).
+    if (panelOpenerEl && document.contains(panelOpenerEl) && typeof panelOpenerEl.focus === "function") {
+      // preventScroll: true — same reasoning as the open path above: a restore
+      // must not be able to scroll a container out from under map.js's anchoring
+      // arithmetic either (criterion 4).
+      panelOpenerEl.focus({ preventScroll: true });
+    }
+    panelOpenerEl = null;
+  }
+  document.getElementById("panelClose").addEventListener("click", closePanel);
+  panelScrim.addEventListener("click", closePanel);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closePanel(); });
+
+  // Clipboard: async navigator.clipboard needs a secure context, which this board
+  // — served over plain HTTP on a LAN IP — is not in some browsers, so fall back
+  // to the old execCommand path via a throwaway textarea rather than assume it works.
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+    return new Promise(function (resolve, reject) {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed"; ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.focus(); ta.select(); ta.setSelectionRange(0, text.length);
+        var ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        if (ok) resolve(); else reject(new Error("execCommand copy failed"));
+      } catch (e) { reject(e); }
+    });
+  }
+
+  var panelCopyLink = document.getElementById("panelCopyLink");
+  var copyFeedbackTimer = null;
+  function showCopyFeedback(label) {
+    panelCopyLink.textContent = label;
+    panelCopyLink.setAttribute("data-copied", "true");
+    window.clearTimeout(copyFeedbackTimer);
+    copyFeedbackTimer = window.setTimeout(function () {
+      panelCopyLink.textContent = "Copy link";
+      panelCopyLink.removeAttribute("data-copied");
+    }, 1500);
+  }
+  panelCopyLink.addEventListener("click", function () {
+    // updateUrl() already keeps location.href in sync with tab+node on every
+    // selection, so the current address bar IS the deep link — nothing to build.
+    copyText(location.href).then(function () { showCopyFeedback("Copied"); })
+      .catch(function () { showCopyFeedback("Copy failed"); });
+  });
+
+  // ---------------------------------------------------------------- split resizer
+  // Drag the panel's inner edge to re-split map vs. detail. The size is remembered
+  // per browser. Desktop drags the width; the mobile sheet drags its height.
+  var PANEL_DEFAULT = { w: 400, h: 440 };
+  var PANEL_KEY = { w: "atlas.panelWidth", h: "atlas.panelHeight" };
+  var resizer = document.getElementById("panelResizer");
+
+  function isSheet() { return window.matchMedia("(max-width: 760px)").matches; }
+
+  // shiftMap()/withMapAnchored() moved to map.js (TASK-1022) — imported above.
+  // See its header comment: the arithmetic is unchanged, only the module holding
+  // canvasWrap/svgSel/zoomBehavior moved.
+
+  function clampSize(px, axis) {
+    return axis === "h"
+      ? Math.max(220, Math.min(px, window.innerHeight - 120))
+      : Math.max(300, Math.min(px, Math.max(300, window.innerWidth - 340)));
+  }
+
+  function setSize(px, axis) {
+    px = clampSize(px, axis);
+    document.documentElement.style.setProperty(axis === "h" ? "--panel-h" : "--panel-w", px + "px");
+    remember(PANEL_KEY[axis], px);
+    return px;
+  }
+
+  (function restoreSize() {
+    ["w", "h"].forEach(function (axis) {
+      var px = parseFloat(recall(PANEL_KEY[axis]));
+      if (isFinite(px) && px > 0) setSize(px, axis);
+    });
+  })();
+
+  // the separator is vertical as a side panel, horizontal as a bottom sheet
+  (function syncOrientation() {
+    var mq = window.matchMedia("(max-width: 760px)");
+    function apply() { resizer.setAttribute("aria-orientation", mq.matches ? "horizontal" : "vertical"); }
+    apply();
+    if (mq.addEventListener) mq.addEventListener("change", apply);
+    else if (mq.addListener) mq.addListener(apply);
+  })();
+
+  resizer.addEventListener("pointerdown", function (e) {
+    if (e.button !== 0 && e.pointerType === "mouse") return;
+    e.preventDefault();
+    var axis = isSheet() ? "h" : "w";
+    document.body.classList.add("resizing");
+    try { resizer.setPointerCapture(e.pointerId); } catch (err) { /* no capture support */ }
+
+    function onMove(ev) {
+      withMapAnchored(function () {
+        setSize(axis === "h" ? window.innerHeight - ev.clientY : window.innerWidth - ev.clientX, axis);
+      });
+    }
+    function onUp() {
+      document.body.classList.remove("resizing");
+      try { resizer.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+      resizer.removeEventListener("pointermove", onMove);
+      resizer.removeEventListener("pointerup", onUp);
+      resizer.removeEventListener("pointercancel", onUp);
+    }
+    resizer.addEventListener("pointermove", onMove);
+    resizer.addEventListener("pointerup", onUp);
+    resizer.addEventListener("pointercancel", onUp);
+  });
+
+  // double-click the handle → back to the default split
+  resizer.addEventListener("dblclick", function () {
+    var axis = isSheet() ? "h" : "w";
+    withMapAnchored(function () { setSize(PANEL_DEFAULT[axis], axis); });
+  });
+
+  // keyboard: ←/→ (or ↑/↓ on the sheet) resize in 24px steps, Home resets
+  resizer.addEventListener("keydown", function (e) {
+    var axis = isSheet() ? "h" : "w";
+    var step = { ArrowLeft: 24, ArrowRight: -24, ArrowUp: 24, ArrowDown: -24 }[e.key];
+    if (step === undefined && e.key !== "Home") return;
+    e.preventDefault();
+    var from = panel.getBoundingClientRect()[axis === "h" ? "height" : "width"];
+    withMapAnchored(function () {
+      setSize(e.key === "Home" ? PANEL_DEFAULT[axis] : from + step, axis);
+    });
+  });
+
+  // ---------------------------------------------------------------- tabs (World / Work)
+  var tabWorld = document.getElementById("tab-world");
+  var tabWork = document.getElementById("tab-work");
+  var tabMine = document.getElementById("tab-mine");
+  var canvasWrapEl = document.getElementById("canvasWrap");
+  var mineWrapEl = document.getElementById("mineWrap");
+  var mineReady = false;
+  var hintEl = document.querySelector(".canvas-wrap > .hint-text");
+
+  function updateHint(which) {
+    var isWorld = which === "world";
+    if (hintEl) {
+      hintEl.textContent = isWorld
+        ? "world tree · fill = health · N tasks · % = work-load per object"
+        : "work tree · fill = attention · badge = lit below · click a node for detail";
+    }
+    // The map legend describes GLYPHS. Mine draws none, so the legend is
+    // hidden rather than left saying "fill = health" under a list of rows —
+    // a legend for something that is not on screen is worse than no legend.
+    var legend = document.getElementById("mapLegend");
+    if (legend) legend.hidden = (which === "mine");
+    // The cross-edge overlay (Links / Kind) only ever draws on the world tree
+    // — map.js's drawXEdges returns early for Work and Mine — so, same
+    // reasoning as the legend just above, both controls are hidden off it
+    // rather than left clickable and doing nothing there.
+    var xedgeToggleBtn = document.getElementById("xedgeToggle");
+    if (xedgeToggleBtn) xedgeToggleBtn.style.display = isWorld ? "" : "none";
+    var xedgeTypeSel = document.getElementById("xedgeType");
+    if (xedgeTypeSel && xedgeTypeSel.parentNode) xedgeTypeSel.parentNode.style.display = isWorld ? "" : "none";
+    if (which === "mine") return;
+    // legend under the map: fill means health on the world tree, attention on the
+    // work tree; attachment icons only exist on world (object) nodes.
+    var legFill = document.getElementById("legFill");
+    if (legFill) legFill.textContent = isWorld ? "fill = health" : "fill = attention";
+    var legAttach = document.getElementById("legAttach");
+    var legSepAttach = document.getElementById("legSepAttach");
+    if (legAttach) legAttach.style.display = isWorld ? "" : "none";
+    if (legSepAttach) legSepAttach.style.display = isWorld ? "" : "none";
+  }
+
+  // Mirror the active tab + selection into the query string (never the path — the
+  // board is served at both "/" and "/board") so a view can be bookmarked or sent
+  // to someone else. replaceState, not pushState: a click-through session would
+  // otherwise write a history entry per node and make Back useless. Any existing
+  // unrelated query params are preserved rather than clobbered.
+  function updateUrl() {
+    var params = new URLSearchParams(location.search);
+    params.set("tab", state.currentTree);
+    var selId = getSelectedId();
+    if (selId) params.set("node", selId);
+    else params.delete("node");
+    var qs = params.toString();
+    history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+  }
+
+  // rebuild the map for a tab. Detail slider, collapse buttons and pan/zoom all
+  // keep working — the slider value persists in the DOM (applyDetail reads it),
+  // and the collapse/zoom controls operate on whatever tree is current.
+  function switchTab(which, selectId) {
+    if (which === "world" && !state.worldRoot) which = "work";   // world unavailable
+    state.currentTree = which;
+    remember("atlas.tab", which);
+    tabWorld.setAttribute("aria-pressed", which === "world");
+    tabWork.setAttribute("aria-pressed", which === "work");
+    tabMine.setAttribute("aria-pressed", which === "mine");
+
+    // MINE IS NOT A TREE. It is a list, so it gets the stage to itself and the
+    // map machinery is skipped entirely — buildTree/selectNode/the filter hint
+    // all operate on a d3 hierarchy this view does not have. Everything below
+    // the early return is map-only by construction, which is why the branch is
+    // here rather than a set of `if (which !== "mine")` guards scattered
+    // through it.
+    var isMine = which === "mine";
+    canvasWrapEl.hidden = isMine;
+    mineWrapEl.hidden = !isMine;
+    if (isMine) {
+      if (!mineReady) { mineReady = true; initMine(mineWrapEl, state.me || null); }
+      else loadMine();
+      updateHint(which);
+      renderLede(which);
+      updateUrl();
+      return;
+    }
+
+    syncWorkGroupControl();
+    // Type vocabulary differs world vs work — rebuild the checkbox list for
+    // whichever tab is now current BEFORE pruning against it.
+    refreshTypeFilterOptions();
+    buildTree(treeRootFor(which));
+    renderFilterHint();
+    updateHint(which);
+    renderLede(which);
+    if (selectId) selectNode(selectId, true);
+    updateUrl();
+  }
+
+  // navigate to any node id, auto-switching tab if it lives in the other tree
+  function navigateTo(id) {
+    var tree = state.TREE_OF[id];
+    if (!tree) return;
+    if (tree !== state.currentTree) switchTab(tree, id);
+    else selectNode(id, true);
+  }
+
+  tabWorld.addEventListener("click", function () { if (state.currentTree !== "world") switchTab("world"); });
+  tabWork.addEventListener("click", function () { if (state.currentTree !== "work") switchTab("work"); });
+  tabMine.addEventListener("click", function () { if (state.currentTree !== "mine") switchTab("mine"); });
+
+  // Clicking a row in Mine opens that item wherever it actually lives, which
+  // means leaving this view — the same navigateTo the search box and the panel
+  // links already use, so there is one answer to "how do I get to a node".
+  mineHooks.openNode = function (id) { navigateTo(id); };
+
+  // ---------------------------------------------------------------- age/status/type filter
+  // Three composing axes over state.FILTER — see state.js's FILTER comment for
+  // the shape and pruneTree above for where they're applied. All three share
+  // the localStorage-persistence idiom the age filter already used.
+  var doneFilter = document.getElementById("doneFilter");
+  var filterHintEl = document.getElementById("filterHint");
+  var statusFilterBtn = document.getElementById("statusFilterBtn");
+  var statusFilterMenu = document.getElementById("statusFilterMenu");
+  var typeFilterBtn = document.getElementById("typeFilterBtn");
+  var typeFilterMenu = document.getElementById("typeFilterMenu");
+  var STATUS_FILTER_KEY = "atlas.statusFilter";
+  var TYPE_FILTER_KEY = "atlas.typeFilter";
+
+  function objHasKeys(o) {
+    if (!o) return false;
+    for (var k in o) { if (Object.prototype.hasOwnProperty.call(o, k)) return true; }
+    return false;
+  }
+  // "" (nothing remembered, or every box unchecked) means unrestricted — the
+  // same null-means-all convention state.FILTER.statuses/types use.
+  function csvToSet(csv) {
+    if (!csv) return null;
+    var out = {}, any = false;
+    csv.split(",").forEach(function (v) { v = v.trim(); if (v) { out[v] = 1; any = true; } });
+    return any ? out : null;
+  }
+  function setToCsv(set) { return set ? Object.keys(set).sort().join(",") : ""; }
+
+  function anyFilterActive() {
+    return !!state.FILTER.doneAfterDays || objHasKeys(state.FILTER.statuses) || objHasKeys(state.FILTER.types);
+  }
+
+  // Redraw the current tab from the current data + current filter, KEEPING the
+  // camera and the selection. buildTree() resets both (it ends in fit()), and
+  // losing your place on every filter change or status click makes either
+  // control unusable — so the transform is captured before and reapplied after.
+  function rebuildMap(selectId) {
+    var keep = selectId || getSelectedId();
+    var t = currentTransform();
+    refreshTypeFilterOptions();
+    buildTree(treeRootFor(state.currentTree));
+    renderFilterHint();
+    restoreTransform(t);
+    if (keep && hasNode(keep)) selectNode(keep, false);
+  }
+
+  // What the filter is hiding, said out loud — and now, which of the three
+  // axes did it. A view that quietly omits nodes reads as a complete picture,
+  // which is how work gets forgotten, so this stays on screen (and describes
+  // every active axis, not just age) while anything is hidden.
+  function renderFilterHint() {
+    if (!filterHintEl) return;
+    // Clear the text, don't just hide it — a stale count left in the DOM is a
+    // lie waiting for anything that unhides this element later.
+    if (!filterHidden) { filterHintEl.hidden = true; filterHintEl.textContent = ""; return; }
+    filterHintEl.hidden = false;
+    var reasons = [];
+    if (state.FILTER.doneAfterDays) reasons.push("finished > " + state.FILTER.doneAfterDays + "d ago");
+    if (objHasKeys(state.FILTER.statuses)) reasons.push("status: " + Object.keys(state.FILTER.statuses).sort().join("/"));
+    if (objHasKeys(state.FILTER.types)) reasons.push("type: " + Object.keys(state.FILTER.types).sort().join("/"));
+    filterHintEl.textContent = filterHidden + (filterHidden === 1 ? " item" : " items") +
+      " hidden (" + reasons.join("; ") + ") — show all";
+    filterHintEl.title = "Click to clear every filter and show everything.";
+  }
+
+  function setDoneFilter(days, persist) {
+    state.FILTER.doneAfterDays = days;
+    if (doneFilter) doneFilter.value = String(days);
+    if (persist !== false) remember(FILTER_KEY, days);
+    rebuildMap();
+  }
+
+  function updateMultiselectLabel(btn, set, allLabel, plural) {
+    if (!btn) return;
+    if (!objHasKeys(set)) { btn.textContent = allLabel; return; }
+    var keys = Object.keys(set).sort();
+    btn.textContent = keys.length === 1 ? keys[0] : keys.length + " " + plural;
+  }
+  function updateStatusFilterLabel() { updateMultiselectLabel(statusFilterBtn, state.FILTER.statuses, "all", "statuses"); }
+  function updateTypeFilterLabel() { updateMultiselectLabel(typeFilterBtn, state.FILTER.types, "all", "types"); }
+
+  function toggleStatusFilterValue(value, checked) {
+    var set = state.FILTER.statuses || {};
+    if (checked) set[value] = 1; else delete set[value];
+    state.FILTER.statuses = objHasKeys(set) ? set : null;
+    remember(STATUS_FILTER_KEY, setToCsv(state.FILTER.statuses));
+    updateStatusFilterLabel();
+    rebuildMap();
+  }
+  function toggleTypeFilterValue(value, checked) {
+    var set = state.FILTER.types || {};
+    if (checked) set[value] = 1; else delete set[value];
+    state.FILTER.types = objHasKeys(set) ? set : null;
+    remember(TYPE_FILTER_KEY, setToCsv(state.FILTER.types));
+    updateTypeFilterLabel();
+    rebuildMap();
+  }
+
+  // Status vocabulary is fixed (STATUS_CHOICES — the same list panel.js's
+  // status control offers, imported from state.js so the two can't drift
+  // apart) and built once.
+  function buildStatusFilterMenu() {
+    if (!statusFilterMenu) return;
+    statusFilterMenu.innerHTML = "";
+    STATUS_CHOICES.forEach(function (choice) {
+      var row = document.createElement("label");
+      row.className = "multiselect-opt";
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.value = choice.value;
+      cb.checked = !!(state.FILTER.statuses && state.FILTER.statuses[choice.value]);
+      cb.addEventListener("change", function () { toggleStatusFilterValue(choice.value, cb.checked); });
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(choice.label));
+      statusFilterMenu.appendChild(row);
+    });
+  }
+
+  // Type vocabulary DEPENDS on which tree is on screen (the world tree's
+  // object/bridge types vs the work tree's epic/story/task, and the by-object
+  // work grouping mixes both) — so this is rebuilt from whatever pruneTree is
+  // about to walk, never a hand-written list (AGENTS.md: never write a count
+  // or a list a query could answer).
+  function collectTypes(root) {
+    var seen = {};
+    (function walk(n) {
+      if (!n) return;
+      if (n.type && n.type !== "root") seen[n.type] = 1;
+      (n.children || []).forEach(walk);
+    })(root);
+    return Object.keys(seen).sort();
+  }
+  // refreshTypeFilterOptions runs inside rebuildMap(), which runs on EVERY
+  // filter checkbox toggle (see rebuildMap above) — including a toggle of a
+  // type checkbox itself. innerHTML = "" then destroys the very <input> whose
+  // "change" event is still on the call stack, and the browser has nowhere
+  // to put focus back, so it silently falls to <body>. Keyboard users lost
+  // their place after every single toggle. The fix: remember which value (if
+  // any) held focus before the rebuild, and hand focus to the new checkbox
+  // that carries the same value once the menu is rebuilt.
+  function refreshTypeFilterOptions() {
+    if (!typeFilterMenu) return;
+    var focusedValue = (document.activeElement && document.activeElement.type === "checkbox" &&
+      typeFilterMenu.contains(document.activeElement)) ? document.activeElement.value : null;
+    var types = collectTypes(unfilteredRootFor(state.currentTree));
+    typeFilterMenu.innerHTML = "";
+    if (!types.length) { typeFilterMenu.innerHTML = '<div class="multiselect-empty">no nodes</div>'; return; }
+    types.forEach(function (t) {
+      var row = document.createElement("label");
+      row.className = "multiselect-opt";
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.value = t;
+      cb.checked = !!(state.FILTER.types && state.FILTER.types[t]);
+      cb.addEventListener("change", function () { toggleTypeFilterValue(t, cb.checked); });
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(t));
+      typeFilterMenu.appendChild(row);
+      if (focusedValue !== null && t === focusedValue) cb.focus();
+    });
+  }
+
+  function closeMultiselect(menu, btn) {
+    if (!menu || menu.hidden) return;
+    menu.hidden = true;
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+  function toggleMultiselect(menu, btn) {
+    if (!menu || !btn) return;
+    var opening = menu.hidden;
+    closeMultiselect(statusFilterMenu, statusFilterBtn);
+    closeMultiselect(typeFilterMenu, typeFilterBtn);
+    if (opening) { menu.hidden = false; btn.setAttribute("aria-expanded", "true"); }
+  }
+  if (statusFilterBtn) statusFilterBtn.addEventListener("click", function () { toggleMultiselect(statusFilterMenu, statusFilterBtn); });
+  if (typeFilterBtn) typeFilterBtn.addEventListener("click", function () { toggleMultiselect(typeFilterMenu, typeFilterBtn); });
+  document.addEventListener("click", function (e) {
+    if (statusFilterMenu && !statusFilterMenu.hidden && !statusFilterMenu.contains(e.target) && e.target !== statusFilterBtn) {
+      closeMultiselect(statusFilterMenu, statusFilterBtn);
+    }
+    if (typeFilterMenu && !typeFilterMenu.hidden && !typeFilterMenu.contains(e.target) && e.target !== typeFilterBtn) {
+      closeMultiselect(typeFilterMenu, typeFilterBtn);
+    }
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    closeMultiselect(statusFilterMenu, statusFilterBtn);
+    closeMultiselect(typeFilterMenu, typeFilterBtn);
+  });
+
+  // Clear EVERY axis — used by the filter hint (its count is the combined
+  // effect of all three now) and by revealFiltered below.
+  function clearAllFilters(persist) {
+    state.FILTER.doneAfterDays = 0;
+    state.FILTER.statuses = null;
+    state.FILTER.types = null;
+    if (doneFilter) doneFilter.value = "0";
+    if (persist !== false) {
+      remember(FILTER_KEY, 0);
+      remember(STATUS_FILTER_KEY, "");
+      remember(TYPE_FILTER_KEY, "");
+    }
+    updateStatusFilterLabel();
+    updateTypeFilterLabel();
+    buildStatusFilterMenu();   // re-render so the checkboxes reflect the clear
+    rebuildMap();
+  }
+
+  // A node the filter is hiding is still findable — search, a deep link and a
+  // panel row all reach it. Rather than failing silently (the old `if (!d)
+  // return`), turn every filter off and go there: the user asked for that
+  // node by name, which outranks a view preference. Any of the three axes
+  // (or several at once) could be what's hiding it, so this clears all of
+  // them rather than trying to work out which one it was.
+  function revealFiltered(id) {
+    if (!anyFilterActive() || hasNode(id) || !state.TREE_OF[id]) return false;
+    clearAllFilters(false);   // not persisted: this is a one-off reveal
+    return true;
+  }
+
+  if (doneFilter) {
+    var savedDays = parseInt(recall(FILTER_KEY), 10);
+    // Only a value the control actually offers — a stale or hand-edited
+    // localStorage entry must not put the board in a state its UI cannot show.
+    var allowed = {};
+    for (var oi = 0; oi < doneFilter.options.length; oi++) allowed[doneFilter.options[oi].value] = 1;
+    state.FILTER.doneAfterDays = (!isNaN(savedDays) && allowed[String(savedDays)]) ? savedDays : FILTER_DEFAULT_DAYS;
+    doneFilter.value = String(state.FILTER.doneAfterDays);
+    doneFilter.addEventListener("change", function () {
+      setDoneFilter(parseInt(doneFilter.value, 10) || 0);
+    });
+  }
+  // Status is a fixed, small vocabulary — restore the persisted set and build
+  // its checkboxes once, up front (unlike type, it doesn't depend on the tab).
+  state.FILTER.statuses = csvToSet(recall(STATUS_FILTER_KEY));
+  state.FILTER.types = csvToSet(recall(TYPE_FILTER_KEY));
+  buildStatusFilterMenu();
+  updateStatusFilterLabel();
+  updateTypeFilterLabel();
+  if (filterHintEl) filterHintEl.addEventListener("click", function () { clearAllFilters(); });
+
+  // ---------------------------------------------------------------- find-a-node search
+  // TWO SOURCES, ONE DROPDOWN.
+  //
+  //   1. state.NODE_INDEX (id + name, both trees) — synchronous, in memory, instant.
+  //   2. GET /api/workitems?q= — Postgres full-text over THREE stores (`node.body`,
+  //      `acceptance_criterion.text`, `workitem_result.text`, each GIN-indexed; see
+  //      `_search_node_ids` in app.py). This is what replaced `grep -r backlog/`, and
+  //      until now nothing in frontend/ called it: prose that only exists in the
+  //      database was unreachable from the screen.
+  //
+  // The local pass NEVER waits on the network — it renders first, on the keystroke, and
+  // the server's answer AUGMENTS what is already on screen when (and if) it arrives.
+  // Typing an id must not get slower because a full-text query exists.
+  //
+  // Selecting a row still just hands off to navigateTo() — it already knows how to
+  // switch tabs, expand ancestors, select and pan, and reaches revealFiltered() through
+  // map.js's selectNode for a node the filters are hiding.
+  var SEARCH_LIMIT = 10;
+  // How many prose rows the dropdown will draw. The FETCH asks for more (see
+  // PROSE_FETCH_SIZE) because a server hit already listed under "name" is dropped
+  // rather than drawn twice; the COUNT the footer prints is always the server's own
+  // `total`, never a length of anything measured here.
+  var PROSE_LIMIT = 6;
+  var PROSE_FETCH_SIZE = PROSE_LIMIT + SEARCH_LIMIT;
+  // Below two characters full-text is answering a question nobody asked, and every
+  // keystroke of a node id would fire one. The local pass still runs at one character.
+  var PROSE_MIN_CHARS = 2;
+  var PROSE_DEBOUNCE_MS = 220;
+  var SNIPPET_RADIUS = 60;
+  var searchWrap = document.getElementById("searchWrap");
+  var searchInput = document.getElementById("nodeSearch");
+  var searchResults = document.getElementById("searchResults");
+  var searchMatches = [];
+  var searchActiveIndex = -1;
+  var searchLocal = [];
+  // The prose half's whole state in one slot: null (not asked), or
+  // {status: "pending"|"loading"|"ok"|"error", q, items, total}.
+  var searchProse = null;
+  var proseTimer = null;
+  // The reqSeq idiom from panel.js's renderHistory: every request takes a ticket, and a
+  // response holding a stale one is DISCARDED rather than painted. Bumped by the
+  // debounce scheduler and by closing the dropdown too, so an answer to a query the
+  // user has already moved on from can never land.
+  var proseSeq = 0;
+
+  // Rank before capping: an unranked scan can fill all 10 slots with mid-string
+  // matches and drop the very node whose id you typed out in full.
+  function searchScore(n, q) {
+    var id = n.id.toLowerCase(), name = (n.name || "").toLowerCase();
+    if (id === q) return 0;
+    if (id.indexOf(q) === 0 || name.indexOf(q) === 0) return 1;
+    var at = name.indexOf(q);
+    if (at > 0 && /[\s\-_/·]/.test(name.charAt(at - 1))) return 2;   // start of a word
+    if (at !== -1) return 3;
+    return id.indexOf(q) !== -1 ? 4 : -1;
+  }
+
+  function searchNodes(q) {
+    q = q.toLowerCase();
+    var scored = [];
+    Object.keys(state.NODE_INDEX).forEach(function (id) {
+      var n = state.NODE_INDEX[id], score = searchScore(n, q);
+      if (score !== -1) scored.push({ n: n, score: score });
+    });
+    scored.sort(function (a, b) {
+      return a.score - b.score || String(a.n.name).localeCompare(String(b.n.name));
+    });
+    return scored.slice(0, SEARCH_LIMIT).map(function (x) { return x.n; });
+  }
+
+  function updateActiveDescendant() {
+    var items = searchResults.querySelectorAll(".search-result");
+    for (var i = 0; i < items.length; i++) {
+      items[i].classList.toggle("active", i === searchActiveIndex);
+      items[i].setAttribute("aria-selected", i === searchActiveIndex ? "true" : "false");
+    }
+    if (searchActiveIndex >= 0) searchInput.setAttribute("aria-activedescendant", "search-opt-" + searchActiveIndex);
+    else searchInput.removeAttribute("aria-activedescendant");
+  }
+
+  function closeSearchDropdown() {
+    // Cancel the debounce AND invalidate anything already in flight — a response
+    // landing after the box closed would reopen it behind the user's back.
+    if (proseTimer) { clearTimeout(proseTimer); proseTimer = null; }
+    proseSeq++;
+    searchProse = null;
+    searchLocal = [];
+    searchResults.hidden = true;
+    searchResults.innerHTML = "";
+    searchMatches = [];
+    searchActiveIndex = -1;
+    searchInput.setAttribute("aria-expanded", "false");
+    searchInput.removeAttribute("aria-activedescendant");
+  }
+
+  function chooseSearchResult(i) {
+    var n = searchMatches[i];
+    if (!n) return;
+    // Every row in searchMatches is navigable BY CONSTRUCTION — a prose hit the
+    // board cannot open is rendered as an unreachable note instead (see
+    // buildSearchRows), never as a selectable row that would do nothing.
+    navigateTo(n.id);
+    searchInput.value = "";
+    closeSearchDropdown();
+    searchInput.blur();
+  }
+
+  // ---- rendering ------------------------------------------------------------
+  // EVERYTHING BELOW BUILDS DOM, NEVER MARKUP. The prose half puts server-stored
+  // text — bodies, acceptance criteria and result blocks written by people and by
+  // agents — into the dropdown, so escaping is the highest-risk part of this
+  // feature. `textContent`/`createTextNode` cannot be talked into parsing HTML,
+  // whereas an innerHTML string is one forgotten escapeHtml() away from injection;
+  // that is why the old innerHTML row builder is gone rather than extended, and why
+  // escapeHtml is no longer imported here (nothing left to escape — there is no
+  // HTML string to escape INTO).
+  function srSpan(cls, txt) {
+    var el = document.createElement("span");
+    el.className = cls;
+    el.textContent = txt == null ? "" : String(txt);
+    return el;
+  }
+
+  // Where in `text` the query first shows up, as three plain strings. Best effort
+  // and deliberately not a claim: the server matched on stems across three tables,
+  // two of which this payload does not carry, so a null here means "we cannot show
+  // you the matching words", not "there was no match".
+  function proseSnippet(text, q) {
+    if (!text) return null;
+    var flat = String(text).replace(/\s+/g, " ").replace(/^\s+/, "");
+    var hay = flat.toLowerCase();
+    var words = q.toLowerCase().split(/\s+/);
+    var at = -1, hit = "";
+    for (var i = 0; i < words.length; i++) {
+      if (words[i].length < 2) continue;
+      var p = hay.indexOf(words[i]);
+      if (p !== -1 && (at === -1 || p < at)) { at = p; hit = words[i]; }
+    }
+    if (at === -1) return null;
+    var start = Math.max(0, at - SNIPPET_RADIUS);
+    var end = Math.min(flat.length, at + hit.length + SNIPPET_RADIUS);
+    return {
+      before: (start > 0 ? "…" : "") + flat.slice(start, at),
+      hit: flat.slice(at, at + hit.length),
+      after: flat.slice(at + hit.length, end) + (end < flat.length ? "…" : "")
+    };
+  }
+
+  function buildSnippet(sn) {
+    var wrap = document.createElement("span");
+    wrap.className = "sr-snippet";
+    if (!sn) {
+      wrap.className = "sr-snippet is-vague";
+      wrap.textContent = "matched elsewhere in this item's text";
+      return wrap;
+    }
+    wrap.appendChild(document.createTextNode(sn.before));
+    var m = document.createElement("mark");
+    m.textContent = sn.hit;
+    wrap.appendChild(m);
+    wrap.appendChild(document.createTextNode(sn.after));
+    return wrap;
+  }
+
+  // Turn the two halves into a flat list of render instructions. Only rows of kind
+  // "result" become selectable options, and they keep this order, which is what
+  // lets updateActiveDescendant() keep indexing `.search-result` elements against
+  // searchMatches while notes and headings sit between them.
+  function buildSearchRows(q) {
+    var rows = [], seen = {};
+    searchLocal.forEach(function (n) {
+      seen[n.id] = 1;
+      rows.push({ kind: "result", source: "name", id: n.id, name: n.name, tree: n.tree });
+    });
+
+    if (!searchProse) return rows;
+    if (searchProse.status === "error") {
+      // AC 6: a failed prose search must never look like a complete answer. The
+      // local rows above are still correct, and this row says what is missing.
+      rows.push({ kind: "note", cls: "is-error",
+                  text: "Could not search descriptions — showing name matches only." });
+      return rows;
+    }
+    if (searchProse.status === "pending" || searchProse.status === "loading") {
+      rows.push({ kind: "note", text: "Searching descriptions…" });
+      return rows;
+    }
+    if (!searchProse.total) return rows;
+
+    var body = [], shown = 0;
+    for (var i = 0; i < searchProse.items.length && shown < PROSE_LIMIT; i++) {
+      var it = searchProse.items[i];
+      if (!it || !it.id || seen[it.id]) continue;   // already up there under its name
+      seen[it.id] = 1;
+      shown++;
+      // `abstract` is on every listing row (authored, else projected from the body
+      // — see _graph_node_json), which is what makes a snippet possible without
+      // asking for ?include_prose=1 and dragging whole specs into a type-ahead.
+      var snip = proseSnippet(it.abstract || it.summary || "", q);
+      var tree = state.TREE_OF[it.id];
+      if (tree) {
+        body.push({ kind: "result", source: "prose", id: it.id,
+                    name: it.name || it.id, tree: tree, snippet: snip });
+      } else {
+        // AC 5, the awkward case: the server can see this item and neither map
+        // has it, so navigateTo() would guard on state.TREE_OF and silently do
+        // nothing. Rather than ship a dead click, it is drawn as a NON-selectable
+        // note that says so — keyboard nav skips it and there is nothing to click.
+        // Making it navigable would mean the board opening a node outside both
+        // trees, which is a new view, not a search feature.
+        body.push({ kind: "unreachable", id: it.id, name: it.name || it.id, snippet: snip });
+      }
+    }
+    if (body.length) {
+      rows.push({ kind: "group", text: "matched in text" });
+      rows = rows.concat(body);
+    }
+    // ALWAYS the server's own `total` (AC 7) — never a count of what happened to
+    // render. Same idiom as renderHistory and mine.js: a partial view says both
+    // numbers so it cannot be mistaken for the whole answer.
+    rows.push({ kind: "note", text: shown < searchProse.total
+      ? ("Showing " + shown + " of " + searchProse.total + " text matches")
+      : (searchProse.total + (searchProse.total === 1 ? " text match" : " text matches")) });
+    return rows;
+  }
+
+  function buildResultRow(li, r) {
+    if (r.source === "prose") {
+      var main = document.createElement("span");
+      main.className = "sr-main";
+      main.appendChild(srSpan("sr-name", r.name));
+      main.appendChild(buildSnippet(r.snippet));
+      li.appendChild(main);
+    } else {
+      li.appendChild(srSpan("sr-name", r.name));
+    }
+    li.appendChild(srSpan("sr-id", r.id));
+    li.appendChild(srSpan("sr-tree", r.tree || ""));
+  }
+
+  function renderSearchRows(rows, keepKey) {
+    searchResults.innerHTML = "";
+    searchMatches = [];
+    rows.forEach(function (r) {
+      var li = document.createElement("li");
+      if (r.kind === "result") {
+        var idx = searchMatches.length;
+        li.className = "search-result" + (r.source === "prose" ? " is-prose" : "");
+        li.id = "search-opt-" + idx;
+        li.setAttribute("role", "option");
+        buildResultRow(li, r);
+        // mousedown (not click) fires before the input blurs, so the selection lands
+        // before closeSearchDropdown/blur can pull the rug out from under it.
+        li.addEventListener("mousedown", function (e) { e.preventDefault(); chooseSearchResult(idx); });
+        searchMatches.push(r);
+      } else if (r.kind === "unreachable") {
+        li.className = "sr-unreachable";
+        li.setAttribute("role", "presentation");
+        var um = document.createElement("span");
+        um.className = "sr-main";
+        um.appendChild(srSpan("sr-name", r.name));
+        um.appendChild(buildSnippet(r.snippet));
+        um.appendChild(srSpan("sr-why", "not on either map — open it from the Work tree once it is drawn there"));
+        li.appendChild(um);
+        li.appendChild(srSpan("sr-id", r.id));
+      } else {
+        li.className = r.kind === "group" ? "sr-group" : ("sr-note" + (r.cls ? " " + r.cls : ""));
+        li.setAttribute("role", "presentation");
+        li.textContent = r.text;
+      }
+      searchResults.appendChild(li);
+    });
+
+    // A late prose response must not yank the highlight off the row the user
+    // arrowed onto — the local rows keep their positions, so re-find the row that
+    // was active rather than resetting to the top.
+    var keep = -1;
+    if (keepKey) {
+      for (var i = 0; i < searchMatches.length; i++) {
+        if (searchMatches[i].source + " " + searchMatches[i].id === keepKey) { keep = i; break; }
+      }
+    }
+    searchActiveIndex = keep !== -1 ? keep : (searchMatches.length ? 0 : -1);
+
+    var any = searchResults.childNodes.length > 0;
+    searchResults.hidden = !any;
+    searchInput.setAttribute("aria-expanded", any ? "true" : "false");
+    updateActiveDescendant();
+  }
+
+  function paintSearch(q, keepActive) {
+    var cur = keepActive && searchActiveIndex >= 0 ? searchMatches[searchActiveIndex] : null;
+    renderSearchRows(buildSearchRows(q), cur ? cur.source + " " + cur.id : null);
+  }
+
+  // ---- the prose half -------------------------------------------------------
+  function requestProse(q) {
+    var seq = ++proseSeq;
+    searchProse = { status: "loading", q: q, items: [], total: 0 };
+    paintSearch(q, true);
+    fetchJSON("/api/workitems?page_size=" + PROSE_FETCH_SIZE + "&q=" + encodeURIComponent(q))
+      .then(function (d) {
+        if (seq !== proseSeq) return;   // a later keystroke already won — discard
+        searchProse = { status: "ok", q: q, items: d.items || [], total: d.total || 0 };
+        paintSearch(q, true);
+      })
+      .catch(function () {
+        if (seq !== proseSeq) return;
+        // An expired session never reaches here: fetchJSON navigates to the login
+        // page on 401/403 with a promise that deliberately never settles. What
+        // lands here is a network or server failure, and it is SHOWN.
+        searchProse = { status: "error", q: q, items: [], total: 0 };
+        paintSearch(q, true);
+      });
+  }
+
+  function scheduleProse(q) {
+    if (proseTimer) { clearTimeout(proseTimer); proseTimer = null; }
+    proseSeq++;                       // anything in flight is now answering an old query
+    if (q.length < PROSE_MIN_CHARS) { searchProse = null; return; }
+    searchProse = { status: "pending", q: q, items: [], total: 0 };
+    proseTimer = setTimeout(function () { proseTimer = null; requestProse(q); }, PROSE_DEBOUNCE_MS);
+  }
+
+  // The one entry point. Local first and synchronously — the network is scheduled,
+  // never awaited, so a node id resolves exactly as fast as it did before.
+  function runSearch(q) {
+    if (!q) { closeSearchDropdown(); return; }
+    searchLocal = searchNodes(q);
+    scheduleProse(q);
+    paintSearch(q, false);
+  }
+
+  searchInput.addEventListener("input", function () {
+    runSearch(searchInput.value.trim());
+  });
+
+  searchInput.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      // stopPropagation keeps this Escape from also reaching the document-level
+      // handler above that closes the detail panel — the two must stay independent.
+      e.stopPropagation();
+      if (!searchResults.hidden) closeSearchDropdown(); else searchInput.value = "";
+      searchInput.blur();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (searchResults.hidden) runSearch(searchInput.value.trim());
+      else if (searchActiveIndex < searchMatches.length - 1) { searchActiveIndex++; updateActiveDescendant(); }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!searchResults.hidden && searchActiveIndex > 0) { searchActiveIndex--; updateActiveDescendant(); }
+    } else if (e.key === "Enter") {
+      if (!searchResults.hidden && searchActiveIndex >= 0) { e.preventDefault(); chooseSearchResult(searchActiveIndex); }
+    }
+  });
+
+  document.addEventListener("click", function (e) {
+    if (!searchResults.hidden && !searchWrap.contains(e.target)) closeSearchDropdown();
+  });
+
+  // "/" or Ctrl+K (Cmd+K on Mac) focuses the search box from anywhere on the page —
+  // unless focus is already inside some other input, where the key should just type.
+  document.addEventListener("keydown", function (e) {
+    var t = e.target;
+    var typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    if (typing) return;
+    var isSlash = e.key === "/" && !e.ctrlKey && !e.metaKey && !e.altKey;
+    var isModK = (e.key === "k" || e.key === "K") && (e.ctrlKey || e.metaKey) && !e.altKey;
+    if (!isSlash && !isModK) return;
+    e.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+  });
+
+  // ---------------------------------------------------------------- theme toggle
+  var themebtn = document.getElementById("themebtn");
+  themebtn.addEventListener("click", function () {
+    var cur = document.documentElement.getAttribute("data-theme");
+    if (!cur) cur = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    var next = cur === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    remember("atlas.theme", next);   // read back by the pre-paint script at the top
+  });
+
+  // ---------------------------------------------------------------- overview disclosure
+  // h1 + lede + summary collapse behind one control so the map gets the screen
+  // back by default (see the pre-paint script for the "closed" default); state
+  // persists the same way as the theme/tab/detail prefs above.
+  var overviewToggle = document.getElementById("overviewToggle");
+  // sync the button's aria-expanded with whatever the pre-paint script decided
+  // (it only ever touches <html>, never the button, since it runs before body parses)
+  overviewToggle.setAttribute("aria-expanded",
+    document.documentElement.getAttribute("data-overview") === "open" ? "true" : "false");
+  overviewToggle.addEventListener("click", function () {
+    var open = document.documentElement.getAttribute("data-overview") !== "open";
+    document.documentElement.setAttribute("data-overview", open ? "open" : "closed");
+    overviewToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    remember("atlas.overview", open ? "open" : "closed");
+  });
+
+  // ---------------------------------------------------------------- text-size control
+  // Steps --ui-scale through a few sane stops. Every font-size: in this file reads
+  // that custom property via calc(), so this one knob reaches the header, the
+  // panel prose and the SVG node labels alike — the thing browser zoom can't do
+  // without also messing with the map's own zoom/pan math.
+  var UI_SCALES = [0.9, 1, 1.15, 1.3, 1.5];
+  var scaleDownBtn = document.getElementById("scaleDown");
+  var scaleUpBtn = document.getElementById("scaleUp");
+  var scaleReadout = document.getElementById("scaleReadout");
+  var scaleIdx = 1;   // index into UI_SCALES; 1 === the 1.0 default
+  // map.js owns its own copy of this lookup (it's private there — see its header);
+  // this one is only for rescaling the already-drawn badge numbers below.
+  var svgRoot = document.getElementById("mapsvg");
+
+  function closestScaleIndex(v) {
+    var best = 1, bestDiff = Infinity;
+    UI_SCALES.forEach(function (s, i) {
+      var diff = Math.abs(s - v);
+      if (diff < bestDiff) { bestDiff = diff; best = i; }
+    });
+    return best;
+  }
+
+  function applyUiScale(scale, persist) {
+    document.documentElement.style.setProperty("--ui-scale", String(scale));
+    // rescale every badge number already drawn — it's an SVG attribute, not CSS,
+    // so var(--ui-scale) never reaches it on its own (see buildGlyph).
+    var badges = svgRoot.querySelectorAll("[data-basefs]");
+    for (var i = 0; i < badges.length; i++) {
+      badges[i].setAttribute("font-size", parseFloat(badges[i].getAttribute("data-basefs")) * scale);
+    }
+    // Respace the tidy tree for the new type size. The map's grid is in SVG user
+    // units and so is immune to var(--ui-scale) on its own; without this the
+    // labels grow and the columns they sit in do not, and the text runs into the
+    // next column's text. map.js's rescaleLayout() carries the measurements.
+    rescaleLayout();
+    if (scaleReadout) scaleReadout.textContent = Math.round(scale * 100) + "%";
+    if (scaleDownBtn) scaleDownBtn.disabled = scale <= UI_SCALES[0];
+    if (scaleUpBtn) scaleUpBtn.disabled = scale >= UI_SCALES[UI_SCALES.length - 1];
+    if (persist) remember("atlas.uiScale", scale);
+  }
+
+  (function initUiScale() {
+    var saved = parseFloat(recall("atlas.uiScale"));
+    scaleIdx = closestScaleIndex(isFinite(saved) ? saved : 1);
+    applyUiScale(UI_SCALES[scaleIdx], false);   // pre-paint script already set the CSS var; this syncs the UI
+  })();
+
+  if (scaleDownBtn && scaleUpBtn) {
+    scaleDownBtn.addEventListener("click", function () {
+      scaleIdx = Math.max(0, scaleIdx - 1);
+      applyUiScale(UI_SCALES[scaleIdx], true);
+    });
+    scaleUpBtn.addEventListener("click", function () {
+      scaleIdx = Math.min(UI_SCALES.length - 1, scaleIdx + 1);
+      applyUiScale(UI_SCALES[scaleIdx], true);
+    });
+  }
+
+  var workGroupToggle = document.getElementById("workGroupToggle");
+  function syncWorkGroupControl() {
+    if (!workGroupToggle) return;
+    workGroupToggle.textContent = "Group: " + workGrouping;
+    // Only meaningful on the work tree; the world tree has one shape.
+    workGroupToggle.hidden = (state.currentTree !== "work");
+  }
+  if (workGroupToggle) {
+    workGroupToggle.addEventListener("click", function () {
+      workGrouping = (workGrouping === "backlog") ? "object" : "backlog";
+      remember("atlas.workGroup", workGrouping);
+      syncWorkGroupControl();
+      // The by-object grouping mixes world-object types in among the
+      // workitem leaves — the type menu has to reflect that shape too.
+      refreshTypeFilterOptions();
+      buildTree(treeRootFor("work"));
+      // buildTree already collapses below depth 2, but the unbound bucket IS a
+      // depth-1 node whose 102 children sit at depth 2 — so they all render, and
+      // fitting 138 nodes lands the map at 21% zoom, an unreadable smear.
+      // Collapse that one node; the object skeleton is what should be on screen.
+      if (workGrouping === "object") collapseUnboundBucket();
+      fit(false);
+    });
+  }
+
+  // The Links (cross-edge) controls wire themselves up inside map.js — they only
+  // ever call its own setXEdgeMode/setXEdgeType, nothing board.html owns.
+
+  // ---------------------------------------------------------------- empty state
+  // #canvasEmpty is the one place the board says "there is no map here", and
+  // that sentence has two entirely different causes — nothing has been created
+  // yet, or the fetch failed. The element's markup says neither; these helpers
+  // are how a caller says which, and the two callers below are the whole set.
+  //
+  // showCanvasEmpty writes textContent, which also clears the <a> the AUTH
+  // branch builds, so the two messages can never end up layered.
+  function showCanvasEmpty(text) {
+    var el = document.getElementById("canvasEmpty");
+    el.textContent = text;
+    el.hidden = false;
+  }
+
+  // NAMING THE VIEW IS THE POINT (TASK-1129): "the backlog" is simply false on
+  // the World tab, and it is what the hardcoded copy said on both. `mine` never
+  // reaches here — switchTab hides the whole canvas for it — and it falls back
+  // to the Work wording for the same reason switchTab falls back to the Work
+  // tab when there is no world tree to show.
+  function emptyViewMessage(which) {
+    return which === "world"
+      ? "The World tree is empty — nothing has been added to the world yet."
+      : "The Work tree is empty — no work has been filed yet.";
+  }
+
+  // ---------------------------------------------------------------- boot
+  // Fetch BOTH trees: the work tree (backlog contains-projection) and the world
+  // tree (contains subtree rooted at the org). World is resilient — if the world
+  // manifest isn't ingested, its fetch fails softly and the World tab disables.
+  // NO `focus` PARAM. The world request names no node at all: /api/graph seeds
+  // its BFS from every root it derives (a node with no incoming `contains`) when
+  // focus is omitted, and the projection derives the real roots from the edges it
+  // gets back (see projectWorld).
+  //
+  // This used to pass focus=WORLD_ROOT_ID and rely on "nothing is contained by
+  // everything, but everything is connected to something" — a project that owned
+  // nothing and was owned by nothing still arrived via its contributes_to /
+  // hosted_on links, because /api/graph is a both-directions BFS (app.py:686).
+  // That held only as long as EVERY root happened to have a lateral edge. A root
+  // with none was silently absent from the World tab — no error, just missing —
+  // and it also put a hardcoded node id inside a frontend module, which
+  // AGENTS.md forbids. Both gone.
+  //
+  // The traversal still follows the LATERAL edges as well as `contains`, because
+  // that is what draws the cross-root relationships once the roots are seeded.
+  // `for` (goal -> object) is included because BOTH its endpoints are world nodes,
+  // so it can actually draw. works_on/serves are deliberately absent: they run
+  // workitem -> object, and the workitem end does not exist in this tree, so the
+  // both-endpoints-visible rule would drop every one of them anyway.
+  // `families` is what keeps this a WORLD fetch. A rootless /api/graph seeds from
+  // every root, and a workitem epic has no incoming `contains` either — so
+  // without the filter this pulls the entire backlog down the shared `contains`
+  // edge as well (measured on staging: 348 nodes instead of 42). Naming the two
+  // world FAMILIES is presentation config, not encoding the graph; a node id
+  // here would be the thing AGENTS.md forbids.
+  var WORLD_FAMILIES = "object,bridge";
+  var WORLD_EDGES = "contains,contributes_to,hosted_on,uses,for";
+  var WORLD_URL = "/api/graph?depth=8&edges=" + encodeURIComponent(WORLD_EDGES) +
+                  "&families=" + encodeURIComponent(WORLD_FAMILIES) + "&cap=2000";
+  Promise.all([
+    fetchJSON("/api/graph/tree"),
+    // The world tree is ALLOWED to be missing — an un-ingested manifest disables
+    // the World tab at :1929 with "World tree not ingested (set
+    // ATLAS_WORLD_MANIFEST)". An auth failure is not that, and must never be
+    // dressed up as that: this repo has already burned a session on an
+    // auth-shaped fault read as a data fault. Auth normally never arrives here at
+    // all (authFailure's promise never settles); this is the belt for the case
+    // where the navigation itself failed and it rejected with "AUTH …".
+    fetchJSON(WORLD_URL).catch(function (err) {
+      if (err && String(err.message).indexOf("AUTH") === 0) throw err;
+      return null;
+    })
+  ]).then(function (res) {
+    var treeData = res[0] || { roots: [] };
+    var worldGraph = res[1];
+
+    // WORLD tree FIRST: project the contains subtree; may be null if not ingested.
+    // Both work projections read it — the buckets in groupWorkByProject and the
+    // object skeleton in projectWorkByObject — so it has to exist before them.
+    state.worldRoot = worldGraph ? projectWorld(worldGraph) : null;
+
+    // WORK tree: keep only workitem-family roots (the world roots are roots too)
+    var workRoots = (treeData.roots || []).filter(function (r) { return !OBJECT_TYPES[r.type]; });
+    installWorkTrees(workRoots);
+
+    // Keep the NON-containment edges for the overlay. These are the ones the
+    // projection throws away, and they are half of what the world graph knows.
+    setWorldXEdges(worldGraph ? (worldGraph.edges || []).filter(function (e) {
+      return e.edge_type !== "contains";
+    }) : []);
+
+    // id -> tree index for cross-link navigation; state.NODE_INDEX (search) is rebuilt alongside it
+    state.TREE_OF = {};
+    state.NODE_INDEX = {};
+    if (state.worldRoot) indexTreeNode(state.worldRoot, "world");
+    workRoots.forEach(function (r) { indexTreeNode(r, "work"); });
+
+    // WHICH TAB THE READER LANDS ON, resolved BEFORE the empty check below
+    // rather than just before switchTab(): an empty store still has to name the
+    // view it is empty for, and this is the answer to "which view".
+    //
+    // A shared/bookmarked link has to land where the sender meant, so ?tab= in the
+    // URL outranks the remembered tab; recall("atlas.tab") only decides things when
+    // the URL is silent (someone just typed the bare board URL). Last tab otherwise
+    // wins over the World default — coming back to the board should land you where
+    // you left off.
+    var urlParams = new URLSearchParams(location.search);
+    var urlTab = urlParams.get("tab");
+    var urlNode = urlParams.get("node");
+    var savedTab = recall("atlas.tab");
+    var TABS = { world: 1, work: 1, mine: 1 };
+    var initialTab = TABS[urlTab] ? urlTab :
+      (TABS[savedTab] ? savedTab : (state.worldRoot ? "world" : "work"));
+
+    if (!workRoots.length && !state.worldRoot) {
+      // AN EMPTY STORE IS NOT A FAILURE (TASK-1129). /api/graph used to answer
+      // 404 whenever it derived no roots — while /api/graph/tree answered 200
+      // with an empty list off the same derivation — so this branch fired at a
+      // brand-new database and printed #canvasEmpty's hardcoded "Could not load
+      // the backlog graph.". Both halves of that were wrong: nothing had
+      // failed, and it said "backlog" on the World tab. The route answers 200
+      // now (app.py, the `focus is None` branch) and the wording is chosen
+      // here, per view.
+      showCanvasEmpty(emptyViewMessage(initialTab));
+      document.getElementById("ledeline").textContent =
+        "Nothing here yet — the graph has no nodes.";
+      return;
+    }
+    if (!state.worldRoot) { tabWorld.disabled = true; tabWorld.title = "World tree not ingested (set ATLAS_WORLD_MANIFEST)"; }
+
+    renderSummary();
+    switchTab(initialTab);
+    // An id wins over the tab it names if the two disagree — navigateTo() will hop
+    // to the node's real tree. An unknown/stale id is dropped silently rather than
+    // leaving the board blank.
+    if (urlNode && state.TREE_OF[urlNode]) navigateTo(urlNode);
+  }).catch(function (err) {
+    var empty = document.getElementById("canvasEmpty");
+    empty.hidden = false;
+    // An "AUTH …" error only reaches here when the redirect itself did not happen
+    // (fetchJSON navigates and never settles otherwise). Saying "Could not load
+    // /api/graph" here would send the reader after a data fault that does not
+    // exist — the same misreporting the world-tab catch above exists to stop.
+    if (err && String(err.message).indexOf("AUTH") === 0) {
+      while (empty.firstChild) empty.removeChild(empty.firstChild);
+      empty.appendChild(document.createTextNode("Your session has ended. "));
+      var back = document.createElement("a");
+      back.href = "/auth/login";
+      back.textContent = "Sign in again";
+      empty.appendChild(back);
+      document.getElementById("ledeline").textContent = "Signed out.";
+      return;
+    }
+    // A GENUINE FETCH FAULT, and it has to stay tellable apart from the
+    // empty-store message above: this one names the route and carries the
+    // error, so whoever gets called about it has something to go on. The two
+    // used to be one hardcoded sentence in the markup (TASK-1129).
+    showCanvasEmpty("Could not load /api/graph — " + err.message);
+    document.getElementById("ledeline").textContent = "Could not reach the live API.";
+  });
+</script>

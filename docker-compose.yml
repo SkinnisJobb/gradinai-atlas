@@ -1,0 +1,60 @@
+# Project Atlas — v0 self-contained stack.
+# Its own Postgres, shared with no other service. Published ports bind LOOPBACK by default;
+# exposing one is an explicit opt-in (OSS-02), enforced by tools/ci/check_binds.sh.
+services:
+  atlas-postgres:
+    # postgres:16 (Debian 13) with gosu replaced by a setpriv shim: deploy/postgres/Dockerfile
+    # says why (the upstream gosu binary held every fixable CRITICAL of the image). The base is
+    # pinned tag@digest there and followed by Dependabot. Same major, same data directory.
+    build:
+      context: deploy/postgres
+    container_name: atlas-postgres
+    environment:
+      POSTGRES_USER: atlas
+      # TASK-926 item 4. NOTE: this variable is only read when the data directory
+      # is FIRST initialised. On an existing volume it is ignored entirely, so
+      # changing it here does NOT rotate the password of a running database —
+      # that needs `ALTER USER atlas WITH PASSWORD ...` inside the container.
+      # Believing otherwise leaves the old credential working while looking fixed.
+      POSTGRES_PASSWORD: ${ATLAS_DB_PASSWORD:?set it in the server .env; see TASK-926}
+      POSTGRES_DB: atlas
+    volumes:
+      - atlas-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  atlas-api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: atlas-api
+    environment:
+      ATLAS_DB_URL: postgresql+psycopg2://atlas:${ATLAS_DB_PASSWORD:?set it in the server .env; see TASK-926}@atlas-postgres:5432/atlas
+    depends_on:
+      atlas-postgres:
+        condition: service_healthy
+    ports:
+      # TASK-964: bind LOOPBACK by default, so the raw HTTP port is not reachable
+      # from the LAN at all. The board is served over TLS by caddy-lan on :8443;
+      # this port exists only for things running ON the server (the health probe
+      # and sync-backlog-to-board.sh both curl localhost:8095).
+      #
+      # It must be plain HTTP AND unreachable, not plain HTTP and reachable: a
+      # browser cannot log in over http:// at all, because the session cookie is
+      # __Host- prefixed and Secure cookies are never sent over an insecure
+      # origin. Leaving it on 0.0.0.0 would offer the LAN a login page that can
+      # never succeed, while still accepting Bearer tokens from any LAN device.
+      #
+      # ATLAS_BIND is overridable because the STAGING stack is published to the
+      # LAN on purpose — its tunnel route points at <server-lan-ip>:8096, and
+      # cloudflared cannot reach the staging container by name (different compose
+      # project, different docker network). tools/stage.sh sets 0.0.0.0.
+      - "${ATLAS_BIND:-127.0.0.1}:${ATLAS_PORT:-8095}:8000"
+    restart: unless-stopped
+
+volumes:
+  atlas-pgdata:

@@ -1,0 +1,60 @@
+# The MCP servers the optional `gateway` profile puts behind one endpoint (STORY-oss-15).
+#
+# scripts/render-gateway.py reads this list and writes the gateway's configuration from
+# deploy/gateway/agentgateway.yaml.tmpl. Run it from deploy/oss/, after .env is set:
+#
+#   python3 ../../scripts/render-gateway.py          # writes ./gateway/agentgateway.yaml
+#   docker compose --profile gateway up -d
+#
+# To change the list on an install, copy this file (deploy/oss/gateway/ is gitignored, so a
+# `git pull` never fights your edits) and pass it:
+#
+#   cp ../gateway/gateway.yaml gateway/servers.yaml
+#   python3 ../../scripts/render-gateway.py --servers gateway/servers.yaml
+#
+# Each server (the format is this small YAML subset: mappings, lists, plain or quoted scalars):
+#
+#   name                   a short label: lowercase letters, digits, '-' (the gateway's target
+#                          name; it does NOT become part of any tool name, see below)
+#   url                    the server's MCP endpoint. https:// is verified against `ca`.
+#                          http:// is refused unless `carries_credentials: false`.
+#   tools                  the allow-list: the tool names clients may see and call, or ["*"] for
+#                          every tool the server offers. A tool not listed is absent from
+#                          tools/list and refused when called.
+#   forward_authorization  true: the caller's own `Authorization` header reaches this server
+#                          (atlas-mcp authenticates every caller by it). false (the default):
+#                          it is removed, with any Cookie, before the request leaves the gateway.
+#   ca                     the CA file (inside the gateway container) the server's certificate
+#                          must chain to. Default /certs/ca.crt, the install CA (or your PKI's
+#                          root, ./secrets/tls/ca.crt). Another root must be mounted into the
+#                          container by a compose override first.
+#   tls_hostname           the name to verify and send as SNI. Default: the host in `url`.
+#   carries_credentials    false marks an http:// server as receiving no credential at all;
+#                          forward_authorization must then be false. Required for http://.
+#
+# TOOL NAMES. Every server keeps its own tool names: through the gateway atlas-mcp's tools are
+# `atlas_get`, `atlas_file_work`, ..., exactly as on atlas-mcp itself. The gateway is told never
+# to prefix them with the server name (prefixMode: never), so two servers must not offer the
+# same tool name: a call to a duplicated name is refused.
+
+# Browser origins allowed by CORS besides ATLAS_PUBLIC_URL (always allowed). Never "*".
+cors_origins: []
+
+servers:
+  # atlas-mcp, through atlas-tls's internal TLS front for it (atlas-mcp:9444 on the internal
+  # `gateway` network, the install's server certificate, verified against the install CA).
+  # Every caller's own token is forwarded: atlas-mcp and atlas-api decide what it may do.
+  - name: atlas
+    url: https://atlas-mcp:9444/mcp/
+    forward_authorization: true
+    tools: ["*"]
+
+  # An example second server, commented. It gets no caller token, and only two of its tools:
+  #
+  # - name: tickets
+  #   url: https://tickets.internal.example/mcp
+  #   ca: /certs/ca.crt
+  #   forward_authorization: false
+  #   tools:
+  #     - ticket_get
+  #     - ticket_search

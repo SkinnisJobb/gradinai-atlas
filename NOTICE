@@ -1,0 +1,46 @@
+gradinai-atlas
+Copyright 2026 Johan Gradin
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+-------------------------------------------------------------------------------
+Third-party software
+-------------------------------------------------------------------------------
+
+This repository includes the following third-party files, vendored unmodified
+from their upstream releases. Each remains under its own licence, not under
+the Apache License; the full licence texts are published by the upstream
+projects at the URLs given.
+
+frontend/vendor/d3.min.js
+  D3 v7.9.0, https://d3js.org
+  Copyright 2010-2023 Mike Bostock
+  Licence: ISC, https://github.com/d3/d3/blob/v7.9.0/LICENSE
+
+frontend/vendor/marked.min.js
+  marked v12.0.2, https://github.com/markedjs/marked
+  Copyright (c) 2011-2024, Christopher Jeffrey. (MIT Licensed)
+  Licence: MIT, https://github.com/markedjs/marked/blob/v12.0.2/LICENSE.md
+  (the upstream licence file also carries the BSD-3-Clause notice for
+  Markdown, Copyright (c) 2004, John Gruber)
+
+frontend/vendor/mermaid.min.js
+  Mermaid 11.16.1, https://github.com/mermaid-js/mermaid
+  Copyright (c) 2014 - 2022 Knut Sveidqvist
+  Licence: MIT, https://github.com/mermaid-js/mermaid/blob/mermaid%4011.16.1/LICENSE
+  The bundle has no header of its own; the version is the one embedded in
+  the bundle and the copyright line is from the upstream LICENSE at that tag.
+  The bundle includes these components, whose notices it carries inline:
+    lodash-es (Lodash), Copyright OpenJS Foundation and other contributors;
+      based on Underscore.js, Copyright Jeremy Ashkenas, DocumentCloud and
+      Investigative Reporters & Editors. MIT.
+    DOMPurify 3.4.0, (c) Cure53 and other contributors.
+      Apache-2.0 and MPL-2.0.
+    js-yaml 4.1.1, https://github.com/nodeca/js-yaml. MIT.
+    Cytoscape.js, including:
+      Embeddable Minimum Strictly-Compliant Promises/A+ 1.1.1 Thenable,
+        Copyright (c) 2013-2014 Ralf S. Engelschall. MIT.
+      Event object based on jQuery events. MIT.
+      Bezier curve function generator, Copyright Gaetan Renaudeau. MIT.
+      Runge-Kutta spring physics function generator, adapted from Framer.js,
+        copyright Koen Bok. MIT.

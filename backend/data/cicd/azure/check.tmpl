@@ -1,0 +1,11 @@
+      - job: @@JOB@@
+        # @@ROLE@@
+        displayName: @@ID@@
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - checkout: self
+          # TODO(atlas): replace the next line with the project's @@LABEL@@ command.
+          - script: echo "TODO(atlas) @@LABEL@@ is not configured yet" && exit 1
+            displayName: @@LABEL_Q@@
+@@CONTINUE@@

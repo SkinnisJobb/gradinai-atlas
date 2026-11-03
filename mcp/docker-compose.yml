@@ -1,0 +1,73 @@
+# PROJECT NAME, PINNED. Compose otherwise derives it from the directory — `mcp` — while the
+# container that has been running since 2026-08-15 belongs to a project called `atlas-mcp`,
+# from a `-p atlas-mcp` at first deploy that was recorded nowhere. Unpinned, a plain
+# `docker compose up -d --build` in here builds a SECOND project and then dies on the
+# `container_name` collision, leaving the stale container running and the operator holding a
+# successful-looking build that deployed nothing (2026-08-28). Do not remove this line, and do
+# not rename it: the name is load-bearing for the containers that already exist.
+name: atlas-mcp
+
+services:
+  atlas-mcp:
+    build: .
+    container_name: atlas-mcp
+    ports:
+      # Streamable-HTTP MCP at http://localhost:8092/mcp/ (trailing slash).
+      #
+      # KNOWN PORT CONFLICT, not latent: a PII-cleaning service on the same host
+      # also publishes 8092 (loopback-only, for its de-tokenization vault). That service
+      # is NOT deployed — its compose file is headed "NOT YET BROUGHT UP", verified
+      # 2026-08-14 — so there is nothing actually listening on 8092 to collide with today.
+      # If that service is ever brought up first, one of the two services needs to move;
+      # this comment exists so that future conflict is a known fact, not a rediscovery.
+      #
+      # LOOPBACK BY DEFAULT (OSS-02). A fresh install publishes the MCP plane to this host
+      # only; exposing it to the network is an explicit opt-in. ATLAS_MCP_BIND wins, then
+      # ATLAS_BIND, then 127.0.0.1. tools/ci/check_binds.sh fails the build on a 0.0.0.0 or
+      # bare-port publish here.
+      #
+      # PLAIN HTTP, SO NEVER PAST LOOPBACK (OSS-24). Every request carries a caller's Bearer
+      # token. The network reaches atlas-mcp through the TLS overlay, docker-compose.tls.yml
+      # (atlas-mcp-tls, :8446), which talks to this container over the compose network.
+      # tools/ci/check_tls.sh fails the build if a tracked env file sets ATLAS_MCP_BIND or
+      # ATLAS_BIND to anything but loopback. The Streamable-HTTP URL above is for this host.
+      - "${ATLAS_MCP_BIND:-${ATLAS_BIND:-127.0.0.1}}:8092:8092"
+    # No token of its own: every caller sends Authorization: Bearer atlas_svc_... and
+    # acts as itself (app/caller_auth.py, app/client.py). mcp/.env (gitignored) holds
+    # only the optional flags in .env.example; ATLAS_TOKEN is read solely when the
+    # opt-in migration fallback ATLAS_MCP_ALLOW_SHARED_TOKEN=1 is set.
+    env_file:
+      - .env
+    # READ-ONLY, and nothing the MCP serves: its own source as it is in the server checkout, and
+    # the deploy watch's status file, so app/deploy_status.py can tell a stale image or an
+    # undeployed merge and say so on every tool response (TASK-1154). Missing on a contributor's
+    # machine is fine: both halves then report `unknown` and add no warning.
+    # Every checkout path in MCP_SPEC (app/deploy_status.py) must be mounted here, or the check
+    # reads it as missing and calls a fresh image stale; verify_deploy_warning.py fails if one is
+    # not. requirements-lock.txt is what the Dockerfile installs (PR #131); requirements.txt is no
+    # longer compared, and its mount is kept only so nothing that may read it changes.
+    volumes:
+      - ./app:/deploy-src/mcp/app:ro
+      - ./requirements.txt:/deploy-src/mcp/requirements.txt:ro
+      - ./requirements-lock.txt:/deploy-src/mcp/requirements-lock.txt:ro
+      - ./Dockerfile:/deploy-src/mcp/Dockerfile:ro
+      - ../.deploy-watch:/deploy-watch:ro
+      # OSS-24: a directory holding the CA bundle atlas-mcp trusts for its hop to atlas-api,
+      # when that is not the system store (an enterprise root). Set ATLAS_MCP_CA_DIR to the
+      # host directory and ATLAS_CA_BUNDLE=/etc/atlas/ca/<file>.pem in mcp/.env. Public
+      # certificates only; never a key. Empty by default.
+      - ${ATLAS_MCP_CA_DIR:-../deploy/caddy/certs-empty}:/etc/atlas/ca:ro
+    environment:
+      # Where atlas-api is, as seen from inside this container. NO DEFAULT and no deployment's
+      # value in this file (OSS-02): compose refuses to start without it, so a deploy that
+      # forgot its overlay fails loudly here instead of half-working. The homelab value, and
+      # why it is the only address that works there, lives in deploy/homelab/atlas-mcp.env;
+      # see also app/client.py.
+      - ATLAS_BASE_URL=${ATLAS_BASE_URL:?set ATLAS_BASE_URL; the homelab deploys with --env-file ../deploy/homelab/atlas-mcp.env}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8092/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped

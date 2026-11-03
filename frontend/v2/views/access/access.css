@@ -1,0 +1,24 @@
+/* views/access/access.css — the Access overlay (STORY-oss-11). Loaded by
+   views/access/access.js on first open, so the board shell links nothing new.
+   The chrome is the shared .settings-* overlay (styles/overlays.css); these
+   rules are only what the two sections add. */
+.acc-sheet { width: min(960px, 100%); }
+.acc-mode { margin: 12px 0 0; font-size: calc(13px * var(--ui-scale)); color: var(--ink-soft); line-height: 1.5; }
+.acc-mode b { color: var(--ink); }
+.acc-section { padding-top: 18px; }
+.acc-h3 { margin: 0 0 8px; font-size: calc(13px * var(--ui-scale)); font-family: var(--font-mono);
+  letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint); }
+.acc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; }
+.acc-row input[type="text"], .acc-row select { font: inherit; font-size: calc(13px * var(--ui-scale));
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); }
+.acc-card { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; }
+.acc-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: calc(14px * var(--ui-scale)); color: var(--ink); }
+.acc-faint { color: var(--ink-faint); font-size: calc(12px * var(--ui-scale)); }
+.acc-members { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0; font-size: calc(13px * var(--ui-scale)); }
+.acc-members label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); }
+.acc-table { border-collapse: collapse; width: 100%; font-size: calc(13px * var(--ui-scale)); margin: 8px 0; }
+.acc-table th, .acc-table td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--line); }
+.acc-table th { color: var(--ink-faint); font-weight: 600; font-size: calc(12px * var(--ui-scale)); }
+.acc-empty { color: var(--ink-faint); font-size: calc(13px * var(--ui-scale)); margin: 8px 0; }
+.acc-error { color: var(--att-red); font-size: calc(13px * var(--ui-scale)); margin: 8px 0; }

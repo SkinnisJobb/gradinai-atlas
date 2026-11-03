@@ -1,0 +1,28 @@
+# The install smoke's leg 8c (OSS-26 A): the retrieval add-on in ENTRA mode through workload
+# identity, with no embed_key file. Test-only, read AFTER the shipped deploy/oss/retrieval.yml,
+# deploy/oss/retrieval-workload-identity.yml and tests/retrieval/docker-compose.stub.yml; never
+# part of an install, and deploy/oss/ does not reference it.
+#
+# What it adds, and why it cannot be the shipped files' job:
+#   * atlas-embed-stub reads the same federated token directory atlas-api gets from
+#     retrieval-workload-identity.yml, so it can check the client assertion atlas-api sends at
+#     the token exchange (STUB_FEDERATED_TOKEN_FILE; tests/retrieval/embed_stub.py).
+#   * atlas-api trusts the install CA for the token exchange (SSL_CERT_FILE). The stub plays
+#     login.microsoftonline.com (AZURE_AUTHORITY_HOST=https://gateway:8443/ in .env) with the
+#     install's own TLS leaf; the real authority has a public certificate, which atlas-api's
+#     default trust store already covers. ATLAS_EMBED_CA_BUNDLE covers only the embeddings call.
+# Paths are absolute through the job's environment, as in docker-compose.stub.yml.
+
+services:
+  atlas-embed-stub:
+    environment:
+      STUB_FEDERATED_TOKEN_FILE: /azure-tokens/azure-identity-token
+    volumes:
+      - type: bind
+        source: ${AZURE_FEDERATED_TOKEN_DIR:?set AZURE_FEDERATED_TOKEN_DIR}
+        target: /azure-tokens
+        read_only: true
+
+  atlas-api:
+    environment:
+      SSL_CERT_FILE: /run/secrets/atlas_ca

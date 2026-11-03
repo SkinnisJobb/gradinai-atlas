@@ -1,0 +1,99 @@
+/* styles/graph.css — the graph pane (EPIC-atlas-nodeview). */
+
+svg.graph { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+svg.graph:active { cursor: grabbing; }
+.ring-guide { fill: none; stroke: var(--line); stroke-dasharray: 2 6; vector-effect: non-scaling-stroke; }
+
+/* structure: quiet. relations: coloured by type, hidden unless asked for. */
+.link { fill: none; stroke: var(--line-strong); stroke-width: 1.3; vector-effect: non-scaling-stroke; transition: opacity .15s; }
+.rel { fill: none; stroke-width: 1.3; vector-effect: non-scaling-stroke; opacity: .55; transition: opacity .15s; }
+.rel.works_on { stroke: var(--accent); stroke-dasharray: 5 4; }
+.rel.depends_on { stroke: var(--att-orange); stroke-dasharray: 2 3; }
+.rel.hosted_on { stroke: var(--att-purple); stroke-dasharray: 6 3; }
+.rel.requires { stroke: var(--att-red); }
+.rel.contains { stroke: var(--line-strong); stroke-dasharray: 1 3; }
+.rel.other { stroke: var(--att-green); stroke-dasharray: 4 3; }
+.rel.off { opacity: 0; pointer-events: none; }
+.rel.hot { opacity: 1; stroke-width: 2.2; }
+.link.dim, .rel.dim { opacity: .07; }
+
+.node { cursor: pointer; transition: opacity .15s; }
+.node.dim { opacity: .14; }
+.node .disc { stroke: var(--panel); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.node.focus .disc { stroke: var(--ink); stroke-width: 2.5; }
+.node .ico { fill: none; stroke: var(--panel); stroke-linecap: round; stroke-linejoin: round; }
+.node .track { fill: none; stroke: var(--ring-track); }
+.node .arc { fill: none; stroke: var(--att-green); }
+.node .badge circle { fill: var(--att-red); stroke: var(--panel); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.node .badge text { fill: #fff; font-weight: 700; text-anchor: middle; font-family: var(--font-sans); }
+.node .pip circle { fill: var(--panel); stroke: var(--line-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.node .pip path { fill: none; stroke: var(--ink-soft); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.node .pip.intent path { stroke: var(--att-purple); }
+.node .hubmark { fill: none; stroke: var(--ink-faint); stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
+.node .sel { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; opacity: 0; }
+.node.selected .sel { opacity: 1; }
+.node.pulse .disc { stroke: var(--att-orange); stroke-width: 4; }
+.node.pulse .sel { opacity: 1; stroke: var(--att-orange); }
+.node:focus-visible { outline: none; }
+.node:focus-visible .sel { opacity: 1; stroke: var(--ink); }
+/* level of detail, set per node by labels.js from its radius on screen */
+.node .ico, .node .badge, .node .pip { display: none; }
+.node.lod2 .ico, .node.lod2 .badge, .node.lod3 .ico, .node.lod3 .badge, .node.lod3 .pip { display: inline; }
+.node.lod1 .track, .node.lod1 .arc { display: none; }
+
+.labels text { font-family: var(--font-sans); fill: var(--ink); paint-order: stroke; stroke: var(--ground); stroke-width: 3.5px;
+  stroke-linejoin: round; pointer-events: none; }
+.labels .nm { font-size: calc(12px * var(--ui-scale)); font-weight: 500; }
+.labels .short .nm { font-size: calc(11px * var(--ui-scale)); font-weight: 400; fill: var(--ink-soft); }
+.labels .focus .nm { font-size: calc(13px * var(--ui-scale)); font-weight: 700; }
+.labels .wl { font-size: calc(10.5px * var(--ui-scale)); fill: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.labels .dim { opacity: .12; }
+
+.graph-status { position: absolute; top: 8px; left: 12px; font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint);
+  font-variant-numeric: tabular-nums; pointer-events: none; }
+.graph-legend { position: absolute; left: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); display: flex; flex-wrap: wrap;
+  gap: 4px 12px; align-items: center; max-width: min(620px, calc(100% - 24px)); padding: 7px 10px; border: 1px solid var(--line);
+  border-radius: 8px; background: color-mix(in srgb, var(--panel) 90%, transparent); font-size: calc(11px * var(--ui-scale)); color: var(--ink-soft); }
+.graph-legend svg { width: 14px; height: 14px; vertical-align: -3px; margin-right: 3px; }
+.graph-legend .lg { display: inline-block; width: 18px; border-top: 2px solid var(--line-strong); vertical-align: middle; margin-right: 4px; }
+.graph-legend .lg.works_on { border-top: 2px dashed var(--accent); }
+.graph-legend .lg.depends_on { border-top: 2px dotted var(--att-orange); }
+.graph-legend .lg.hosted_on { border-top: 2px dashed var(--att-purple); }
+.graph-legend .lg.requires { border-top: 2px solid var(--att-red); }
+
+/* controls in the bar */
+.group { display: flex; align-items: center; gap: 6px; }
+.eyebrow { font-size: calc(10px * var(--ui-scale)); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid var(--line-strong); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; background: var(--panel); color: var(--ink-soft); font: inherit; font-size: calc(12px * var(--ui-scale)); padding: 4px 9px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line-strong); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--panel); }
+input[type=range] { accent-color: var(--accent); width: 110px; }
+.steps-val { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 1.2em; }
+.chk { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: calc(12px * var(--ui-scale)); cursor: pointer; }
+.crumb { border: 0; background: none; color: var(--accent); font: inherit; padding: 3px 5px; border-radius: 4px; cursor: pointer;
+  max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumb[aria-current="true"] { color: var(--ink); font-weight: 600; cursor: default; }
+.crumbs .sep { color: var(--ink-faint); }
+
+/* The type filter (TASK-1323): a menu, so the bar stays one line. */
+.tfilter { position: relative; font-size: calc(12px * var(--ui-scale)); }
+.tfilter > summary { list-style: none; cursor: pointer; border: 1px solid var(--line-strong); border-radius: 6px; padding: 3px 9px; color: var(--ink-soft); white-space: nowrap; }
+.tfilter > summary::-webkit-details-marker { display: none; }
+.tfilter > summary::after { content: " ▾"; color: var(--ink-faint); }
+.tfilter.on > summary { border-color: var(--accent); color: var(--accent); }
+.tfilter-menu { position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; min-width: 200px; max-height: 60vh; overflow: auto; display: grid; gap: 6px;
+  padding: 10px 12px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); }
+.tfilter-menu .chk { color: var(--ink); }
+.tcount { margin-left: auto; padding-left: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+/* On a phone the bar scrolls sideways, which would clip an absolute menu. */
+@media (max-width: 760px) { .tfilter-menu { position: fixed; top: auto; left: 16px; right: 16px; } }
+
+/* Path mode (TASK-1298): the routes between two nodes. */
+.path-banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5; display: grid; grid-template-columns: 1fr auto; gap: 2px 14px;
+  align-items: center; max-width: calc(100% - 32px); padding: 8px 10px 8px 14px; background: var(--panel); border: 1px solid var(--accent);
+  border-radius: 10px; box-shadow: var(--shadow); font-size: calc(13px * var(--ui-scale)); }
+.path-banner .btn { grid-row: 1 / span 2; grid-column: 2; }
+.pb-sub { font-size: calc(11.5px * var(--ui-scale)); color: var(--ink-soft); }
+.link.hop { stroke: var(--accent); stroke-width: 2.5; }
+.hop-labels text { fill: var(--ink-soft); font-size: 12px; text-anchor: middle; paint-order: stroke; stroke: var(--ground); stroke-width: 4px; stroke-linejoin: round; }

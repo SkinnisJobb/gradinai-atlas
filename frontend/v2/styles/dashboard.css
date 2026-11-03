@@ -1,0 +1,45 @@
+/* styles/dashboard.css — the dashboard pane (TASK-1447): a grid of boxes about
+   400 px wide, as many columns as views/dashboard/dashboard.js sets in --dash-cols
+   (3, 2 or 1). The box gap matches core/dashboard.js BOX_GAP. */
+
+.pane-dashboard { background: var(--ground); display: flex; flex-direction: column; }
+.dash-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px 0; }
+.dash-head h2 { margin: 0; font-size: calc(13px * var(--ui-scale)); font-weight: 600; color: var(--ink-soft);
+  text-transform: uppercase; letter-spacing: .06em; }
+.dash-grid { display: grid; grid-template-columns: repeat(var(--dash-cols, 1), minmax(0, 440px));
+  gap: 12px; padding: 12px; align-items: start; justify-content: start; min-width: 0; }
+.dash-grid > .dash-empty { grid-column: 1 / -1; height: auto; padding: 48px 24px; }
+
+.dash-box { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow); }
+.dash-box-head { margin: 0; font: inherit; }
+.dash-toggle { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 12px; border: 0; background: none;
+  color: var(--ink); font: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
+.dash-toggle:hover { background: var(--panel-2); }
+.dash-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: calc(13px * var(--ui-scale)); font-weight: 600; }
+.dash-count { flex: none; font-size: calc(11px * var(--ui-scale)); font-variant-numeric: tabular-nums; color: var(--ink-soft);
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; }
+/* A chevron: down when open, right when collapsed. */
+.dash-chev { flex: none; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid var(--ink-faint); }
+.dash-box[data-collapsed] .dash-chev { border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--ink-faint); border-right: 0; }
+.dash-box-body { padding: 0 12px 12px; font-size: calc(12.5px * var(--ui-scale)); min-width: 0; }
+.dash-error { margin: 0; color: var(--att-red); font-size: calc(12px * var(--ui-scale)); }
+.dash-none { margin: 0; color: var(--ink-soft); }
+
+/* My tasks (TASK-1450): one fixed-height row per item, --mt-visible rows
+   (views/dashboard/my-tasks.js VISIBLE_ROWS, 7) before the list scrolls. */
+.mt-list { --mt-row: calc(28px * var(--ui-scale)); list-style: none; margin: 0 -12px; padding: 0;
+  max-height: calc(var(--mt-row) * var(--mt-visible, 7)); overflow-y: auto; overscroll-behavior: contain; }
+.mt-row { display: flex; align-items: center; gap: 8px; width: 100%; height: var(--mt-row); padding: 0 12px; border: 0;
+  background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.mt-row:hover, .mt-row:focus-visible { background: var(--panel-2); }
+.mt-id { flex: none; font-size: calc(11px * var(--ui-scale)); font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+.mt-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Phones: one column, the full width, over the graph like the work board. */
+@media (max-width: 760px) {
+  .pane-dashboard { position: absolute; inset: 0; z-index: 2; }
+  .dash-grid { grid-template-columns: minmax(0, 1fr); }
+}

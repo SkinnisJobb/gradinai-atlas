@@ -1,0 +1,25 @@
+{
+ "_comment": "Which intents the self seed carries (TASK-1461). Key node_id:slug. Only 'include' is seeded; 'borderline' waits for a person; an intent new on the source shows as 'pending' in INTENTS-REVIEW.md.",
+ "decisions": {
+  "atlas-backend:no-write-back-to-git": {"decision": "include", "reason": "a product design decision"},
+  "atlas-backend:postgres-is-authoritative": {"decision": "include", "reason": "a product design decision (ADR 0029)"},
+  "atlas-context:pointers-within-budgets": {"decision": "include", "reason": "how the context answer is shaped (ADR 0044)"},
+  "atlas-frontend:layout-is-judged-not-measured": {"decision": "include", "reason": "how a board layout change is verified"},
+  "atlas-frontend:no-module-encodes-the-graph": {"decision": "include", "reason": "a rule for the board's code"},
+  "atlas-frontend:render-names-verbatim": {"decision": "include", "reason": "a rule for the board's rendering"},
+  "atlas-identity:token-belongs-to-the-human": {"decision": "include", "reason": "the product's token model (ADR 0034)"},
+  "atlas-mcp:facade-not-second-brain": {"decision": "include", "reason": "the MCP service's design (ADR 0033)"},
+  "atlas-retrieval:atlas-complete-without-it": {"decision": "include", "reason": "the add-on's contract (ADR 0044)"},
+  "atlas-signals:probes-and-health-out-of-scope": {"decision": "include", "reason": "the scope of the signals area"},
+  "atlas-work-store:keep-the-id-scheme": {"decision": "include", "reason": "the product's id scheme"},
+  "atlas-world-model:ask-before-binding": {"decision": "include", "reason": "a rule for agents binding work to nodes"},
+  "atlas-world-model:contains-is-part-of": {"decision": "include", "reason": "the world vocabulary (ADR 0030)"},
+  "atlas-world-model:node-holds-open-work": {"decision": "include", "reason": "how node load is counted"},
+  "atlas:agents-propose-humans-commit": {"decision": "include", "reason": "the product's core rule for agents (ADR 0032)"},
+  "atlas:context-minimal": {"decision": "include", "reason": "the product's direction: a minimal context layer for agents"},
+  "atlas:no-backup": {"decision": "exclude", "reason": "one estate's policy, not the product's; the OSS install ships a backup profile"},
+  "atlas:oss-work-graph": {"decision": "include", "reason": "the product's purpose"},
+  "atlas:postgres-everywhere": {"decision": "exclude", "reason": "a rule for contributors to Atlas's own test suite, not for the product"},
+  "atlas:work-rolls-up": {"decision": "include", "reason": "how rollups work in the product (ADR 0028)"}
+ }
+}

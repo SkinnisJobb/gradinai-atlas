@@ -1,0 +1,5 @@
+# The SAST job's scanners (.github/workflows/sast.yml), pinned exactly. CI tooling only, in no
+# image. Not followed by Dependabot (its pip entries cover /backend and /mcp): bump by hand
+# when the LCM review (SECURITY.md) comes round.
+semgrep==1.180.0
+bandit==1.9.4

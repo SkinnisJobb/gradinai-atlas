@@ -1,0 +1,1399 @@
+{
+  "_comment": [
+    "The reviewed mapping from the `self` seed profile (backend/self_seed_data.py) onto the baseload",
+    "(agent/plans/oss-baseload.md section 4.2). Two parts:",
+    "  intents     the intents that ship, by `<self-seed node>:<slug>`, the baseload node each lands on",
+    "              and its group. Only groups in `ship_intent_groups` are seeded (decision D-B4: ship",
+    "              the product-behaviour intents, hold the contributor ones). `edits` are exact",
+    "              [old, new] replacements in the statement; one that no longer applies fails the run.",
+    "  paragraphs  candidate paragraphs of self-seed prose, by content hash. A paragraph moves onto its",
+    "              baseload node ONLY when `review` is `yes`, a person's decision; `pending` and `no`",
+    "              move nothing. `python tools/gen_baseload.py candidates` refreshes the list from",
+    "              `node_map` and keeps every decision already made. Every moved paragraph passes the",
+    "              same forbidden patterns as authored text (check C5)."
+  ],
+  "ship_intent_groups": [
+    "product"
+  ],
+  "intents": [
+    {
+      "from": "atlas:agents-propose-humans-commit",
+      "to": "atlas-system",
+      "group": "product"
+    },
+    {
+      "from": "atlas:work-rolls-up",
+      "to": "atlas-system",
+      "group": "product"
+    },
+    {
+      "from": "atlas:oss-work-graph",
+      "to": "atlas-system",
+      "group": "product"
+    },
+    {
+      "from": "atlas-backend:postgres-is-authoritative",
+      "to": "atlas-system-postgres",
+      "group": "product"
+    },
+    {
+      "from": "atlas-context:pointers-within-budgets",
+      "to": "atlas-system-context",
+      "group": "product"
+    },
+    {
+      "from": "atlas-identity:token-belongs-to-the-human",
+      "to": "atlas-system-identity",
+      "group": "product",
+      "edits": [
+        [
+          "Both halves matter, and collapsing them into one sentence is what put a false premise in EPIC-atlas-contributor-onboarding for six days: \"belongs to the human\"",
+          "Both halves matter: \"belongs to the human\""
+        ],
+        [
+          "Since ADR 0034, `auth_user.person_user_id` records",
+          "`auth_user.person_user_id` records"
+        ],
+        [
+          "(enforced since 2026-08-15 for every non-session principal, an unmapped route failing closed)",
+          "(enforced for every non-session principal, an unmapped route failing closed)"
+        ]
+      ]
+    },
+    {
+      "from": "atlas-mcp:facade-not-second-brain",
+      "to": "atlas-system-mcp",
+      "group": "product"
+    },
+    {
+      "from": "atlas-retrieval:atlas-complete-without-it",
+      "to": "atlas-system-retrieval",
+      "group": "product"
+    },
+    {
+      "from": "atlas-world-model:contains-is-part-of",
+      "to": "atlas-system-graph",
+      "group": "product"
+    },
+    {
+      "from": "atlas-world-model:node-holds-open-work",
+      "to": "atlas-system-graph",
+      "group": "product"
+    },
+    {
+      "from": "atlas-world-model:ask-before-binding",
+      "to": "atlas-system-graph",
+      "group": "product"
+    },
+    {
+      "from": "atlas:context-minimal",
+      "to": "atlas-system",
+      "group": "contributor"
+    },
+    {
+      "from": "atlas-backend:no-write-back-to-git",
+      "to": "atlas-system-graph",
+      "group": "contributor"
+    },
+    {
+      "from": "atlas-frontend:no-module-encodes-the-graph",
+      "to": "atlas-system-board",
+      "group": "contributor"
+    },
+    {
+      "from": "atlas-frontend:layout-is-judged-not-measured",
+      "to": "atlas-system-board",
+      "group": "contributor"
+    },
+    {
+      "from": "atlas-frontend:render-names-verbatim",
+      "to": "atlas-system-board",
+      "group": "contributor"
+    },
+    {
+      "from": "atlas-signals:probes-and-health-out-of-scope",
+      "to": "atlas-system-signals",
+      "group": "contributor"
+    },
+    {
+      "from": "atlas-work-store:keep-the-id-scheme",
+      "to": "atlas-system-work",
+      "group": "contributor"
+    }
+  ],
+  "node_map": {
+    "atlas-api": "atlas-system-api",
+    "atlas-postgres": "atlas-system-postgres",
+    "atlas-mcp": "atlas-system-mcp",
+    "atlas-graph": "atlas-system-graph",
+    "atlas-world-model": "atlas-system-graph",
+    "atlas-work-store": "atlas-system-work",
+    "atlas-context": "atlas-system-context",
+    "atlas-retrieval": "atlas-system-retrieval",
+    "atlas-signals": "atlas-system-signals",
+    "atlas-docs": "atlas-system-docs",
+    "atlas-identity": "atlas-system-identity",
+    "atlas-visibility": "atlas-system-access",
+    "atlas-ingress": "atlas-system-tls",
+    "atlas-ops": "atlas-system-install",
+    "atlas-frontend": "atlas-system-board"
+  },
+  "estate_terms": [
+    "caddy-lan",
+    "cloudflared",
+    "LAN",
+    "homelab",
+    "staging",
+    "atlas-lan",
+    "stage.sh",
+    "fork.sh",
+    "deploy.sh",
+    "check-deployed",
+    "snapshot.sh",
+    "live"
+  ],
+  "paragraphs": [
+    {
+      "sha": "557619816b1ccddb",
+      "from": "atlas-api",
+      "field": "abstract",
+      "to": "atlas-system-api",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "atlas-api is Project Atlas's backend and API layer — a single-file FastAPI service ..."
+    },
+    {
+      "sha": "f07c49b01c5d2451",
+      "from": "atlas-api",
+      "field": "abstract",
+      "to": "atlas-system-api",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Boot is a READ.** It used to re-ingest the backlog directory and the world manifest on ..."
+    },
+    {
+      "sha": "f97ed80096d76acf",
+      "from": "atlas-api",
+      "field": "abstract",
+      "to": "atlas-system-api",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "Its headline read endpoint is `GET /api/graph?focus&depth&edges&cap` — a ..."
+    },
+    {
+      "sha": "c99ea369bebdb58d",
+      "from": "atlas-api",
+      "field": "abstract",
+      "to": "atlas-system-api",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "Depends on **atlas-postgres** for every read and write — `docker-compose.yml` encodes ..."
+    },
+    {
+      "sha": "108eb32722a53e6a",
+      "from": "atlas-api",
+      "field": "detail",
+      "to": "atlas-system-api",
+      "into": "detail",
+      "review": "pending",
+      "preview": "See `docs/nodes/atlas-api/architecture.md` (this node's Docs tab) for the full ..."
+    },
+    {
+      "sha": "44e10c6e49930dbe",
+      "from": "atlas-context",
+      "field": "abstract",
+      "to": "atlas-system-context",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "`atlas-context` is Atlas' answer to an open question — \"tell me about X\", \"what touches ..."
+    },
+    {
+      "sha": "31b133c7ce16f0c3",
+      "from": "atlas-context",
+      "field": "abstract",
+      "to": "atlas-system-context",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "- **seeds**: the nodes that best match X, exactly what a search returns; - ..."
+    },
+    {
+      "sha": "7f39daf767627080",
+      "from": "atlas-context",
+      "field": "abstract",
+      "to": "atlas-system-context",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "Every entry is an id with a type, a name and a one-line summary; the text is one ..."
+    },
+    {
+      "sha": "94ea74eb16a3ba43",
+      "from": "atlas-context",
+      "field": "abstract",
+      "to": "atlas-system-context",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**It is core: it needs no add-on.** Seeds come from the search route itself. With the ..."
+    },
+    {
+      "sha": "028c0d5aa85f040b",
+      "from": "atlas-context",
+      "field": "abstract",
+      "to": "atlas-system-context",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**What a caller may not see is absent from every part**, filtered inside each statement, ..."
+    },
+    {
+      "sha": "85a976b4e75251b4",
+      "from": "atlas-context",
+      "field": "abstract",
+      "to": "atlas-system-context",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "Its answer is only as good as the edges it walks: the impact set reads `requires`, mapped ..."
+    },
+    {
+      "sha": "82729ec4865ce34d",
+      "from": "atlas-context",
+      "field": "detail",
+      "to": "atlas-system-context",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Seeds are the search route's answer, not a copy of it.** `context` calls ..."
+    },
+    {
+      "sha": "6459cef6b16477c0",
+      "from": "atlas-context",
+      "field": "detail",
+      "to": "atlas-system-context",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**The impact walk filters at every step.** A recursive CTE over `requires`, inward, with ..."
+    },
+    {
+      "sha": "3145c8a37cab1eb9",
+      "from": "atlas-context",
+      "field": "detail",
+      "to": "atlas-system-context",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Decisions are ranked on the question's words and on the seeds' ids and names.** An ADR ..."
+    },
+    {
+      "sha": "d9010642f64afdba",
+      "from": "atlas-context",
+      "field": "detail",
+      "to": "atlas-system-context",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**A neighbour is listed once**, through its best-ranked seed, and a seed is never ..."
+    },
+    {
+      "sha": "c57afa1835239e43",
+      "from": "atlas-context",
+      "field": "detail",
+      "to": "atlas-system-context",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Proven, not asserted** (`backend/verify_context.py`, plain Postgres, add-on off): every ..."
+    },
+    {
+      "sha": "920efe69093262e7",
+      "from": "atlas-docs",
+      "field": "abstract",
+      "to": "atlas-system-docs",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "`atlas-docs` owns **node documentation**: the `node_doc` table, the allowlisted read ..."
+    },
+    {
+      "sha": "ef5adbee0c350291",
+      "from": "atlas-docs",
+      "field": "abstract",
+      "to": "atlas-system-docs",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "Two ADRs define it. **ADR 0020** set the standard: a node carries `summary` (a line), ..."
+    },
+    {
+      "sha": "c32e7c3b9eddb586",
+      "from": "atlas-docs",
+      "field": "abstract",
+      "to": "atlas-system-docs",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Storing is not serving, deliberately.** `PUT /api/node/{id}/doc` stores a document ..."
+    },
+    {
+      "sha": "4b91ba2c6844305c",
+      "from": "atlas-docs",
+      "field": "detail",
+      "to": "atlas-system-docs",
+      "into": "detail",
+      "review": "pending",
+      "preview": "See `docs/adr/0020-atlas-node-documentation-standard.md` for the full standard. **The ..."
+    },
+    {
+      "sha": "97567a92b2c8a9e4",
+      "from": "atlas-docs",
+      "field": "detail",
+      "to": "atlas-system-docs",
+      "into": "detail",
+      "review": "pending",
+      "preview": "`DELETE .../doc` leaves the `docs[]` allowlist entry alone on purpose — the entry is a ..."
+    },
+    {
+      "sha": "7e694413ed4b9da9",
+      "from": "atlas-docs",
+      "field": "detail",
+      "to": "atlas-system-docs",
+      "into": "detail",
+      "review": "pending",
+      "preview": "An entry marked `external: true` gets its own **200** response saying so, distinguishable ..."
+    },
+    {
+      "sha": "ca6948bab63018a6",
+      "from": "atlas-docs",
+      "field": "detail",
+      "to": "atlas-system-docs",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Nothing here is open, and the closures are worth knowing rather than re-proposing.** ..."
+    },
+    {
+      "sha": "754e23183445c017",
+      "from": "atlas-docs",
+      "field": "detail",
+      "to": "atlas-system-docs",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**The accepted consequence, recorded rather than lost: nothing mechanically checks the ..."
+    },
+    {
+      "sha": "4e02cbae2fc970eb",
+      "from": "atlas-frontend",
+      "field": "abstract",
+      "to": "atlas-system-board",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "atlas-frontend is Project Atlas's browser client. It renders the node/edge graph and the ..."
+    },
+    {
+      "sha": "515b2f1374efcf19",
+      "from": "atlas-frontend",
+      "field": "abstract",
+      "to": "atlas-system-board",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**The board is board v2, served at `/board`** (ADR 0043). It is three panes side by side, ..."
+    },
+    {
+      "sha": "2a7f5662ae301804",
+      "from": "atlas-frontend",
+      "field": "abstract",
+      "to": "atlas-system-board",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "- **The graph.** Opens on the roots and your starred nodes. Clicking a node focuses it, ..."
+    },
+    {
+      "sha": "c0dad5531157f108",
+      "from": "atlas-frontend",
+      "field": "abstract",
+      "to": "atlas-system-board",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "The work board and the panel can each be moved to a window of their own (for a second ..."
+    },
+    {
+      "sha": "7bce478c3c2c6f78",
+      "from": "atlas-frontend",
+      "field": "abstract",
+      "to": "atlas-system-board",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**The previous board is frozen and unsupported, at `/board/legacy`.** It is the world ..."
+    },
+    {
+      "sha": "bc68de6e7d80cceb",
+      "from": "atlas-frontend",
+      "field": "abstract",
+      "to": "atlas-system-board",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Every page is behind a login (ADR 0025)**, with one deliberate exception: `/` (ADR ..."
+    },
+    {
+      "sha": "abc06c1ba27a9ffb",
+      "from": "atlas-frontend",
+      "field": "abstract",
+      "to": "atlas-system-board",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "Depends on **atlas-api**: atlas-frontend cannot render anything without it. Healthy means ..."
+    },
+    {
+      "sha": "0d9110dcd9b7e0bb",
+      "from": "atlas-frontend",
+      "field": "detail",
+      "to": "atlas-system-board",
+      "into": "detail",
+      "review": "pending",
+      "preview": "Source: `project-atlas/frontend/v2/` for the board (entry `v2/app.js`; layers `core/` ..."
+    },
+    {
+      "sha": "08fb6a07935bdc79",
+      "from": "atlas-frontend",
+      "field": "detail",
+      "to": "atlas-system-board",
+      "into": "detail",
+      "review": "pending",
+      "preview": "The graph's index (`ix`) is one bounded graph read (`GRAPH_URL` in `v2/app.js`: world ..."
+    },
+    {
+      "sha": "c54be10047a4cc1e",
+      "from": "atlas-graph",
+      "field": "abstract",
+      "to": "atlas-system-graph",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "What it owns:"
+    },
+    {
+      "sha": "fc0f3d664bba71fb",
+      "from": "atlas-graph",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "See `docs/nodes/atlas-graph/architecture.md` (this node's Docs tab) for the diagram. `GET ..."
+    },
+    {
+      "sha": "1e0be4ba1c80e86c",
+      "from": "atlas-graph",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "`PATCH /api/node` assigns each supplied field with `exclude_unset`, and **replaces ..."
+    },
+    {
+      "sha": "44cd6120d47397a0",
+      "from": "atlas-graph",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Graph writes ARE audited now** — `graph_event`, built 2026-08-24 (TASK-1045), beside ..."
+    },
+    {
+      "sha": "352bf8c95c11b6fe",
+      "from": "atlas-graph",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Known gap, filed and open:** there is no migration tooling (TASK-1015). Every ..."
+    },
+    {
+      "sha": "de0414bebe194c53",
+      "from": "atlas-identity",
+      "field": "abstract",
+      "to": "atlas-system-identity",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "`atlas-identity` is **authentication** — who you are and how you prove it. It owns the ..."
+    },
+    {
+      "sha": "70882a072b25fc6d",
+      "from": "atlas-identity",
+      "field": "abstract",
+      "to": "atlas-system-identity",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**The gate is middleware, not a dependency.** `AuthGate` (`backend/auth.py`) is ..."
+    },
+    {
+      "sha": "ca00371b85f147f6",
+      "from": "atlas-identity",
+      "field": "abstract",
+      "to": "atlas-system-identity",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Exactly two credential branches, never three.** `Authorization: Bearer atlas_svc_...` ..."
+    },
+    {
+      "sha": "1f89c27fa98f2a91",
+      "from": "atlas-identity",
+      "field": "abstract",
+      "to": "atlas-system-identity",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Passwords** are `argon2id+hmac-sha256-v1`: NFC -> HMAC-SHA256 under a server pepper -> ..."
+    },
+    {
+      "sha": "ee99e48551c7cfb6",
+      "from": "atlas-identity",
+      "field": "abstract",
+      "to": "atlas-system-identity",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Scopes are enforced.** As of TASK-1086 (2026-08-15), `guard_write` sends every ..."
+    },
+    {
+      "sha": "011a95c3bdde3261",
+      "from": "atlas-identity",
+      "field": "detail",
+      "to": "atlas-system-identity",
+      "into": "detail",
+      "review": "pending",
+      "preview": "See `docs/nodes/atlas-identity/architecture.md` (this node's Docs tab) — \"The gate, from ..."
+    },
+    {
+      "sha": "e3dbe075203afef7",
+      "from": "atlas-identity",
+      "field": "detail",
+      "to": "atlas-system-identity",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**SSO accounts, the IdP step-up and the password fallback (opt-in, OIDC installs only).** ..."
+    },
+    {
+      "sha": "068cea7d6a994191",
+      "from": "atlas-identity",
+      "field": "detail",
+      "to": "atlas-system-identity",
+      "into": "detail",
+      "review": "pending",
+      "preview": "The forced password change (`must_change_password`) has ONE rule, ..."
+    },
+    {
+      "sha": "36e5f4874ec4875d",
+      "from": "atlas-identity",
+      "field": "detail",
+      "to": "atlas-system-identity",
+      "into": "detail",
+      "review": "pending",
+      "preview": "That personal password is a **fallback for when the IdP is down** (TASK-1454): `link-idp` ..."
+    },
+    {
+      "sha": "103231db83e6139b",
+      "from": "atlas-identity",
+      "field": "detail",
+      "to": "atlas-system-identity",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Two public pages a person reads.** `/auth/privacy` (TASK-941) answers without any ..."
+    },
+    {
+      "sha": "a234a13b08d946bd",
+      "from": "atlas-ingress",
+      "field": "abstract",
+      "to": "atlas-system-tls",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "`atlas-ingress` is **the path in** — how a request reaches `atlas-api` at all. It owns ..."
+    },
+    {
+      "sha": "c5dca70c3d7a03f7",
+      "from": "atlas-ingress",
+      "field": "abstract",
+      "to": "atlas-system-tls",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**The API's own port is never a way in from the network.** A browser or a remote agent ..."
+    },
+    {
+      "sha": "017f6cbadf5e83ba",
+      "from": "atlas-ingress",
+      "field": "abstract",
+      "to": "atlas-system-tls",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**What the bare domain exposes changed on 2026-08-25 (ADR 0035).** `/` no longer ..."
+    },
+    {
+      "sha": "6bcd419a56acf60b",
+      "from": "atlas-ingress",
+      "field": "abstract",
+      "to": "atlas-system-tls",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**No identity-aware proxy stands in front of Atlas.** Atlas's own login is the sole gate ..."
+    },
+    {
+      "sha": "fa4b51f4785dbe7b",
+      "from": "atlas-ingress",
+      "field": "detail",
+      "to": "atlas-system-tls",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Two allow-lists, both from the environment, both fail-closed at import.** ..."
+    },
+    {
+      "sha": "e336181d4924e401",
+      "from": "atlas-ingress",
+      "field": "detail",
+      "to": "atlas-system-tls",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Config lives in the repo**: the reverse proxy's `Caddyfile` and the compose file that ..."
+    },
+    {
+      "sha": "882187522cf3cb49",
+      "from": "atlas-ingress",
+      "field": "detail",
+      "to": "atlas-system-tls",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**A tunnel connector may carry more than Atlas.** When an installation's connector also ..."
+    },
+    {
+      "sha": "86d3513e7d12d568",
+      "from": "atlas-mcp",
+      "field": "abstract",
+      "to": "atlas-system-mcp",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "Its verbs are task-shaped rather than one-per-node-type: `atlas_file_work` creates a ..."
+    },
+    {
+      "sha": "a60834c2be52034e",
+      "from": "atlas-mcp",
+      "field": "abstract",
+      "to": "atlas-system-mcp",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**The consequence that will look like a bug.** A hidden node and a nonexistent one return ..."
+    },
+    {
+      "sha": "46b41e618f3f1c7e",
+      "from": "atlas-mcp",
+      "field": "abstract",
+      "to": "atlas-system-mcp",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Deletes.** `atlas_delete` is registered when `ATLAS_MCP_ENABLE_DELETE` is set, and ..."
+    },
+    {
+      "sha": "880e8997edea808d",
+      "from": "atlas-mcp",
+      "field": "abstract",
+      "to": "atlas-system-mcp",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "The tool list arrives with the MCP connection itself (`tools/list`). `atlas_capabilities` ..."
+    },
+    {
+      "sha": "1f059790da93f2a1",
+      "from": "atlas-mcp",
+      "field": "detail",
+      "to": "atlas-system-mcp",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**What the tools cannot do, on purpose.**"
+    },
+    {
+      "sha": "1e62081ee74923d2",
+      "from": "atlas-mcp",
+      "field": "detail",
+      "to": "atlas-system-mcp",
+      "into": "detail",
+      "review": "pending",
+      "preview": "- **No tool sets an assignee.** Neither `atlas_file_work` nor `atlas_update_work` takes ..."
+    },
+    {
+      "sha": "92e265eb63dd8116",
+      "from": "atlas-mcp",
+      "field": "detail",
+      "to": "atlas-system-mcp",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**How X is connected to Y: `atlas_path`** (since 2026-10-23, over `GET /api/graph/path`). ..."
+    },
+    {
+      "sha": "44cf07e92c8a8554",
+      "from": "atlas-mcp",
+      "field": "detail",
+      "to": "atlas-system-mcp",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**A new tool or prompt is invisible until the gateway names it.** AgentGateway's ..."
+    },
+    {
+      "sha": "76ba5c7d36f4aa17",
+      "from": "atlas-mcp",
+      "field": "detail",
+      "to": "atlas-system-mcp",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**A tool response may carry `deploy_warning`, and it means the deployment, not the call** ..."
+    },
+    {
+      "sha": "4c6dfe0c8c80988e",
+      "from": "atlas-mcp",
+      "field": "detail",
+      "to": "atlas-system-mcp",
+      "into": "detail",
+      "review": "pending",
+      "preview": "- its own image against the source in the server checkout, mounted read-only at ..."
+    },
+    {
+      "sha": "324e2022198bf6fd",
+      "from": "atlas-mcp",
+      "field": "detail",
+      "to": "atlas-system-mcp",
+      "into": "detail",
+      "review": "pending",
+      "preview": "How a call travels, where each piece is configured and how to change a tool are in the ..."
+    },
+    {
+      "sha": "ac9f0a0b8403e82d",
+      "from": "atlas-ops",
+      "field": "abstract",
+      "to": "atlas-system-install",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**One command runs the suite.** `cd backend && python verify_all.py` discovers every ..."
+    },
+    {
+      "sha": "19169e1308720f52",
+      "from": "atlas-ops",
+      "field": "abstract",
+      "to": "atlas-system-install",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**There is deliberately no skip path.** An unreachable database is a hard exit, and ..."
+    },
+    {
+      "sha": "679bde24e1ee7b99",
+      "from": "atlas-ops",
+      "field": "abstract",
+      "to": "atlas-system-install",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**The suite runs by itself now** (2026-08-23, answering TASK-1070). ..."
+    },
+    {
+      "sha": "e32a37b833c8a66a",
+      "from": "atlas-ops",
+      "field": "abstract",
+      "to": "atlas-system-install",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**What CI does not do is block anything.** A branch ruleset requiring the checks was ..."
+    },
+    {
+      "sha": "d04d67ba340ff4ae",
+      "from": "atlas-ops",
+      "field": "detail",
+      "to": "atlas-system-install",
+      "into": "detail",
+      "review": "pending",
+      "preview": "Live deploys are not the agent's call. The procedure is `agent/procedures/release.md`; ..."
+    },
+    {
+      "sha": "409bc2af0c3a1cfa",
+      "from": "atlas-postgres",
+      "field": "abstract",
+      "to": "atlas-system-postgres",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "atlas-postgres is a PostgreSQL 16 container holding the entirety of Project Atlas's ..."
+    },
+    {
+      "sha": "55d5834df1c784f1",
+      "from": "atlas-postgres",
+      "field": "abstract",
+      "to": "atlas-system-postgres",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "The only connection to it is from **atlas-api**, over `ATLAS_DB_URL` built from the ..."
+    },
+    {
+      "sha": "2aea70aae27eff76",
+      "from": "atlas-postgres",
+      "field": "abstract",
+      "to": "atlas-system-postgres",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "What persists across a container recreate is exactly the `atlas-pgdata` named volume; ..."
+    },
+    {
+      "sha": "e00e43367c808fa7",
+      "from": "atlas-postgres",
+      "field": "detail",
+      "to": "atlas-system-postgres",
+      "into": "detail",
+      "review": "pending",
+      "preview": "See `docs/nodes/atlas-postgres/architecture.md` (this node's Docs tab) for the connection ..."
+    },
+    {
+      "sha": "575dd696570257f4",
+      "from": "atlas-retrieval",
+      "field": "abstract",
+      "to": "atlas-system-retrieval",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "`atlas-retrieval` is the **optional** semantic half of \"tell me about X\" (ADR 0044, ..."
+    },
+    {
+      "sha": "06793c2a3c42a799",
+      "from": "atlas-retrieval",
+      "field": "abstract",
+      "to": "atlas-system-retrieval",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**How it is used.** `GET /api/search` and the MCP tool `atlas_node_search` take ..."
+    },
+    {
+      "sha": "02e8e7e67797fef9",
+      "from": "atlas-retrieval",
+      "field": "abstract",
+      "to": "atlas-system-retrieval",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Off by default, and off changes nothing.** With `ATLAS_RETRIEVAL` unset there is no ..."
+    },
+    {
+      "sha": "de0c237a06080fbe",
+      "from": "atlas-retrieval",
+      "field": "abstract",
+      "to": "atlas-system-retrieval",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**How it stays current.** A background loop inside atlas-api wakes every interval, hashes ..."
+    },
+    {
+      "sha": "0d2e685b5f05e26b",
+      "from": "atlas-retrieval",
+      "field": "abstract",
+      "to": "atlas-system-retrieval",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**What it may send out, and what a caller may see.** Two separate controls. ..."
+    },
+    {
+      "sha": "b712621a0a1391a0",
+      "from": "atlas-retrieval",
+      "field": "abstract",
+      "to": "atlas-system-retrieval",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "Code: `backend/retrieval/` (`query.py` is the query side). Measuring recall against full ..."
+    },
+    {
+      "sha": "e27a09f1d8336df9",
+      "from": "atlas-retrieval",
+      "field": "detail",
+      "to": "atlas-system-retrieval",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**A model change re-indexes; it never mixes.** Every row carries its model, every source ..."
+    },
+    {
+      "sha": "28bdc2f559d88db6",
+      "from": "atlas-retrieval",
+      "field": "detail",
+      "to": "atlas-system-retrieval",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**One worker per database.** A pass takes a Postgres advisory lock; a second process or ..."
+    },
+    {
+      "sha": "11c0273dea8ef93a",
+      "from": "atlas-retrieval",
+      "field": "detail",
+      "to": "atlas-system-retrieval",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Not a foreign key, on purpose.** `retrieval_chunk.node_id` is bare text, so deleting a ..."
+    },
+    {
+      "sha": "31d7efb9311573e8",
+      "from": "atlas-retrieval",
+      "field": "detail",
+      "to": "atlas-system-retrieval",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Workitems are not indexed yet** (ADR 0044 phase 6): their visibility resolves through ..."
+    },
+    {
+      "sha": "a6b22d268681377d",
+      "from": "atlas-signals",
+      "field": "abstract",
+      "to": "atlas-system-signals",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "`atlas-signals` is the derivation layer — one module, `backend/attention.py`, that turns ..."
+    },
+    {
+      "sha": "ac44feb25442fc24",
+      "from": "atlas-signals",
+      "field": "abstract",
+      "to": "atlas-system-signals",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Nothing here is hand-set.** ADR 0019's rule is that every value is re-derivable from ..."
+    },
+    {
+      "sha": "115b33b7735cd441",
+      "from": "atlas-signals",
+      "field": "abstract",
+      "to": "atlas-system-signals",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Fill is `worst(state, urgency)`.** State is a node's own condition: `blocked` red, ..."
+    },
+    {
+      "sha": "cfe7efd33ba31705",
+      "from": "atlas-signals",
+      "field": "abstract",
+      "to": "atlas-system-signals",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**`purple` is reserved and never returned in v1.** ADR 0019's ageing awaiting-decision ..."
+    },
+    {
+      "sha": "98acd8e652b125a6",
+      "from": "atlas-signals",
+      "field": "detail",
+      "to": "atlas-system-signals",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Which rollups are safe over several parents, and how.** `max`-shaped operations are ..."
+    },
+    {
+      "sha": "bddec4e78837bb33",
+      "from": "atlas-signals",
+      "field": "detail",
+      "to": "atlas-system-signals",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**`work_load()` is deliberately not a rollup.** It is a per-object readout over ..."
+    },
+    {
+      "sha": "fad3b8a1782f2073",
+      "from": "atlas-visibility",
+      "field": "abstract",
+      "to": "atlas-system-access",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "`atlas-visibility` is **authorisation to see** — what a signed-in caller may read. It ..."
+    },
+    {
+      "sha": "6b85250109f325b1",
+      "from": "atlas-visibility",
+      "field": "abstract",
+      "to": "atlas-system-access",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Two marks, not one.** `node_visibility` answers *\"is this node private?\"*; it cannot ..."
+    },
+    {
+      "sha": "7a4d1ab32301559a",
+      "from": "atlas-visibility",
+      "field": "abstract",
+      "to": "atlas-system-access",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**The rule, applied verbatim and fail-closed.** No principal → invisible. Owner → ..."
+    },
+    {
+      "sha": "fd117eac4fc63983",
+      "from": "atlas-visibility",
+      "field": "abstract",
+      "to": "atlas-system-access",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**A workitem follows what it WORKS ON.** It carries no mark of its own and has no ..."
+    },
+    {
+      "sha": "aed3dff757ce8f31",
+      "from": "atlas-visibility",
+      "field": "abstract",
+      "to": "atlas-system-access",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Grants inherit person → bot** (ADR 0034). An agent's visible set is its own grants ..."
+    },
+    {
+      "sha": "ab3ef08524e10f46",
+      "from": "atlas-visibility",
+      "field": "abstract",
+      "to": "atlas-system-access",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "**Two mechanisms that are the whole point.** The filter goes *inside* the query as `WHERE ..."
+    },
+    {
+      "sha": "c7d4a8b7be9b83ee",
+      "from": "atlas-visibility",
+      "field": "detail",
+      "to": "atlas-system-access",
+      "into": "detail",
+      "review": "pending",
+      "preview": "See `docs/nodes/atlas-visibility/design.md` (this node's Docs tab) for the full ..."
+    },
+    {
+      "sha": "a45fe3ae530d4ef0",
+      "from": "atlas-visibility",
+      "field": "detail",
+      "to": "atlas-system-access",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**The admin surface exists.** `PUT /api/access/node/{node_id}` is owner-only *and* costs ..."
+    },
+    {
+      "sha": "c84449a7cc669991",
+      "from": "atlas-visibility",
+      "field": "detail",
+      "to": "atlas-system-access",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Where the leak actually lives is not row filtering.** `attention`, `completion` and ..."
+    },
+    {
+      "sha": "a009082fe59f5e4d",
+      "from": "atlas-visibility",
+      "field": "detail",
+      "to": "atlas-system-access",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Two oracles, and the precedence between them.** Deletion-equivalence asserts the ..."
+    },
+    {
+      "sha": "a6c38aafcc300469",
+      "from": "atlas-visibility",
+      "field": "detail",
+      "to": "atlas-system-access",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Semantic search applies the same rule, inside the same kind of statement** (ADR 0044, ..."
+    },
+    {
+      "sha": "d10c140fab6a6698",
+      "from": "atlas-visibility",
+      "field": "detail",
+      "to": "atlas-system-access",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**A refusal is indistinguishable from an absence.** A hidden node and a nonexistent one ..."
+    },
+    {
+      "sha": "854561cae7fb13bc",
+      "from": "atlas-visibility",
+      "field": "detail",
+      "to": "atlas-system-access",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**The reporter tier is NOT BUILT and NOT WANTED.** Seeing that a node exists without ..."
+    },
+    {
+      "sha": "0bbd97068f0bc029",
+      "from": "atlas-visibility",
+      "field": "detail",
+      "to": "atlas-system-access",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**ADR 0026 does not exist.** The code and several task files cite it by number; no such ..."
+    },
+    {
+      "sha": "7a623eb27dbdf183",
+      "from": "atlas-work-store",
+      "field": "abstract",
+      "to": "atlas-system-work",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "`atlas-work-store` is the **subsystem that stores workitems** — not the workitems ..."
+    },
+    {
+      "sha": "04090189743a6d84",
+      "from": "atlas-work-store",
+      "field": "abstract",
+      "to": "atlas-system-work",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "What it owns, all keyed by `node.id`:"
+    },
+    {
+      "sha": "99bcf05ef6f6672b",
+      "from": "atlas-work-store",
+      "field": "abstract",
+      "to": "atlas-system-work",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "- **`node.body`** — the spec, verbatim markdown. Deliberately *not* a fourth ..."
+    },
+    {
+      "sha": "2375e17556a04bf7",
+      "from": "atlas-work-store",
+      "field": "abstract",
+      "to": "atlas-system-work",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "Nothing in the repo can overwrite these rows from a file — the markdown that used to back ..."
+    },
+    {
+      "sha": "28584d1ce906ab6e",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "See `docs/nodes/atlas-work-store/architecture.md` (this node's Docs tab) for the record ..."
+    },
+    {
+      "sha": "08df222fb8aefce9",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Prose is per item, never in a listing.** `include_prose` defaults to 0 on ..."
+    },
+    {
+      "sha": "8b1501efecf5aaab",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "## Status"
+    },
+    {
+      "sha": "2bdb7f79085afd53",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Change a status through the API or the board — nothing reads a file.** Closing a ticket ..."
+    },
+    {
+      "sha": "5620ffff9470182a",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "## Priority"
+    },
+    {
+      "sha": "860b2224046d3b01",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**A workitem has no priority field.** The WSJF-style score in `app.compute_priority` ..."
+    },
+    {
+      "sha": "853b0292345597fe",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "## The two prose stores, and who may write what"
+    },
+    {
+      "sha": "88f7f7d925a1a706",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**A workitem's prose is TWO stores.** `node.body` holds the spec; its `## Result`/`## ..."
+    },
+    {
+      "sha": "c79b731d21c20841",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Acceptance criteria are not writable by a machine principal** (2026-08-23). A Bearer ..."
+    },
+    {
+      "sha": "de8bb15b99593c54",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "## Assignment"
+    },
+    {
+      "sha": "1fc0b3848614d7f6",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**A workitem's assignee is an account, not a string** — `node.assignee_user_id`, NULL for ..."
+    },
+    {
+      "sha": "9da0907f22d91a62",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "## Search and the result splitter"
+    },
+    {
+      "sha": "9d70a97133c94811",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Search is indexed, and the index and the query are kept textually identical.** ..."
+    },
+    {
+      "sha": "85651281f26f505e",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**The result splitter is proven, not assumed.** `split_result` / `reassemble` are ..."
+    },
+    {
+      "sha": "df754924231fbe85",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Ids come from a Postgres sequence** (`allocate_task_id`); no client scans anything for ..."
+    },
+    {
+      "sha": "70698fb4c86df906",
+      "from": "atlas-work-store",
+      "field": "detail",
+      "to": "atlas-system-work",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**What binds here is a query.** Ask `GET /api/workitems?binding=atlas-work-store` rather ..."
+    },
+    {
+      "sha": "b46c6d8305c55764",
+      "from": "atlas-world-model",
+      "field": "abstract",
+      "to": "atlas-system-graph",
+      "into": "abstract",
+      "review": "pending",
+      "preview": "`atlas-world-model` is the **vocabulary** — what the graph is used to say. `atlas-graph` ..."
+    },
+    {
+      "sha": "7304593decdc14a0",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "See `docs/nodes/atlas-world-model/architecture.md` (this node's Docs tab) for the roots ..."
+    },
+    {
+      "sha": "42b984070ce19a5b",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**What renders, and what does not.** The map draws the non-`contains` world edges as ..."
+    },
+    {
+      "sha": "52ace6433b2405c3",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "## Where work binds"
+    },
+    {
+      "sha": "27663061a058a0c2",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "Level 1 is the roots: the five ADR 0030 set, plus any project added since without a ..."
+    },
+    {
+      "sha": "ac8330ba3047c13b",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "- **There is no ceiling and no promotion threshold.** Split a node, or promote a ..."
+    },
+    {
+      "sha": "e86e946b4269142d",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Unbound work is visible, not blocked.** The required-world-link validator was deleted: ..."
+    },
+    {
+      "sha": "50b75860088e3ae5",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "## Intent: durable purpose, inherited downward"
+    },
+    {
+      "sha": "b7c8eef4e8da911f",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "ADR 0032 (in `project-atlas/docs/adr/`) is the authority — the union-over-parents rule, ..."
+    },
+    {
+      "sha": "0cc28c1d21d964f7",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "The surface: `GET /api/intents` is the corpus query (what `atlas_intents` reads, owner ..."
+    },
+    {
+      "sha": "ef4a4d723c823168",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "## Things the tree cannot tell you"
+    },
+    {
+      "sha": "1838436000df4ffb",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "**Two counting traps.** Count workitems per node with `NOT EXISTS`, never a `LEFT JOIN` ..."
+    },
+    {
+      "sha": "48b6165aec9d112e",
+      "from": "atlas-world-model",
+      "field": "detail",
+      "to": "atlas-system-graph",
+      "into": "detail",
+      "review": "pending",
+      "preview": "ADR 0030, which set this shape (and its 2026-08-15 amendment retiring the workitem-count ..."
+    }
+  ]
+}

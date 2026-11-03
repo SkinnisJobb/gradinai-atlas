@@ -1,0 +1,62 @@
+# The install smoke's retrieval leg (STORY-oss-17 criterion 7 x STORY-atlas-retrieval-indexing):
+# a STUB embeddings endpoint beside the OSS stack.
+# Test-only. An overlay read by .github/workflows/install-smoke.yml AFTER the shipped
+# deploy/oss/docker-compose.yml and deploy/oss/retrieval.yml; never part of an install, and
+# deploy/oss/ does not reference it.
+#
+#   docker compose -f docker-compose.yml -f retrieval.yml -f <arbitrary-uid.yml> \
+#     -f ../../tests/retrieval/docker-compose.stub.yml ...
+#
+# Paths are absolute, through GITHUB_WORKSPACE: which directory a relative path in an override
+# file is resolved against is easy to misread, and an absolute one cannot be.
+#
+# What it adds, and nothing else: atlas-embed-stub (tests/retrieval/embed_stub.py), on `egress`
+# only, answering as `gateway` with the install's own TLS leaf (embed_stub.py says why that name
+# and that leaf). Built from backend/Dockerfile's hardened stage, which the stack has already
+# built, so no new image or pin; it runs the stub with the standard library only.
+#
+# atlas-api is NOT touched here: the install CA it verifies the stub against
+# (ATLAS_EMBED_CA_BUNDLE=/run/secrets/atlas_ca) comes from the shipped deploy/oss/retrieval.yml,
+# so the leg proves that overlay as an operator would use it.
+
+services:
+  atlas-embed-stub:
+    build:
+      context: ${GITHUB_WORKSPACE:?set GITHUB_WORKSPACE}
+      dockerfile: backend/Dockerfile
+      target: hardened
+    command: ["python", "-I", "/opt/stub/embed_stub.py"]
+    # The leaf's key (./secrets/tls/server.key) is 0600 and owned by whoever ran init-secrets.sh.
+    # As the gateway profile does: root with every capability dropped except the one that lets
+    # it READ such a file, nothing gained at exec, a read-only root filesystem.
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    secrets:
+      - source: tls_cert
+        target: /certs/tls.crt
+      - source: tls_key
+        target: /certs/tls.key
+      - embed_key
+    volumes:
+      - type: bind
+        source: ${GITHUB_WORKSPACE:?set GITHUB_WORKSPACE}/tests/retrieval/embed_stub.py
+        target: /opt/stub/embed_stub.py
+        read_only: true
+    # The image's own HEALTHCHECK probes the API's listener; this one probes the stub's.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8443), 3).close()"]
+      interval: 3s
+      timeout: 4s
+      start_period: 5s
+      retries: 10
+    networks:
+      egress:
+        aliases:
+          - gateway
+    restart: "no"

@@ -1,0 +1,56 @@
+#!/bin/sh
+# gosu, as a shell script over util-linux's setpriv (why: deploy/postgres/Dockerfile).
+#
+# The official postgres image drops root with `exec gosu postgres "$BASH_SOURCE" "$@"`
+# (docker-entrypoint.sh, docker-ensure-initdb.sh). Upstream's gosu is a static Go binary
+# built with Go 1.24.6, and that binary carried every remaining CRITICAL and all but one
+# fixable HIGH of the Postgres images in the SCA scan (Go stdlib, 2026-10-25). setpriv is
+# already in the image (util-linux, Debian required) and does the same thing without a Go
+# runtime: set the real/effective uid and gid, load the user's supplementary groups
+# (initgroups), set HOME, exec the command. gosu's README names setpriv as its equivalent.
+#
+#   gosu USER[:GROUP] COMMAND [ARG...]
+#
+# USER and GROUP are names or numeric ids; a numeric USER with no passwd entry runs with
+# GROUP (default: the same number) and no supplementary groups, as gosu does.
+set -eu
+
+if [ "$#" -lt 2 ]; then
+  echo "usage: gosu user-spec command [args]" >&2
+  exit 1
+fi
+spec=$1
+shift
+user=${spec%%:*}
+group=
+case "$spec" in *:*) group=${spec#*:} ;; esac
+
+if entry=$(getent passwd "$user"); then
+  uid=$(printf '%s' "$entry" | cut -d: -f3)
+  gid=$(printf '%s' "$entry" | cut -d: -f4)
+  home=$(printf '%s' "$entry" | cut -d: -f6)
+  groups=--init-groups
+else
+  case "$user" in
+    ''|*[!0-9]*) echo "gosu: unknown user '$user'" >&2; exit 1 ;;
+  esac
+  uid=$user
+  gid=$user
+  home=/
+  groups=--clear-groups
+fi
+
+if [ -n "$group" ]; then
+  if g=$(getent group "$group"); then
+    gid=$(printf '%s' "$g" | cut -d: -f3)
+  else
+    case "$group" in
+      *[!0-9]*) echo "gosu: unknown group '$group'" >&2; exit 1 ;;
+    esac
+    gid=$group
+  fi
+fi
+
+HOME=${home:-/}
+export HOME
+exec setpriv --reuid="$uid" --regid="$gid" "$groups" -- "$@"

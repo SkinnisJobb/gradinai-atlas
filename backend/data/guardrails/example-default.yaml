@@ -1,0 +1,47 @@
+# Agent guardrails matrix: the EXAMPLE DEFAULT (STORY-atlas-guardrails-per-env).
+#
+# Nothing applies this file. It is an example to copy and edit, then load with
+#
+#     atlas-admin guardrails validate example-default.yaml
+#     atlas-admin guardrails apply example-default.yaml --dry-run
+#     atlas-admin guardrails apply example-default.yaml
+#
+# The environments are YOURS: rename them, add or remove some, change the branches and the
+# actions. No code change is needed. The format is documented in backend/guardrails.py.
+#
+#   dev      agents branch, commit, push, open PRs, and deploy automatically
+#   stst     agents read logs and propose; deploy only through the pipeline after a merge
+#   atst     as stst
+#   preprod  agents propose only; a human approves the deploy
+#   prod     agents read only; a human deploys, with step-up
+version: 1
+name: Example default (dev / stst / atst / preprod / prod)
+environments:
+  - name: dev
+    branches: [dev, "feature/*"]
+    protected: false
+    agent: [branch, commit, push, open_pr, deploy, read_logs, propose]
+    human: [merge]
+  - name: stst
+    branches: [stst]
+    agent: [read_logs, propose, open_pr, deploy_via_pipeline]
+    human: [merge]
+  - name: atst
+    branches: [atst]
+    agent: [read_logs, propose, open_pr, deploy_via_pipeline]
+    human: [merge]
+  - name: preprod
+    branches: [preprod]
+    agent: [read_logs, propose]
+    human: [merge, approve_deploy, deploy]
+    commands:
+      deploy: ["tools/deploy.sh preprod*"]
+  - name: prod
+    branches: [main]
+    production: true
+    agent: [read_logs]
+    human: [merge, approve_deploy, deploy]
+    step_up: [deploy]
+    required_reviews: 1
+    commands:
+      deploy: ["tools/deploy.sh prod*"]

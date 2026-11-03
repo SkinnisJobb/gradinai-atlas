@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 520" role="img" aria-labelledby="roadmap-t roadmap-d">
+<title id="roadmap-t">Built, and next</title>
+<desc id="roadmap-d">Built today: epics, stories and tasks; the board with graph, work board and panel; My tasks on the dashboard; agent-proposed acceptance; one-call context answers; hybrid search as an opt-in add-on; projects, roles and company sign-in; a starting map of Atlas itself; and a richer map with rules, as an opt-in. Next, agreed but not built: decision items private to one person, more dashboard boxes, and a colour for waiting on a person.</desc>
+<style>
+svg{--bg:#ffffff;--surface:#f4f5f7;--ink:#1d2127;--muted:#58616c;--line:#c5cbd3;--agent:#2457c5;--agent-soft:#e7eefc;--person:#0a7565;--person-soft:#e0f3ef;--ok:#1b7a34;--ok-soft:#e3f3e7;--warn:#a85300;--warn-soft:#fdf0e0;--bad:#bf2a2a;--bad-soft:#fbe9e9}
+@media (prefers-color-scheme:dark){svg{--bg:#16191e;--surface:#21252c;--ink:#e8eaed;--muted:#a6aeb8;--line:#3d444f;--agent:#86abff;--agent-soft:#1d2a45;--person:#55cdb8;--person-soft:#15322d;--ok:#5cc777;--ok-soft:#173020;--warn:#f2a457;--warn-soft:#3a2a15;--bad:#ff8585;--bad-soft:#3d1d1d}}
+text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:15px;fill:var(--ink)}
+.m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;font-size:13px}
+.s{font-size:13px;fill:var(--muted)}
+.b{font-weight:600}
+.h{font-size:17px;font-weight:700}
+.c{text-anchor:middle}
+.r{text-anchor:end}
+.bg{fill:var(--bg)}
+.card{fill:var(--surface);stroke:var(--line);stroke-width:1.5}
+.ln{fill:none;stroke:var(--muted);stroke-width:1.5}
+.d{stroke-dasharray:5 4}
+.ah{fill:var(--muted)}
+.ag{fill:var(--agent-soft);stroke:var(--agent);stroke-width:1.5}
+.pe{fill:var(--person-soft);stroke:var(--person);stroke-width:1.5}
+.ok{fill:var(--ok-soft);stroke:var(--ok);stroke-width:2}
+.wa{fill:var(--warn-soft);stroke:var(--warn);stroke-width:2}
+.no{fill:var(--bad-soft);stroke:var(--bad);stroke-width:2}
+.ta{fill:var(--agent)}.tp{fill:var(--person)}.tok{fill:var(--ok)}.twa{fill:var(--warn)}.tno{fill:var(--bad)}.tm{fill:var(--muted)}
+.ka{color:var(--agent)}.kp{color:var(--person)}.kok{color:var(--ok)}.kno{color:var(--bad)}.kwa{color:var(--warn)}.km{color:var(--muted)}
+</style>
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+<symbol id="i-agent" viewBox="0 0 20 20"><rect x="3" y="6" width="14" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="7.8" cy="11.5" r="1.5" fill="currentColor"/><circle cx="12.2" cy="11.5" r="1.5" fill="currentColor"/><path d="M10 6V2.5" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-person" viewBox="0 0 20 20"><circle cx="10" cy="6.5" r="3.6" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.2 18.5c0-4.2 3-6.6 6.8-6.6s6.8 2.4 6.8 6.6" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+<symbol id="i-tick" viewBox="0 0 20 20"><path d="M4 10.5l4 4 8-9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+<symbol id="i-cross" viewBox="0 0 20 20"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+<symbol id="i-doc" viewBox="0 0 20 20"><path d="M5 2.5h7l3.5 3.5v11.5h-10.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M7.5 9.5h5M7.5 12.5h5" stroke="currentColor" stroke-width="1.3"/></symbol>
+<symbol id="i-key" viewBox="0 0 20 20"><circle cx="6.5" cy="10" r="3.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.3 10H18M15 10v3M17.5 10v2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+</defs>
+<rect class="bg" width="400" height="520" rx="12"/>
+<text x="14" y="32" class="h">Built today</text>
+<rect x="14" y="46" width="372" height="30" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="52" width="18" height="18" class="kok"/>
+<text x="48" y="66">Epics, stories and tasks</text>
+<rect x="14" y="82" width="372" height="30" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="88" width="18" height="18" class="kok"/>
+<text x="48" y="102">The board: graph, work board, panel</text>
+<rect x="14" y="118" width="372" height="30" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="124" width="18" height="18" class="kok"/>
+<text x="48" y="138">My tasks on the dashboard</text>
+<rect x="14" y="154" width="372" height="30" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="160" width="18" height="18" class="kok"/>
+<text x="48" y="174">Agent-proposed acceptance</text>
+<rect x="14" y="190" width="372" height="30" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="196" width="18" height="18" class="kok"/>
+<text x="48" y="210">One-call context answers</text>
+<rect x="14" y="226" width="372" height="30" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="232" width="18" height="18" class="kok"/>
+<text x="48" y="246">Hybrid search (opt-in add-on)</text>
+<rect x="14" y="262" width="372" height="30" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="268" width="18" height="18" class="kok"/>
+<text x="48" y="282">Projects, roles and company sign-in</text>
+<rect x="14" y="298" width="372" height="30" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="304" width="18" height="18" class="kok"/>
+<text x="48" y="318">A starting map of Atlas itself</text>
+<rect x="14" y="334" width="372" height="30" rx="6" class="ok"/>
+<use href="#i-tick" x="22" y="340" width="18" height="18" class="kok"/>
+<text x="48" y="354">A richer map with rules (opt-in)</text>
+<text x="14" y="400" class="h">Next: agreed, not built yet</text>
+<rect x="14" y="414" width="372" height="30" rx="6" class="card d"/>
+<circle cx="31" cy="429" r="7" fill="none" stroke="var(--muted)" stroke-width="2"/>
+<text x="48" y="434">Decision items, private to one person</text>
+<rect x="14" y="450" width="372" height="30" rx="6" class="card d"/>
+<circle cx="31" cy="465" r="7" fill="none" stroke="var(--muted)" stroke-width="2"/>
+<text x="48" y="470">More dashboard boxes</text>
+<rect x="14" y="486" width="372" height="30" rx="6" class="card d"/>
+<circle cx="31" cy="501" r="7" fill="none" stroke="var(--muted)" stroke-width="2"/>
+<text x="48" y="506">A colour for “waiting on a person”</text>
+</svg>

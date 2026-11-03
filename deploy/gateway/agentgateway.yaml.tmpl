@@ -1,0 +1,70 @@
+# AgentGateway configuration for the OSS install's `gateway` profile (STORY-oss-15).
+#
+# RENDERED FILE. Written by scripts/render-gateway.py from deploy/gateway/agentgateway.yaml.tmpl
+# and the server list @@SERVERS_FILE@@. Edit those and render again; edits here are lost.
+#
+# Pinned to the AgentGateway release in deploy/oss/docker-compose.yml (service atlas-gateway);
+# the schema is https://agentgateway.dev/schema/config for that release.
+#
+#   client --https (install cert)--> atlas-gateway :8443 (published as ATLAS_GATEWAY_PORT)
+#          --https, verified against the CA named per server--> each server below
+#
+# What this file guarantees, and render-gateway.py refuses to write it otherwise:
+#   * the listener is HTTPS only, with the install's certificate (/certs/tls.crt + tls.key, the
+#     same files atlas-tls serves): plain HTTP on the gateway port gets no MCP answer;
+#   * every https:// server is verified against a named CA file (backendTLS.root); nothing turns
+#     verification off; an http:// server exists only when marked as carrying no credential;
+#   * the caller's Authorization header reaches only servers marked forward_authorization (the
+#     gateway copies every incoming header to every target by default, so the others get a
+#     requestHeaderModifier that removes it);
+#   * CORS allows named origins only (ATLAS_PUBLIC_URL and cors_origins), never "*";
+#   * tool names are never prefixed with the server name (prefixMode: never), so a client sees
+#     `atlas_get`, not `atlas_atlas_get`; each server's `tools` allow-list is enforced by the
+#     route-level mcpAuthorization rules (one rule per server, keyed on mcp.tool.target);
+#   * MCP session-ID encryption is explicitly off (config.session.key: disabled), so the
+#     gateway neither generates a key nor tries to write one into this read-only file.
+config:
+  session:
+    # Decision 2026-10-31: off on purpose. The gateway is optional and LAN-only, and an MCP
+    # session ID is a routing handle, not a secret: every call still carries its own Bearer
+    # token, checked by atlas-mcp. Without this line AgentGateway v1.7.0 tries to write a
+    # generated key back into this file (mounted read-only) and warns on every start.
+    # Turning encryption on would need a SESSION_KEY secret (a 32-byte hex key) passed to the
+    # container, not a key written here. `disabled` is the literal v1.7.0 accepts for this.
+    key: disabled
+binds:
+  - port: 8443
+    listeners:
+      - name: mcp-tls
+        protocol: HTTPS
+        tls:
+          cert: /certs/tls.crt
+          key: /certs/tls.key
+          minTLSVersion: TLS_V1_2
+        routes:
+          - name: mcp
+            # The names this gateway answers for (the Host header, port aside).
+            hostnames: @@HOSTNAMES@@
+            policies:
+              # CORS matters only to a browser; MCP clients send no Origin.
+              cors:
+                allowOrigins: @@CORS_ORIGINS@@
+                allowHeaders:
+                  - authorization
+                  - content-type
+                  - accept
+                  - mcp-session-id
+                  - mcp-protocol-version
+                  - last-event-id
+                exposeHeaders:
+                  - Mcp-Session-Id
+              # Allow-list semantics: a tool no rule allows is filtered out of tools/list and
+              # refused when called.
+              mcpAuthorization:
+                rules:
+@@RULES@@
+            backends:
+              - mcp:
+                  prefixMode: never
+                  targets:
+@@TARGETS@@

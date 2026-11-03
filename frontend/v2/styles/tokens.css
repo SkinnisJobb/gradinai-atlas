@@ -1,0 +1,50 @@
+/* styles/tokens.css — board v2's design tokens (ADR 0043).
+   Copied verbatim from the legacy board.css, so the two boards share one
+   palette, one theme switch (data-theme) and one text-size knob (--ui-scale).
+   Every font size in v2 is written calc(<N>px * var(--ui-scale)), as in legacy. */
+
+:root {
+  --ground: #eef1f5; --panel: #ffffff; --panel-2: #f7f9fb;
+  --ink: #1b2531; --ink-soft: #56626f; --ink-faint: #8a94a1;
+  --line: #dde2e9; --line-strong: #cbd2dc;
+  --accent: #35699f; --ring-track: #dce1e8;
+  --att-grey: #97a1ad; --att-green: #37976c; --att-orange: #cf8a2c;
+  --att-red: #ce4b44; --att-purple: #7a67d0; --epic: #17877f;
+  --shadow: 0 1px 2px rgba(20,32,48,.04), 0 6px 20px rgba(20,32,48,.06);
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, monospace;
+  /* split between the map and the detail panel — dragged by #panelResizer,
+     persisted in localStorage, overridden as an inline style on <html>.
+     --panel-w drives the desktop side panel, --panel-h the mobile sheet. */
+  --panel-w: 400px; --panel-h: 440px;
+  /* text-size control (#scaleDown/#scaleUp) — every font-size: in this file is
+     written as calc(<N>px * var(--ui-scale)) so one knob scales the whole page,
+     including the SVG map labels. Deliberately NOT CSS zoom/transform: scale() —
+     those would also rescale the D3 pan/zoom and panel drag-resize math, both of
+     which read real pixels off getBoundingClientRect(). Overridden as an inline
+     style on <html>, persisted in localStorage, restored pre-paint (see the
+     theme script above) so the page doesn't visibly reflow after load. */
+  --ui-scale: 1;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #10141a; --panel: #191f27; --panel-2: #151a21;
+    --ink: #e7ebf1; --ink-soft: #9aa5b3; --ink-faint: #6d7783;
+    --line: #29313b; --line-strong: #363f4a; --accent: #6ea0dc; --ring-track: #2b333d;
+    --att-grey: #6d7885; --att-green: #4bb083; --att-orange: #dda049;
+    --att-red: #e4665e; --att-purple: #9385e0; --epic: #3fbfb3;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.32);
+  }
+}
+:root[data-theme="light"] {
+  --ground: #eef1f5; --panel: #ffffff; --panel-2: #f7f9fb; --ink: #1b2531; --ink-soft: #56626f;
+  --ink-faint: #8a94a1; --line: #dde2e9; --line-strong: #cbd2dc; --accent: #35699f; --ring-track: #dce1e8;
+  --att-grey: #97a1ad; --att-green: #37976c; --att-orange: #cf8a2c; --att-red: #ce4b44; --att-purple: #7a67d0; --epic: #17877f;
+  --shadow: 0 1px 2px rgba(20,32,48,.04), 0 6px 20px rgba(20,32,48,.06);
+}
+:root[data-theme="dark"] {
+  --ground: #10141a; --panel: #191f27; --panel-2: #151a21; --ink: #e7ebf1; --ink-soft: #9aa5b3;
+  --ink-faint: #6d7783; --line: #29313b; --line-strong: #363f4a; --accent: #6ea0dc; --ring-track: #2b333d;
+  --att-grey: #6d7885; --att-green: #4bb083; --att-orange: #dda049; --att-red: #e4665e; --att-purple: #9385e0; --epic: #3fbfb3;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.32);
+}

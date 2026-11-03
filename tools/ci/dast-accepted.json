@@ -1,0 +1,4 @@
+{
+  "//": "HIGH ZAP alerts accepted for a limited time (tools/ci/dast_gate.py): {plugin, until (YYYY-MM-DD, at most 30 days out), reason}. A false positive is accepted here with the evidence in `reason`; a real one is fixed. Triage: SECURITY.md.",
+  "accepted": []
+}

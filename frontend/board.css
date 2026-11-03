@@ -1,0 +1,1243 @@
+/* frontend/board.css — extracted from the inline <style> in board.html (TASK-1020).
+   Byte-for-byte the same rules; only the file boundary changed. */
+
+  :root {
+    --ground: #eef1f5; --panel: #ffffff; --panel-2: #f7f9fb;
+    --ink: #1b2531; --ink-soft: #56626f; --ink-faint: #8a94a1;
+    --line: #dde2e9; --line-strong: #cbd2dc;
+    --accent: #35699f; --ring-track: #dce1e8;
+    --att-grey: #97a1ad; --att-green: #37976c; --att-orange: #cf8a2c;
+    --att-red: #ce4b44; --att-purple: #7a67d0;
+    --shadow: 0 1px 2px rgba(20,32,48,.04), 0 6px 20px rgba(20,32,48,.06);
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, monospace;
+    /* split between the map and the detail panel — dragged by #panelResizer,
+       persisted in localStorage, overridden as an inline style on <html>.
+       --panel-w drives the desktop side panel, --panel-h the mobile sheet. */
+    --panel-w: 400px; --panel-h: 440px;
+    /* text-size control (#scaleDown/#scaleUp) — every font-size: in this file is
+       written as calc(<N>px * var(--ui-scale)) so one knob scales the whole page,
+       including the SVG map labels. Deliberately NOT CSS zoom/transform: scale() —
+       those would also rescale the D3 pan/zoom and panel drag-resize math, both of
+       which read real pixels off getBoundingClientRect(). Overridden as an inline
+       style on <html>, persisted in localStorage, restored pre-paint (see the
+       theme script above) so the page doesn't visibly reflow after load. */
+    --ui-scale: 1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #10141a; --panel: #191f27; --panel-2: #151a21;
+      --ink: #e7ebf1; --ink-soft: #9aa5b3; --ink-faint: #6d7783;
+      --line: #29313b; --line-strong: #363f4a; --accent: #6ea0dc; --ring-track: #2b333d;
+      --att-grey: #6d7885; --att-green: #4bb083; --att-orange: #dda049;
+      --att-red: #e4665e; --att-purple: #9385e0;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.32);
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #eef1f5; --panel: #ffffff; --panel-2: #f7f9fb; --ink: #1b2531; --ink-soft: #56626f;
+    --ink-faint: #8a94a1; --line: #dde2e9; --line-strong: #cbd2dc; --accent: #35699f; --ring-track: #dce1e8;
+    --att-grey: #97a1ad; --att-green: #37976c; --att-orange: #cf8a2c; --att-red: #ce4b44; --att-purple: #7a67d0;
+    --shadow: 0 1px 2px rgba(20,32,48,.04), 0 6px 20px rgba(20,32,48,.06);
+  }
+  :root[data-theme="dark"] {
+    --ground: #10141a; --panel: #191f27; --panel-2: #151a21; --ink: #e7ebf1; --ink-soft: #9aa5b3;
+    --ink-faint: #6d7783; --line: #29313b; --line-strong: #363f4a; --accent: #6ea0dc; --ring-track: #2b333d;
+    --att-grey: #6d7885; --att-green: #4bb083; --att-orange: #dda049; --att-red: #e4665e; --att-purple: #9385e0;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.32);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--font-sans);
+         line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  /* The 1400px cap was written for a laptop; on a 3440px ultrawide it spent 59% of
+     the screen on empty margin, which reads as "everything is tiny" just as much as
+     the type size does. Scales up on wide displays, unchanged at ~1440 and below. */
+  .wrap { max-width: min(2400px, 96vw); margin: 0 auto;
+    padding: clamp(20px, 3vw, 44px) clamp(16px, 3vw, 36px) 40px; }
+  .eyebrow { font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-scale)); letter-spacing: .16em; text-transform: uppercase;
+             color: var(--accent); font-weight: 600; }
+  h1 { font-size: clamp(calc(20px * var(--ui-scale)), calc(2.6vw * var(--ui-scale)), calc(30px * var(--ui-scale)));
+       line-height: 1.1; letter-spacing: -.02em; margin: 0; text-wrap: balance; font-weight: 680; }
+  .lede { color: var(--ink-soft);
+    font-size: clamp(calc(14px * var(--ui-scale)), calc(1.4vw * var(--ui-scale)), calc(16px * var(--ui-scale)));
+    max-width: 76ch; margin: 8px 0 0; }
+  .lede b, .lede em { color: var(--ink); font-style: normal; font-weight: 600; }
+  .lede em { color: var(--att-red); }
+
+  /* ---------- app bar: brand / tabs / actions, the one row that's always on
+     screen. Grid rather than flex so the tab buttons sit truly centred instead
+     of just "between" two unequal-width siblings. */
+  .appbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    column-gap: 14px; min-height: 48px; }
+  .appbar-brand { justify-self: start; overflow: hidden; }
+  .appbar-brand .eyebrow { white-space: nowrap; }
+  .appbar > .tabbar { justify-self: center; margin: 0; }
+  .appbar-actions { justify-self: end; flex: none; display: flex; align-items: center; gap: 8px; }
+  /* The account control (TASK-969). Still 30px of reserved width while it is
+     empty — an unpopulated slot must not shift the app bar when /api/me is slow
+     or fails — and it grows to fit once renderAccount() fills it. */
+  .appbar-account-slot { width: 30px; height: 30px; flex: none; }
+  .appbar-account-slot.is-signed-in {
+    width: auto; height: auto; display: flex; align-items: center; gap: 6px;
+    padding-left: 4px; border-left: 1px solid var(--line); margin-left: 2px;
+  }
+  .acct-name { font-family: var(--font-mono); font-size: calc(12px * var(--ui-scale));
+    color: var(--ink-soft); letter-spacing: .02em; max-width: 14ch; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .acct-form { margin: 0; display: inline; }
+  /* Sign-out is a POST carrying the CSRF token, never a link: a link would be a
+     state-changing GET, which link prefetchers and scanners follow. It lives in
+     the profile menu now and is styled as `.acct-item.is-signout` below. */
+  @media (max-width: 760px) {
+    /* three columns don't fit a phone; wrap to brand+actions on row one, tabs
+       centred on their own row below, rather than squeezing everything down. */
+    .appbar { display: flex; flex-wrap: wrap; row-gap: 8px; min-height: 0; padding: 8px 0; }
+    .appbar-brand { flex: 1 1 auto; }
+    .appbar-actions { flex: 0 0 auto; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+    .appbar > .tabbar { order: 3; flex: 0 0 100%; justify-self: auto; display: flex; justify-content: center; }
+    /* The populated variant is listed explicitly: `.appbar-account-slot.is-signed-in`
+       is more specific than this rule, so without it the filled slot would re-appear
+       on a phone and crowd the one row that has to stay usable. A phone signs out at
+       the plain URL /auth/logout instead (a one-button POST form — TASK-969). */
+    .appbar-account-slot, .appbar-account-slot.is-signed-in { display: none; }
+  }
+  .overview-toggle { display: inline-flex; align-items: center; gap: 6px; margin: 10px 0 0; font: inherit;
+    font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-scale)); letter-spacing: .04em;
+    color: var(--ink-soft); background: transparent; border: 1px solid var(--line); border-radius: 999px;
+    padding: 5px 13px; cursor: pointer; transition: border-color .2s, color .2s; }
+  .overview-toggle:hover { border-color: var(--line-strong); color: var(--ink); }
+  .ov-chevron { display: inline-block; transition: transform .15s ease; }
+  .overview-toggle[aria-expanded="false"] .ov-chevron { transform: rotate(-90deg); }
+  /* collapsed by default (see the pre-paint script) — hidden via the html-level
+     attribute so there is nothing to reflow once the rest of the page paints. */
+  :root[data-overview="closed"] .overview-strip { display: none; }
+  .themebtn { flex: none; font-family: var(--font-mono); font-size: calc(12px * var(--ui-scale)); color: var(--ink-soft);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 7px 14px;
+    cursor: pointer; letter-spacing: .04em; transition: border-color .2s, color .2s; }
+  .themebtn:hover { border-color: var(--line-strong); color: var(--ink); }
+  /* text-size stepper — same pill language as .themebtn, sits next to it */
+  .scalectl { flex: none; display: flex; align-items: center; gap: 1px; font-family: var(--font-mono);
+    font-size: calc(12px * var(--ui-scale)); color: var(--ink-soft); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px; letter-spacing: .02em; }
+  .scalebtn { flex: none; font: inherit; color: inherit; background: transparent; border: 0;
+    border-radius: 999px; width: 24px; height: 24px; line-height: 1; cursor: pointer;
+    transition: background-color .2s, color .2s; }
+  .scalebtn:hover:not(:disabled) { background: var(--panel-2); color: var(--ink); }
+  .scalebtn:disabled { opacity: .4; cursor: not-allowed; }
+  .scale-readout { min-width: 34px; text-align: center; font-variant-numeric: tabular-nums;
+    color: var(--ink-faint); user-select: none; }
+  .themebtn:focus-visible, button:focus-visible, .node:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .summary { margin-top: 22px; display: grid; grid-template-columns: 1fr; gap: 16px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 16px; padding: 18px 22px; box-shadow: var(--shadow); }
+  @media (min-width: 720px) { .summary { grid-template-columns: auto 1fr; align-items: center; gap: 34px; } }
+  .headline { font-size: calc(14px * var(--ui-scale)); color: var(--ink-soft); }
+  .headline .big { display: block; font-size: calc(26px * var(--ui-scale)); color: var(--ink); font-weight: 680; letter-spacing: -.01em;
+                   line-height: 1.1; }
+  .headline .big em { color: var(--att-red); font-style: normal; }
+  .bars { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+  .bar { display: grid; grid-template-columns: 112px 1fr 36px; align-items: center; gap: 12px; }
+  .bar .k { font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-scale)); letter-spacing: .03em; color: var(--ink-soft);
+            display: flex; align-items: center; gap: 8px; }
+  .bar .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .bar .track { height: 8px; background: var(--panel-2); border-radius: 999px; overflow: hidden; border: 1px solid var(--line); }
+  .bar .fill { height: 100%; border-radius: 999px; }
+  .bar .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; text-align: right; font-size: calc(12.5px * var(--ui-scale)); color: var(--ink); }
+
+  .stage { margin-top: 22px; }
+  /* Map controls float INSIDE the canvas (same idiom as .detail-ctl) instead of
+     stacking a toolbar row above it — bottom-right, so they can't collide with
+     the find-a-node dropdown, which opens from the app bar above the canvas. */
+  .map-ctl { position: absolute; bottom: 12px; right: 12px; z-index: 5; display: flex;
+    align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end;
+    max-width: calc(100% - 24px); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 6px 10px; box-shadow: var(--shadow); }
+  .map-ctl button { font-family: var(--font-mono); font-size: calc(13px * var(--ui-scale)); color: var(--ink-soft);
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; width: 30px; height: 30px;
+    cursor: pointer; line-height: 1; transition: border-color .2s, color .2s; }
+  /* Text buttons opt OUT of the 30px square above. Forgetting to list one here
+     does not clip it — it overflows the box and runs under the next control. */
+  .map-ctl button#zoom-fit, .map-ctl button#collapse-all, .map-ctl button#collapse-others,
+  .map-ctl button#xedgeToggle { width: auto; padding: 0 12px; font-size: calc(11px * var(--ui-scale)); letter-spacing: .04em; white-space: nowrap; }
+  /* The label changes length as the mode cycles (off/selected/all); reserve the
+     widest so the whole control bar doesn't reflow on every click. */
+  .map-ctl button#xedgeToggle { min-width: calc(112px * var(--ui-scale)); }
+  .map-ctl button#workGroupToggle { width: auto; padding: 0 12px; font-size: calc(11px * var(--ui-scale));
+    letter-spacing: .04em; white-space: nowrap; min-width: calc(134px * var(--ui-scale)); }
+  /* Nothing in the bar may be squeezed below its content — that is what put the
+     label under the neighbouring select. Wrapping is the intended overflow. */
+  .map-ctl > *, .filter-ctl > * { flex: 0 0 auto; }
+  .map-ctl button:hover { border-color: var(--line-strong); color: var(--ink); }
+  .zoom-indicator { font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-scale)); color: var(--ink-faint); letter-spacing: .03em;
+    padding: 0 4px; font-variant-numeric: tabular-nums; }
+  /* Age filter — "hide work finished more than N days ago". Lives with the map
+     controls because it changes what the MAP shows, not what a node contains. */
+  .filter-ctl { display: flex; align-items: center; gap: 6px; }
+  .filter-ctl label { font-family: var(--font-mono); font-size: calc(10px * var(--ui-scale)); letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-faint); }
+  .filter-ctl select { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); color: var(--ink-soft);
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; height: 30px;
+    padding: 0 6px; cursor: pointer; }
+  .filter-ctl select:hover { border-color: var(--line-strong); color: var(--ink); }
+  /* Status/type filters — a multi-select needs more than a
+     native <select>, so this is a button that opens a small checkbox panel,
+     the same idiom as the find-a-node dropdown (.search-results) but anchored
+     to open UPWARD: map-ctl already sits at the canvas's bottom edge. */
+  .multiselect-ctl { position: relative; }
+  .multiselect-btn { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); color: var(--ink-soft);
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; height: 30px;
+    padding: 0 8px; cursor: pointer; max-width: calc(150px * var(--ui-scale)); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .multiselect-btn:hover { border-color: var(--line-strong); color: var(--ink); }
+  .multiselect-btn[aria-expanded="true"] { border-color: var(--accent); color: var(--ink); }
+  .multiselect-menu { position: absolute; bottom: calc(100% + 6px); right: 0; z-index: 45;
+    min-width: 170px; max-height: 240px; overflow-y: auto; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 6px; }
+  .multiselect-menu[hidden] { display: none; }
+  .multiselect-opt { display: flex; align-items: center; gap: 7px; padding: 5px 6px; border-radius: 6px;
+    font-family: var(--font-mono); font-size: calc(12px * var(--ui-scale)); color: var(--ink); cursor: pointer; }
+  .multiselect-opt:hover { background: var(--panel-2); }
+  .multiselect-opt input { margin: 0; cursor: pointer; }
+  .multiselect-empty { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint);
+    padding: 5px 6px; }
+  /* What the filter is hiding, said out loud. A view that quietly omits nodes
+     reads as a complete picture, which is how work gets forgotten — so the
+     count is always on screen while anything is hidden, and clicking it
+     reveals everything. */
+  .filter-hint { position: absolute; left: 14px; bottom: 38px; z-index: 4; font-family: var(--font-mono);
+    font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint); letter-spacing: .02em;
+    background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+  .filter-hint:hover { color: var(--accent); text-decoration: underline; }
+  .filter-hint[hidden] { display: none; }
+  .canvas-wrap > .hint-text { position: absolute; left: 14px; bottom: 16px; z-index: 4;
+    font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint);
+    letter-spacing: .02em; pointer-events: none; }
+  @media (max-width: 760px) { .canvas-wrap > .hint-text { display: none; } }
+  /* find-a-node search — dropdown floats over the canvas, so it needs a z-index
+     above the canvas's own positioned children (detail-ctl / map-ctl are 5). */
+  .search-wrap { position: relative; }
+  .search-input { font-family: var(--font-mono); font-size: calc(12px * var(--ui-scale)); color: var(--ink); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 999px; height: 34px; width: 180px; padding: 0 13px;
+    transition: border-color .2s, width .2s; }
+  .search-input::placeholder { color: var(--ink-faint); }
+  .search-input:hover { border-color: var(--line-strong); }
+  .search-input:focus { width: 240px; }
+  .search-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .search-results { position: absolute; top: calc(100% + 6px); left: 0; z-index: 45; list-style: none;
+    margin: 0; padding: 4px; min-width: 270px; max-width: 340px; max-height: 320px; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  .search-result { display: flex; align-items: baseline; gap: 8px; padding: 7px 9px; border-radius: 8px;
+    cursor: pointer; font-size: calc(12.5px * var(--ui-scale)); color: var(--ink); }
+  .search-result .sr-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .search-result .sr-id { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale)); color: var(--ink-faint); flex: none; }
+  .search-result .sr-tree { font-family: var(--font-mono); font-size: calc(9.5px * var(--ui-scale)); letter-spacing: .06em;
+    text-transform: uppercase; color: var(--ink-faint); border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 6px; flex: none; }
+  .search-result.active, .search-result:hover { background: var(--panel-2); }
+  /* Prose matches (GET /api/workitems?q=) — visually a different KIND of row from a
+     name match, not just a differently-worded one: two lines, an accent rail down the
+     left, and the matched words marked inside the snippet, so "why is this here" is
+     answered on the row itself rather than by the heading above it. */
+  .search-result.is-prose, .sr-unreachable { align-items: flex-start; }
+  .search-result.is-prose { border-left: 2px solid var(--accent); padding-left: 7px; }
+  .search-result .sr-main, .sr-unreachable .sr-main { flex: 1; min-width: 0; }
+  .search-result.is-prose .sr-name, .sr-unreachable .sr-name { display: block; }
+  .sr-snippet { display: -webkit-box; margin-top: 2px; font-size: calc(11px * var(--ui-scale));
+    line-height: 1.35; color: var(--ink-soft); overflow: hidden;
+    -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+  .sr-snippet.is-vague { font-style: italic; color: var(--ink-faint); }
+  .sr-snippet mark { background: transparent; color: var(--ink); font-weight: 600; }
+  /* A hit the server can see and neither map draws. Not an <li role="option"> — it is
+     not selectable, so it can never be a click that does nothing; the reason is on it. */
+  .sr-unreachable { display: flex; gap: 8px; padding: 7px 9px; border-radius: 8px;
+    font-size: calc(12.5px * var(--ui-scale)); color: var(--ink-faint); cursor: default; }
+  .sr-unreachable .sr-why { display: block; margin-top: 2px; font-size: calc(10.5px * var(--ui-scale));
+    color: var(--ink-faint); font-style: italic; }
+  /* Group heading and the count/status footer — both presentational, both outside the
+     listbox's option set so keyboard navigation never lands on one. */
+  .sr-group { padding: 8px 9px 3px; font-family: var(--font-mono); font-size: calc(9.5px * var(--ui-scale));
+    letter-spacing: .06em; text-transform: uppercase; color: var(--ink-faint);
+    border-top: 1px solid var(--line); margin-top: 4px; }
+  .sr-note { padding: 6px 9px; font-size: calc(10.5px * var(--ui-scale)); color: var(--ink-faint); }
+  .sr-note.is-error { color: var(--att-red); }
+  @media (max-width: 760px) {
+    .search-wrap { flex: 1 1 100%; }
+    .search-input { width: 100%; }
+    .search-input:focus { width: 100%; }
+    .search-results { min-width: 0; max-width: none; width: 100%; }
+  }
+  /* legend under the map — a key for the glyph grammar (fill / ring / badge / attachment icons) */
+  .map-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 7px 14px; margin-top: 10px;
+    padding: 9px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint); letter-spacing: .02em; }
+  .map-legend .leg-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .map-legend .leg-eyebrow { text-transform: uppercase; letter-spacing: .08em; opacity: .65; }
+  .map-legend .leg-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  .map-legend .leg-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+  .map-legend .leg-ring { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none;
+    border: 2px solid var(--ink-faint); background: transparent; }
+  .map-legend .leg-ring.full { border-color: var(--att-green); background: var(--att-green); }
+  .map-legend .leg-badge { min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; display: inline-flex;
+    align-items: center; justify-content: center; background: var(--att-red); color: #fff; font-size: calc(9px * var(--ui-scale)); flex: none; }
+  .map-legend .leg-ic { font-size: calc(12px * var(--ui-scale)); line-height: 1; }
+  .map-legend .leg-ic.intent { color: var(--accent); }
+  .map-legend .leg-ic.skill { color: var(--att-purple); }
+  .map-legend .leg-ic.doc { color: var(--ink-faint); }
+  .map-legend .leg-sep { width: 1px; align-self: stretch; min-height: 14px; background: var(--line); }
+  .map-legend .leg-note { color: var(--ink-faint); opacity: .7; }
+
+  /* The map is the point of the page — give it whatever height is left once the
+     chrome above it (app bar + collapsed overview toggle) and the legend below
+     it have taken theirs, rather than capping it at 760px and leaving dead
+     space below on a tall screen. The subtracted constants budget for everything
+     that is NOT the map — app bar, overview toggle, the legend under the canvas
+     and the page's own padding — measured in both states so neither one pushes
+     the legend below the fold and makes the whole page scroll. */
+  .canvas-wrap { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: var(--shadow); overflow: hidden; height: clamp(360px, calc(100vh - 290px), 1500px);
+    min-height: 360px; }
+  :root[data-overview="open"] .canvas-wrap { height: clamp(360px, calc(100vh - 600px), 1500px); }
+  #mapsvg { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+  #mapsvg.dragging { cursor: grabbing; }
+  #mapsvg:focus-visible { outline: none; }
+
+  /* ---------- D3 tidy-tree map ---------- */
+  .node { cursor: pointer; }
+  .node .select-ring { opacity: 0; pointer-events: none; }
+  .node.selected .select-ring { opacity: 1; }
+  .node:focus-visible .glyph { filter: drop-shadow(0 0 0 2px var(--accent)); }
+  .node:focus { outline: none; }
+
+  .node-label { font-family: var(--font-sans); font-size: calc(12.5px * var(--ui-scale)); fill: var(--ink); paint-order: stroke;
+    stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+  .node.epic > .node-label { font-weight: 640; }
+  .node.story > .node-label { fill: var(--ink-soft); }
+  .node.task > .node-label { fill: var(--ink-faint); font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); }
+  .node.root > .node-label { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); letter-spacing: .1em;
+    text-transform: uppercase; fill: var(--accent); font-weight: 600; }
+  /* world-tree object node types */
+  .node.org > .node-label, .node.project > .node-label { font-weight: 640; }
+  .node.service > .node-label, .node.component > .node-label { fill: var(--ink-soft); }
+  .node.skill > .node-label, .node.doc > .node-label,
+  .node.vision > .node-label { fill: var(--ink-soft); font-style: italic; }
+  .node .subcount { fill: var(--ink-faint); font-family: var(--font-mono); font-size: calc(10px * var(--ui-scale)); }
+  /* world-tree attachment icons + work-load readout (rendered as label tspans) */
+  .node .attach-icon { font-size: calc(11px * var(--ui-scale)); stroke: none; paint-order: normal; }
+  .node .ic-intent { fill: var(--accent); }
+  .node .ic-skill { fill: var(--att-purple); }
+  .node .ic-doc { fill: var(--ink-faint); }
+  .node .load-readout, .node .type-tag { fill: var(--ink-faint); font-family: var(--font-mono);
+    font-size: calc(10px * var(--ui-scale)); stroke: none; }
+  /* the glyph + label are visual only; an invisible rect behind them is the single click target */
+  .node .glyph, .node-label { pointer-events: none; }
+  .node-hit { fill: transparent; pointer-events: all; cursor: pointer; }
+  /* Cross-edges: the non-containment half of the graph. Dashed and translucent so
+     they read as a different KIND of relationship from the solid containment links,
+     and never compete with the tree for attention. */
+  .xedge { fill: none; stroke-width: 1.4; stroke-dasharray: 5 4; opacity: 0.55; pointer-events: stroke; }
+  .xedge:hover { opacity: 1; stroke-width: 2.2; }
+  .xe-hosted_on     { stroke: #6ea0dc; }
+  .xe-contributes_to{ stroke: #c084fc; }
+  .xe-works_on      { stroke: #4ade80; }
+  .xe-serves        { stroke: #fbbf24; }
+  .xe-for           { stroke: #94a3b8; }
+
+  .hub { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+
+  path.link { fill: none; stroke: var(--line-strong); stroke-width: 1.5px; }
+
+  /* labels fade out when zoomed far out so the tree shape reads cleanly */
+  #canvasWrap.far .node-label, #canvasWrap.far .subcount { opacity: 0; transition: opacity .2s ease; }
+  .node-label, .subcount { transition: opacity .2s ease; }
+
+  /* tree tab toggle */
+  .tabbar { display: inline-flex; margin: 0 0 12px; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px; gap: 2px; }
+  .tabbar button { font-family: var(--font-mono); font-size: calc(12px * var(--ui-scale)); letter-spacing: .04em; border: 0;
+    background: transparent; color: var(--ink-soft); padding: 7px 18px; border-radius: 999px; cursor: pointer; }
+  .tabbar button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .tabbar button:disabled { opacity: .45; cursor: not-allowed; }
+  .tabbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Detail slider: manual info-density control (separate from zoom).
+     1 = fill only · 2 = fill + ring · 3 = fill + ring + badge. */
+  #canvasWrap[data-detail="1"] .g-ring,
+  #canvasWrap[data-detail="1"] .g-badge,
+  #canvasWrap[data-detail="2"] .g-badge { display: none; }
+
+  .detail-ctl { position: absolute; top: 12px; left: 12px; z-index: 5; display: flex; align-items: center;
+    gap: 9px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 6px 11px; box-shadow: var(--shadow); }
+  .detail-eyebrow { font-family: var(--font-mono); font-size: calc(10px * var(--ui-scale)); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 600; user-select: none; }
+  .detail-slider { -webkit-appearance: none; appearance: none; width: 84px; height: 4px; border-radius: 999px;
+    background: var(--line-strong); outline: none; cursor: pointer; margin: 0; }
+  .detail-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 13px; height: 13px;
+    border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); cursor: pointer; }
+  .detail-slider::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--accent);
+    border: 2px solid var(--panel); cursor: pointer; }
+  .detail-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  .canvas-empty:not([hidden]) { position: absolute; inset: 0; display: grid; place-items: center; color: var(--ink-faint);
+    font-family: var(--font-mono); font-size: calc(13px * var(--ui-scale)); letter-spacing: .02em; }
+  [hidden] { display: none !important; }
+
+  /* ---------- Detail panel ---------- */
+  /* The panel is a fixed header (glyph/id/chips/tabbar) over a scrolling tab
+     body, not one long scrolling column — that split is what makes it
+     scannable. Only #panelBody's own layout changes here; the panel's OUTER
+     box (position/size) is untouched, because withMapAnchored() and the
+     resizer both read detailPanel.getBoundingClientRect() and must keep
+     seeing the same numbers. */
+  .detail-panel { position: fixed; top: 0; right: 0; height: 100%; width: min(var(--panel-w), 100vw);
+    background: var(--panel); border-left: 1px solid var(--line); box-shadow: var(--shadow);
+    transform: translateX(100%); transition: transform .28s ease; z-index: 40; overflow: hidden;
+    display: flex; flex-direction: column; padding: 0; }
+  .detail-panel.open { transform: translateX(0); }
+  #panelBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  @media (prefers-reduced-motion: reduce) { .detail-panel { transition: none; } }
+
+  /* The panel is a fixed overlay, so the page has to give back exactly as much room
+     as the panel takes: while it is open the body is inset by the panel width and the
+     map genuinely splits the viewport with it. No transition here on purpose — the
+     map's zoom transform is nudged in the same frame (see shiftMap) and an animated
+     inset would drift out of sync with it. */
+  @media (min-width: 761px) {
+    body.panel-open { padding-right: min(var(--panel-w), 100vw); }
+  }
+  @media (max-width: 760px) {
+    .detail-panel { width: 100%; top: auto; bottom: 0; height: min(var(--panel-h), 92vh); border-left: 0;
+      border-top: 1px solid var(--line); border-radius: 18px 18px 0 0; transform: translateY(100%); }
+    .detail-panel.open { transform: translateY(0); }
+  }
+
+  /* Drag handle riding the panel's outer edge — a viewport-anchored strip rather than
+     a child of the panel, so it can't be pushed around by the panel's own padding or
+     scroll. Only exists while the panel is open. */
+  .panel-resizer { position: fixed; top: 0; right: min(var(--panel-w), 100vw); width: 11px; height: 100%;
+    z-index: 41; cursor: col-resize; touch-action: none; background: transparent; border: 0; padding: 0;
+    -webkit-appearance: none; appearance: none; opacity: 0; pointer-events: none;
+    transition: opacity .2s ease .1s; }
+  body.panel-open .panel-resizer { opacity: 1; pointer-events: auto; }
+  .panel-resizer::before { content: ""; position: absolute; top: 50%; left: 3px; width: 4px; height: 48px;
+    margin-top: -24px; border-radius: 999px; background: var(--line-strong);
+    transition: background-color .18s ease, height .18s ease; }
+  .panel-resizer:hover::before, .panel-resizer:focus-visible::before,
+  body.resizing .panel-resizer::before { background: var(--accent); height: 72px; margin-top: -36px; }
+  .panel-resizer:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+  /* while dragging: no text selection, no panel slide easing fighting the pointer */
+  body.resizing { user-select: none; -webkit-user-select: none; cursor: col-resize; }
+  body.resizing .detail-panel, body.resizing .panel-resizer { transition: none; }
+  @media (max-width: 760px) {
+    .panel-resizer { top: auto; right: 0; left: 0; width: auto; height: 15px;
+      bottom: min(var(--panel-h), 92vh); cursor: row-resize; }
+    .panel-resizer::before { top: 6px; left: 50%; width: 48px; height: 4px; margin: 0 0 0 -24px; }
+    .panel-resizer:hover::before, .panel-resizer:focus-visible::before,
+    body.resizing .panel-resizer::before { height: 4px; width: 72px; margin-left: -36px; }
+    body.resizing { cursor: row-resize; }
+  }
+  .panel-close { position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; border-radius: 50%;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-soft); font-size: calc(16px * var(--ui-scale));
+    line-height: 1; cursor: pointer; }
+  .panel-close:hover { color: var(--ink); border-color: var(--line-strong); }
+  .panel-copylink { position: absolute; top: 14px; right: 52px; height: 30px; padding: 0 12px;
+    border-radius: 15px; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-soft);
+    font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); letter-spacing: .03em; cursor: pointer; white-space: nowrap; }
+  .panel-copylink:hover { color: var(--ink); border-color: var(--line-strong); }
+  .panel-copylink[data-copied] { color: var(--accent); border-color: var(--accent); }
+  .panel-scrim { position: fixed; inset: 0; background: rgba(10,14,20,.28); opacity: 0; pointer-events: none;
+    transition: opacity .2s ease; z-index: 39; }
+  .panel-scrim.open { opacity: 1; pointer-events: auto; }
+  @media (min-width: 761px) { .panel-scrim { display: none; } }
+
+  /* Identity + chips + tabbar: built once per selection, then pinned above the
+     scrolling tab body (see #panelBody above) so they stay in view while a
+     long work list or a doc scrolls underneath them. */
+  .panel-fixed { flex: none; padding: 20px 20px 0; }
+
+  .panel-head { display: flex; gap: 16px; align-items: center; padding-right: 108px; }
+  .panel-id { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); letter-spacing: .1em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; }
+  .panel-name { font-size: calc(18px * var(--ui-scale)); font-weight: 660; letter-spacing: -.01em; margin: 4px 0 0; line-height: 1.25; }
+  .panel-type { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint); margin-top: 4px;
+    letter-spacing: .04em; text-transform: uppercase; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+    letter-spacing: .03em; padding: 5px 10px; border-radius: 999px; background: var(--panel-2);
+    border: 1px solid var(--line); color: var(--ink-soft); }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .chip.strong { color: var(--ink); font-weight: 600; }
+
+  /* Overview / Work / Docs / Links. All four bodies are built the moment a
+     node is selected (so an in-flight fetch — depends_on, connections — is
+     never stranded); clicking a tab only toggles which body is visible. */
+  .panel-tabbar { display: flex; gap: 2px; margin-top: 16px; border-bottom: 1px solid var(--line); }
+  .panel-tab-btn { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center;
+    gap: 5px; font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); letter-spacing: .03em;
+    color: var(--ink-soft); background: transparent; border: 0; border-bottom: 2px solid transparent;
+    padding: 8px 4px 9px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .panel-tab-btn:hover { color: var(--ink); }
+  .panel-tab-btn[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 620; }
+  .panel-tab-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .panel-tab-badge { font-family: var(--font-mono); font-size: calc(9.5px * var(--ui-scale)); line-height: 1.4;
+    color: var(--ink-faint); background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
+    padding: 1px 6px; flex: none; }
+  .panel-tab-btn[aria-selected="true"] .panel-tab-badge { color: var(--accent); border-color: var(--accent); }
+
+  .panel-tabpanels { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 16px 20px 60px; }
+  /* [hidden] already forces display:none globally (see the sitewide rule
+     above) — nothing extra needed here to toggle a tab body. */
+  .panel-tabbody > .panel-section:first-child { margin-top: 0; }
+
+  .work-summary { font-family: var(--font-mono); font-size: calc(12px * var(--ui-scale)); color: var(--ink-soft); }
+  .work-seam-note { font-size: calc(10.5px * var(--ui-scale)); color: var(--ink-faint); font-style: italic; margin-top: 4px; }
+  .work-item-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line-strong); flex: none; }
+  .work-item-dot[data-status="done"] { background: var(--accent); }
+  .work-item-dot[data-status="in_progress"] { background: var(--att-orange); }
+  .work-item-dot[data-status="blocked"] { background: var(--att-red); }
+
+  /* Status control — the board's write surface (the only one). Segmented
+     buttons rather than a <select>: the whole lifecycle stays readable at a
+     glance, and the current state is a position, not a collapsed label. */
+  .status-set { display: flex; flex-wrap: wrap; gap: 4px; }
+  .status-btn { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); letter-spacing: .03em;
+    color: var(--ink-soft); background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
+    padding: 5px 11px; cursor: pointer; transition: border-color .15s, color .15s, background .15s; }
+  .status-btn:hover:not(:disabled) { border-color: var(--line-strong); color: var(--ink); }
+  .status-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--panel);
+    font-weight: 620; }
+  .status-btn:disabled { opacity: .5; cursor: progress; }
+  .status-note { margin-top: 9px; font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    color: var(--ink-faint); line-height: 1.5; }
+  .status-error { margin-top: 8px; font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    color: var(--att-red); }
+
+  /* The assignee control (TASK-1122). Deliberately quieter than .status-btn:
+     status is a five-way choice you make often and read at a glance, assignee
+     is a one-of-N you set rarely — a pill row for four names would shout
+     louder than the thing above it. Same tokens, same --ui-scale discipline. */
+  /* The binding control (TASK-1019) is the same kind of thing again — a
+     one-of-N you set rarely — so it shares these rules rather than getting a
+     near-identical block that drifts the first time somebody adjusts one. It
+     adds only what differs: its options are "name (id)" and can be far wider
+     than a person's name, so the select takes the full panel width instead of
+     resizing itself as the roster arrives. */
+  .assignee-set, .binding-set { display: flex; align-items: center; gap: 8px; }
+  .assignee-select, .binding-select { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+    color: var(--ink); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 9px; cursor: pointer; max-width: 100%;
+    transition: border-color .15s, color .15s; }
+  .assignee-select:hover:not(:disabled), .binding-select:hover:not(:disabled) {
+    border-color: var(--line-strong); }
+  .assignee-select:disabled, .binding-select:disabled { opacity: .5; cursor: progress; }
+  .binding-select { width: 100%; }
+
+  /* ---------------------------------------------------------- the Mine view
+     A list, not a map (TASK-1124). It takes the stage when its tab is active;
+     .canvas-wrap is hidden rather than reused, because that container's whole
+     job is d3 zoom/pan arithmetic. Same tokens and the same --ui-scale
+     discipline as everything else. */
+  .mine-wrap { position: relative; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 16px; box-shadow: var(--shadow); overflow: auto;
+    /* Same height contract as .canvas-wrap, including the overview-open case —
+       the two swap places on the stage, so a different height would make the
+       page jump every time you change tab. */
+    height: clamp(360px, calc(100vh - 290px), 1500px); min-height: 360px; }
+  :root[data-overview="open"] .mine-wrap { height: clamp(360px, calc(100vh - 600px), 1500px); }
+  .mine-ctl { display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+    padding: 12px 14px; border-bottom: 1px solid var(--line); position: sticky; top: 0;
+    background: var(--panel); z-index: 2; }
+  .mine-list { padding: 6px 0 18px; }
+  .mine-count { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint);
+    padding: 10px 14px 4px; }
+  .mine-group { display: flex; align-items: baseline; gap: 8px; padding: 14px 14px 6px;
+    font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; }
+  .mine-group-count { color: var(--ink-soft); }
+  .mine-row { display: flex; align-items: baseline; gap: 10px; width: 100%; text-align: left;
+    background: none; border: 0; border-left: 2px solid transparent; padding: 6px 14px;
+    cursor: pointer; color: var(--ink); font-family: inherit; }
+  .mine-row:hover { background: var(--panel-2); border-left-color: var(--accent); }
+  /* Drawn only because it CONTAINS something assigned. It has to be visibly
+     different or a story of yours with no assigned children reads as a heading
+     over nothing. */
+  .mine-row.is-context { color: var(--ink-faint); cursor: pointer; }
+  /* The "open" surface is a real, independent <button> (nested interactive
+     content inside `.mine-row` would be invalid HTML — see mine.js's row()).
+     It has to shed the browser's default button chrome and reproduce the
+     flex-row/gap layout `.mine-row`'s children get for free, so its box
+     matches the row around it exactly. mine.js's click handler is on
+     `.mine-row` itself, not on this button alone — a click anywhere in the
+     row (this button, the indent, the padding, the gap) opens the node
+     except on the twisty, which stops its own clicks from reaching the row. */
+  .mine-row-open { display: flex; align-items: baseline; gap: 10px;
+    flex: 1; min-width: 0; background: none; border: 0; margin: 0; padding: 0;
+    font: inherit; color: inherit; text-align: left; cursor: pointer; }
+  /* The fold control. Its own hit area inside the row: the twisty folds, the
+     rest of the row opens the node. */
+  /* A leaf gets an EMPTY box of the same footprint, so ids stay in one column
+     whether or not the row folds. Without it every leaf shifts left and the
+     tree reads as ragged. */
+  /* A leaf gets an EMPTY box of the same footprint, so ids stay in one column
+     whether or not the row folds. */
+  .mine-twisty { display: inline-flex; align-items: center; justify-content: center;
+    width: calc(18px * var(--ui-scale)); height: calc(18px * var(--ui-scale));
+    flex: none; align-self: center;
+    border: 1px solid transparent; border-radius: 5px; }
+  /* The one that actually folds: bordered and filled so it reads as a control
+     rather than as punctuation. */
+  .mine-twisty.is-toggle { cursor: pointer;
+    border-color: var(--line-strong); background: var(--panel-2);
+    transition: border-color .12s, background .12s; }
+  .mine-twisty.is-toggle:hover { background: var(--accent); border-color: var(--accent); }
+
+  /* THE ARROW IS DRAWN, NOT TYPED. A glyph (U+2304, U+25BE, any of them) is
+     positioned by the font's own metrics: measured here, the text box sat
+     1.9px from the top and 3.5px from the bottom of a perfectly square button,
+     because the face puts the arrowhead's ink high in its em box. No amount of
+     flex centring moves ink inside a glyph. A CSS triangle has exactly the
+     dimensions declared, so the flexbox can centre it exactly.
+     NO optical-centre nudge: the first attempt shifted it 2.6px down, which on
+     a 6px triangle is 43% of its height and read as plainly low. At this size
+     the geometric centre IS the optical one. */
+  .mine-twisty.is-toggle::before {
+    content: ""; display: block; width: 0; height: 0;
+    border-left: calc(4px * var(--ui-scale)) solid transparent;
+    border-right: calc(4px * var(--ui-scale)) solid transparent;
+    border-top: calc(5px * var(--ui-scale)) solid var(--ink);
+  }
+  .mine-twisty.is-toggle:hover::before { border-top-color: var(--panel); }
+  /* Collapsed: the same triangle turned to point at what it would reveal. */
+  .mine-twisty.is-toggle.is-collapsed::before {
+    border-left: calc(5px * var(--ui-scale)) solid var(--ink);
+    border-right: 0;
+    border-top: calc(4px * var(--ui-scale)) solid transparent;
+    border-bottom: calc(4px * var(--ui-scale)) solid transparent;
+  }
+  .mine-twisty.is-toggle.is-collapsed:hover::before { border-left-color: var(--panel); }
+
+  .mine-type { font-family: var(--font-mono); font-size: calc(9.5px * var(--ui-scale));
+    letter-spacing: .1em; color: var(--ink-faint); min-width: 42px; }
+  .mine-id { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    color: var(--ink-soft); min-width: 92px; }
+  .mine-name { font-size: calc(12.5px * var(--ui-scale)); flex: 1; }
+  .mine-status { font-family: var(--font-mono); font-size: calc(10px * var(--ui-scale));
+    color: var(--ink-faint); white-space: nowrap; }
+  /* Status colour reads the same vocabulary as the map's attention fills, so a
+     row and a glyph never disagree about what a colour means (owner
+     decision, 2026-08-18). Pending stays the default grey: most of a backlog is pending,
+     and colouring the common case leaves nothing for the exceptions to stand
+     out against.
+       in progress  accent   moving
+       done         green    finished well
+       cancelled    red      finished badly — deliberately the loud one
+       blocked      orange   stuck, but not abandoned; distinct from cancelled
+       analyze      purple   thinking, matching the map's decision colour */
+  .mine-status[data-status="in_progress"] { color: var(--accent); }
+  .mine-status[data-status="done"] { color: var(--att-green); }
+  .mine-status[data-status="cancelled"] { color: var(--att-red); }
+  .mine-status[data-status="blocked"] { color: var(--att-orange); }
+  .mine-status[data-status="analyze"] { color: var(--att-purple); }
+  /* Empty, loading and failed must not look the same: a blank pane that is
+     still fetching reads as "you have no work", which is a lie people act on. */
+  .mine-empty, .mine-loading, .mine-error { padding: 26px 16px; font-size: calc(12.5px * var(--ui-scale));
+    color: var(--ink-faint); }
+  .mine-loading { font-style: italic; }
+  .mine-error { color: var(--att-red); }
+
+  .panel-section { margin-top: 22px; }
+  .panel-label { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale)); letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-faint); font-weight: 600; margin-bottom: 8px; }
+
+  .completion-bar { height: 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line);
+    overflow: hidden; display: flex; }
+  .completion-bar .seg-done { background: var(--accent); }
+  .completion-bar .seg-inprog { background: var(--accent); opacity: .4; }
+  .completion-counts { display: flex; gap: 14px; margin-top: 8px; font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-scale));
+    color: var(--ink-soft); flex-wrap: wrap; }
+  .completion-counts b { color: var(--ink); font-weight: 620; }
+
+  .link-list, .subnode-list { display: grid; gap: 2px; }
+  .link-row, .subnode-row { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center;
+    padding: 7px 4px; border-radius: 8px; cursor: pointer; background: transparent; border: 1px solid transparent;
+    text-align: left; font: inherit; color: inherit; }
+  .link-row:hover, .subnode-row:hover { background: var(--panel-2); border-color: var(--line); }
+  .link-row .rn, .subnode-row .rn { font-size: calc(12.5px * var(--ui-scale)); font-weight: 560; line-height: 1.3; }
+  .link-row .ri, .subnode-row .ri { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale)); color: var(--ink-faint); }
+  .muted-empty { color: var(--ink-faint); font-size: calc(12.5px * var(--ui-scale)); font-style: italic; padding: 4px 2px; }
+
+  .placeholder-block { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 12px 14px;
+    color: var(--ink-faint); font-size: calc(12.5px * var(--ui-scale)); line-height: 1.6; background: var(--panel-2); }
+
+  .prose-block { font-size: calc(12.5px * var(--ui-scale)); line-height: 1.65; color: var(--ink-soft); white-space: pre-wrap; }
+
+  /* The editable twin of .prose-block, used by the description and acceptance
+     editors in panel.js. It arrived as an inline style.cssText block, because
+     the builder that wrote those editors did not own this file — the exact
+     rule it wanted was left in a comment above `styleProseField`, and this is
+     it. Kept beside .prose-block deliberately: the read and edit views of the
+     same prose must move together, and a font-size that drifts between them
+     is a visible jump when the editor opens. */
+  .prose-edit-field { width: 100%; box-sizing: border-box;
+    font-size: calc(12.5px * var(--ui-scale)); line-height: 1.55;
+    color: var(--ink); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+  textarea.prose-edit-field { resize: vertical; }
+  /* Only what both editor button-rows genuinely share. Their top margins
+     differ (6px description, 8px acceptance) and stay inline rather than
+     being silently unified — that is a spacing decision for the owner,
+     not a side effect of moving a rule into a stylesheet. */
+  .prose-edit-actions { display: flex; gap: 6px; }
+  .detail-more { margin-top: 4px; }
+  .detail-more > summary { cursor: pointer; font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    letter-spacing: .08em; text-transform: uppercase; color: var(--accent); list-style: none; }
+  .detail-more > summary::-webkit-details-marker { display: none; }
+  .detail-more > summary::before { content: "+ "; }
+  .detail-more[open] > summary::before { content: "− "; }
+  .detail-more[open] > summary { margin-bottom: 8px; }
+
+  /* Acceptance criteria — same prose weight as .prose-block, numbered because
+     the order is authored and meaningful (acceptance_criterion.position), not
+     incidental. Every font-size goes through --ui-scale, or it silently opts
+     out of the text-size control. */
+  .acceptance-list { margin: 0; padding-left: calc(18px * var(--ui-scale)); }
+  .acceptance-item { font-size: calc(12.5px * var(--ui-scale)); line-height: 1.65;
+    color: var(--ink-soft); white-space: pre-wrap; margin-bottom: 6px; }
+  .acceptance-item::marker { color: var(--accent); font-family: var(--font-mono); }
+  .acceptance-item:last-child { margin-bottom: 0; }
+
+  /* History tab (TASK-1045's `graph_event`, read back via GET /api/events —
+     see panel.js's renderHistory). One row per event, newest first, exactly
+     as the API returns them. The agent-vs-person line is the whole point of
+     the tab: `.event-actor-agent` marks a machine caller, and either
+     `.event-on-behalf` (a linked person) or `.event-no-responsible` (none
+     recorded) always follows it — never neither, which would read as "this
+     was nobody's doing". */
+  .event-list { display: grid; gap: 2px; }
+  .event-row { padding: 7px 4px; border-radius: 8px; border: 1px solid transparent; }
+  .event-row + .event-row { border-top: 1px dashed var(--line); }
+  .event-when { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    color: var(--ink-faint); }
+  .event-action { font-size: calc(12.5px * var(--ui-scale)); font-weight: 560; line-height: 1.3;
+    color: var(--ink); margin-top: 2px; }
+  .event-who { font-size: calc(11px * var(--ui-scale)); color: var(--ink-soft);
+    margin-top: 2px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+  .event-actor-agent { font-family: var(--font-mono); color: var(--accent); }
+  .event-on-behalf { color: var(--ink-soft); }
+  .event-no-responsible { color: var(--att-orange); font-style: italic; }
+  .event-detail { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    color: var(--ink-faint); margin-top: 3px; word-break: break-word; }
+  .event-list-status { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint); margin-top: 10px; }
+  .event-load-more { margin-top: 8px; font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+    letter-spacing: .03em; color: var(--ink-soft); background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 999px; padding: 5px 11px; cursor: pointer; transition: border-color .15s, color .15s; }
+  .event-load-more:hover:not(:disabled) { border-color: var(--line-strong); color: var(--ink); }
+  .event-load-more:disabled { opacity: .5; cursor: progress; }
+
+  /* Overview -> Docs pointer (owner decision, 2026-08-16). Same visual family as
+     .doc-row so it reads as the same kind of object, but flush and compact:
+     it is a signpost in a summary, not a document listing. */
+  .overview-doclinks { display: grid; gap: 4px; }
+  .overview-doclink { display: flex; align-items: baseline; gap: 7px; width: 100%; text-align: left;
+    background: var(--panel-2); border: none; border-radius: 8px; padding: 7px 10px; cursor: pointer;
+    color: inherit; font: inherit; }
+  .overview-doclink:hover .dl-title { color: var(--accent); }
+  .overview-doclink .dl-title { font-size: calc(12.5px * var(--ui-scale)); font-weight: 560; }
+  .docs-list { display: grid; gap: 6px; }
+  .doc-row { display: block; padding: 8px 10px; border-radius: 8px; background: var(--panel-2);
+    border: 1px solid var(--line); }
+  .doc-row .dn { font-size: calc(12.5px * var(--ui-scale)); font-weight: 560; line-height: 1.3; }
+  .doc-row .dn .doc-kind { font-family: var(--font-mono); font-size: calc(10px * var(--ui-scale)); letter-spacing: .05em;
+    text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+  .doc-row .dp { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale)); color: var(--ink-faint); margin-top: 3px;
+    word-break: break-all; }
+  .doc-row-head { display: block; width: 100%; text-align: left; background: none; border: none; padding: 0;
+    margin: 0; font: inherit; color: inherit; }
+  .doc-row-head.clickable { cursor: pointer; }
+  .doc-row-head.clickable:hover .dn { color: var(--accent); }
+  .doc-ext-tag { font-family: var(--font-mono); font-size: calc(9.5px * var(--ui-scale)); letter-spacing: .06em; text-transform: uppercase;
+    color: var(--ink-faint); border: 1px solid var(--line); border-radius: 999px; padding: 1px 6px; margin-left: 6px; }
+
+  .doc-viewer { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+  .doc-viewer-error { color: var(--att-red); font-size: calc(12px * var(--ui-scale)); }
+  .doc-spinner { width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; display: inline-block; margin-right: 8px; animation: docspin .7s linear infinite;
+    vertical-align: -2px; }
+  @keyframes docspin { to { transform: rotate(360deg); } }
+
+  .doc-prose { font-size: calc(12.5px * var(--ui-scale)); line-height: 1.65; color: var(--ink-soft); }
+  .doc-prose h1, .doc-prose h2, .doc-prose h3 { color: var(--ink); line-height: 1.3; margin: 14px 0 6px; }
+  .doc-prose h1:first-child, .doc-prose h2:first-child, .doc-prose h3:first-child { margin-top: 0; }
+  .doc-prose p { margin: 8px 0; }
+  .doc-prose code { font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-scale)); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1px 4px; }
+  .doc-prose pre { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    overflow-x: auto; }
+  .doc-prose pre code { background: none; border: none; padding: 0; }
+  .doc-prose ul, .doc-prose ol { padding-left: 20px; margin: 8px 0; }
+  .doc-prose a { color: var(--accent); }
+  .doc-prose strong { color: var(--ink); }
+  .doc-prose blockquote { margin: 8px 0; padding: 2px 0 2px 10px; border-left: 2px solid var(--line);
+    color: var(--ink-faint); }
+
+  /* TASK-1071 — workitem prose is markdown now, and these specs are full of
+     tables. THE TABLE MUST SCROLL, NOT WIDEN THE PANEL: the detail panel is
+     resizable and `withMapAnchored` compensates the d3 pan by exactly how far
+     the canvas edge moved, reading getBoundingClientRect(). A table that forces
+     the panel wider than the user dragged it corrupts that arithmetic silently.
+     `display: block` + `overflow-x: auto` keeps the overflow inside the table. */
+  .doc-prose table { display: block; width: max-content; max-width: 100%; overflow-x: auto;
+    border-collapse: collapse; margin: 10px 0; font-size: calc(11.5px * var(--ui-scale)); }
+  .doc-prose th, .doc-prose td { border: 1px solid var(--line); padding: 4px 8px; text-align: left;
+    vertical-align: top; }
+  .doc-prose th { color: var(--ink); background: var(--panel); font-weight: 600; }
+  .doc-mermaid { margin: 10px 0; overflow-x: auto; }
+  .doc-mermaid svg { max-width: 100%; height: auto; }
+
+  .link-sub { font-family: var(--font-mono); font-size: calc(10px * var(--ui-scale)); letter-spacing: .08em; text-transform: uppercase;
+    color: var(--ink-faint); margin: 14px 0 4px; }
+
+  /* ---------- intent (ADR 0032): a node's durable purpose ------------------
+     The kind is the load-bearing part of the row, not decoration — it says
+     what an agent must DO when reality disagrees with the statement — so it
+     gets the accent, and the four kinds are told apart by colour as well as
+     by their word. `.intent-kind` alone carries a neutral fallback, so a kind
+     added to node_types.INTENT_KINDS renders sanely before it has a rule. */
+  .intent-kind { font-family: var(--font-mono); font-size: calc(9.5px * var(--ui-scale));
+    letter-spacing: .1em; text-transform: uppercase; font-weight: 600; flex: none;
+    padding: 3px 7px; border-radius: 5px; background: var(--panel-2);
+    border: 1px solid var(--line); color: var(--ink-faint); }
+  .intent-kind.k-constraint { color: var(--att-red); border-color: var(--att-red); }
+  .intent-kind.k-principle  { color: var(--accent); border-color: var(--accent); }
+  .intent-kind.k-non-goal   { color: var(--att-purple); border-color: var(--att-purple); }
+  .intent-kind.k-outcome    { color: var(--att-green); border-color: var(--att-green); }
+
+  .intent-row { padding: 10px 0 12px; border-bottom: 1px solid var(--line); }
+  .intent-row:last-child { border-bottom: 0; }
+  .intent-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .intent-title { font-size: calc(12.5px * var(--ui-scale)); font-weight: 600; line-height: 1.35; }
+  .intent-statement { margin: 0; }
+  /* `.intent-statement` also carries `.doc-prose`, whose `p { margin: 8px 0 }`
+     put 8px under the statement and 6px more above the foot — so the source
+     line sat midway between its own row and the next one and read as a
+     separator rather than as attribution. Collapse the paragraph's outer
+     margins; the row's own padding does the spacing. */
+  .intent-statement p:first-child { margin-top: 0; }
+  .intent-statement p:last-child { margin-bottom: 0; }
+  /* An inherited row is visibly not this node's to edit: the rule down its
+     left edge is the same "this came from above" cue the owner button spells
+     out in words. */
+  /* `--line-strong` is #363f4a on a #191f27 panel — measured on the live board
+     and effectively invisible, so the cue did no work. A muted accent ties the
+     rule to the `from <owner>` button below it, which is the other thing
+     marking these rows as someone else's. The shorthand is the fallback for
+     any engine without color-mix. */
+  .intent-row.is-inherited { border-left: 2px solid var(--line-strong); padding-left: 10px; }
+  .intent-row.is-inherited { border-left-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+  .intent-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+  .intent-owner { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    color: var(--accent); background: transparent; border: 0; padding: 0; cursor: pointer;
+    text-align: left; }
+  .intent-owner:hover { text-decoration: underline; }
+  .intent-source { font-family: var(--font-mono); font-size: calc(10px * var(--ui-scale));
+    color: var(--ink-faint); }
+
+  /* The Overview strip: headline only. Clicking a row opens the Intent tab,
+     where the statements are. */
+  .intent-strip-list { display: flex; flex-direction: column; gap: 2px; }
+  .intent-strip-row { display: flex; align-items: center; gap: 8px; width: 100%;
+    padding: 5px 4px; border-radius: 8px; cursor: pointer; background: transparent;
+    border: 1px solid transparent; text-align: left; font: inherit; color: inherit; }
+  .intent-strip-row:hover { background: var(--panel-2); border-color: var(--line); }
+  .intent-strip-row .intent-title { font-weight: 540; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+
+  .reveal { opacity: 0; transform: translateY(8px); animation: rise .5s ease forwards; }
+  @keyframes rise { to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .reveal { animation: none; opacity: 1; transform: none; }
+    .glyph, .node { transition: none !important; } }
+
+  /* ---------------------------------------------------------------------- */
+  /* The profile menu and the Settings overlay (STORY-atlas-access-admin).   */
+  /*                                                                        */
+  /* Every font-size here is calc(<N>px * var(--ui-scale)), same as the rest */
+  /* of this file — one knob still scales the whole page, the overlay        */
+  /* included. A plain px size would make the settings the only text on the  */
+  /* board that ignores the A-/A+ control.                                   */
+  /* ---------------------------------------------------------------------- */
+  /* The slot anchors the menu, so it has to establish a containing block.
+     Without this the menu positions against the viewport and lands under the
+     map on a narrow window. */
+  .appbar-account-slot.is-signed-in { position: relative; }
+  .acct-trigger { display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 12px; font: inherit; transition: border-color .2s; }
+  .acct-trigger:hover { border-color: var(--line-strong); }
+  .acct-trigger[aria-expanded="true"] { border-color: var(--line-strong); }
+  .acct-caret { font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint); line-height: 1; }
+
+  .acct-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
+    min-width: 210px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; box-shadow: var(--shadow); padding: 6px; }
+  .acct-menu[hidden] { display: none; }
+  .acct-who { padding: 8px 10px 10px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+  .acct-who-name { font-size: calc(13px * var(--ui-scale)); color: var(--ink); }
+  .acct-who-role { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+    color: var(--ink-faint); letter-spacing: .04em; margin-top: 2px; }
+  .acct-item { display: block; width: 100%; text-align: left; box-sizing: border-box;
+    font: inherit; font-size: calc(13px * var(--ui-scale)); color: var(--ink-soft);
+    background: transparent; border: 0; border-radius: 7px; padding: 8px 10px;
+    cursor: pointer; text-decoration: none; transition: background .15s, color .15s; }
+  .acct-item:hover { background: var(--panel-2); color: var(--ink); }
+  .acct-item[disabled] { color: var(--ink-faint); cursor: default; background: transparent; }
+  .acct-item.is-signout { color: var(--att-red); }
+
+  /* ------------------------------------------------------------- overlay -- */
+  .settings-overlay { position: fixed; inset: 0; z-index: 200; display: flex;
+    align-items: flex-start; justify-content: center; padding: 6vh 16px;
+    background: rgba(16, 22, 30, .5); overflow: auto; }
+  .settings-overlay[hidden] { display: none; }
+  .settings-sheet { width: min(1080px, 100%); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  .settings-head { display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px; border-bottom: 1px solid var(--line); }
+  .settings-head h2 { margin: 0; font-size: calc(17px * var(--ui-scale)); color: var(--ink); }
+  .settings-close { font: inherit; font-size: calc(20px * var(--ui-scale)); line-height: 1;
+    color: var(--ink-faint); background: transparent; border: 0; cursor: pointer;
+    padding: 2px 8px; border-radius: 7px; }
+  .settings-close:hover { background: var(--panel-2); color: var(--ink); }
+  .settings-body { padding: 4px 20px 20px; }
+
+  /* ------------------------------------------------- the left-nav shell --- */
+  /* Two panes: a vertical menu and the selected group's content (owner
+     decision, 2026-08-25: "a menu to the left of the main settings window, go from top to
+     bottom"). This lives ONLY inside `#settingsBody` as built by settings.js —
+     compose.js reuses the plain `.settings-body` for its own single-column
+     form and never emits `.settings-shell`, so nothing here touches it. */
+  .settings-shell { display: flex; align-items: flex-start; gap: 22px;
+    min-height: calc(280px * var(--ui-scale)); }
+  .settings-nav { flex: 0 0 168px; display: flex; flex-direction: column;
+    gap: 2px; border-right: 1px solid var(--line); padding-right: 14px; }
+  .settings-nav-btn { display: block; width: 100%; text-align: left; font: inherit;
+    font-size: calc(13px * var(--ui-scale)); color: var(--ink-soft);
+    background: transparent; border: 0; border-radius: 7px; padding: 8px 10px;
+    cursor: pointer; transition: background .15s, color .15s; }
+  .settings-nav-btn:hover { background: var(--panel-2); color: var(--ink); }
+  .settings-nav-btn.is-active { background: var(--panel-2); color: var(--ink);
+    font-weight: 600; }
+  .settings-nav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .settings-content { flex: 1 1 auto; min-width: 0; }
+  .settings-pane[hidden] { display: none; }
+
+  .settings-section { padding-top: 18px; }
+  /* First section inside a pane needs no extra top-air — the pane itself is
+     already below the menu row's baseline, and the padding above exists for
+     STACKED sections (mobile keeps only one section per pane, see below). */
+  .settings-pane > .settings-section:first-child { padding-top: 4px; }
+  .settings-h3 { margin: 0 0 6px; font-size: calc(13px * var(--ui-scale));
+    font-family: var(--font-mono); letter-spacing: .06em; text-transform: uppercase;
+    color: var(--ink-faint); }
+  .settings-note { margin: 0 0 12px; font-size: calc(13px * var(--ui-scale));
+    color: var(--ink-soft); line-height: 1.55; max-width: 68ch; }
+  .settings-warn { margin: 12px 0 0; font-size: calc(12.5px * var(--ui-scale));
+    color: var(--att-orange); line-height: 1.5; }
+  .settings-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px;
+    margin: 0 0 12px; font-size: calc(13px * var(--ui-scale)); }
+  .settings-dl dt { color: var(--ink-faint); }
+  .settings-dl dd { margin: 0; color: var(--ink); font-family: var(--font-mono); }
+  .settings-link { display: block; width: fit-content; margin-top: 6px;
+    font-size: calc(13px * var(--ui-scale)); color: var(--accent); }
+
+  /* -------------------------------------------------------- access grid --- */
+  /* ACCOUNTS DOWN, PROJECTS ACROSS (2026-08-16). The axis was the other way and
+     it scrolled sideways at nine accounts, because accounts are the set that
+     grows — roughly two per contributor once each brings an agent — while
+     projects change only when a decision changes. The table still scrolls
+     inside its own container: letting it scroll the page body would drag the
+     map out from under the overlay. */
+  .access-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .access-table { border-collapse: collapse; width: 100%;
+    font-size: calc(13px * var(--ui-scale)); }
+  .access-table th, .access-table td { padding: 8px 12px; text-align: left;
+    border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .access-table thead th { background: var(--panel-2); color: var(--ink-faint);
+    font-weight: 600; font-size: calc(12px * var(--ui-scale)); white-space: nowrap;
+    position: sticky; top: 0; vertical-align: bottom; }
+  .access-table tbody tr:last-child th, .access-table tbody tr:last-child td { border-bottom: 0; }
+
+  /* The account column is a ROW HEADER now: left-aligned, and it stays put while
+     the project columns scroll under it. Without the sticky column you lose track
+     of whose row you are ticking the moment there are more projects than fit. */
+  .access-th-acct, .access-td-acct { text-align: left; position: sticky; left: 0;
+    background: var(--panel); z-index: 1; white-space: nowrap; }
+  .access-table thead .access-th-acct { background: var(--panel-2); z-index: 2; }
+  .access-td-cell { text-align: center; }
+
+  .access-acct-name { font-family: var(--font-mono); color: var(--ink); }
+  .access-acct-tag { font-size: calc(10px * var(--ui-scale)); margin-left: 6px;
+    color: var(--ink-faint); letter-spacing: .04em; text-transform: uppercase; }
+  .access-acct-tag.is-off { color: var(--att-red); }
+  .access-acct-tag.is-bot { color: var(--att-purple); }
+  .access-agent-count { font-size: calc(10.5px * var(--ui-scale)); margin-left: 8px;
+    color: var(--ink-faint); }
+
+  /* The chevron. `is-empty` is a spacer for a person with no agents — without it
+     their name sits one chevron-width left of everyone else's and the column
+     reads as two columns. */
+  .access-expand { display: inline-block; width: calc(16px * var(--ui-scale));
+    font: inherit; font-size: calc(12px * var(--ui-scale)); color: var(--ink-faint);
+    background: none; border: 0; padding: 0; margin-right: 4px; cursor: pointer;
+    text-align: center; }
+  .access-expand:hover { color: var(--ink); }
+  .access-expand.is-empty { cursor: default; }
+
+  /* An agent's row is indented and quieter than its person's — the person is the
+     unit an owner administers, the agents are the detail under it. */
+  .access-arow.is-agent .access-td-acct { padding-left: calc(30px * var(--ui-scale)); }
+  .access-arow.is-agent .access-acct-name { color: var(--ink-soft); }
+  .access-arow.is-sep .access-td-acct { font-size: calc(10.5px * var(--ui-scale));
+    color: var(--ink-faint); letter-spacing: .06em; text-transform: uppercase;
+    padding-top: 12px; }
+
+  .access-proj-name { color: var(--ink); font-weight: 600; }
+  .access-proj-id { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+    color: var(--ink-faint); margin-top: 1px; font-weight: 400; }
+  .access-th-proj.is-private .access-proj-name { color: var(--att-purple); }
+  .access-col-status { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+    color: var(--ink-faint); font-weight: 400; margin-top: 3px; min-height: 1em; }
+  .access-col-status.is-bad { color: var(--att-red); }
+
+  .access-vis { font: inherit; font-size: calc(12.5px * var(--ui-scale));
+    font-family: var(--font-mono); color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px; cursor: pointer;
+    margin-top: 5px; }
+  .access-box { width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent); }
+  .access-always { color: var(--ink-faint); font-size: calc(15px * var(--ui-scale)); }
+
+  /* A shared project's checkboxes are live but inert — the grants are stored and
+     do nothing until it is private. Dimming says so without a tooltip. */
+  .access-td-cell:not(.is-private) .access-box { opacity: .45; }
+
+  /* AN INHERITED GRANT (ADR 0034 / TASK-1114): this agent sees the project
+     because its PERSON is granted it, and there is no row on the agent to
+     untick. The box is disabled and the arrow says where the grant lives, so
+     the one wrong outcome — clearing it, saving, and watching it come back —
+     is not reachable. Deliberately quieter than a direct tick: a stored grant
+     and an inherited one must not look identical. */
+  .access-inherited { display: none; margin-left: 3px; color: var(--accent);
+    font-size: calc(12px * var(--ui-scale)); }
+  .access-td-cell.is-inherited .access-inherited { display: inline; }
+  .access-td-cell.is-inherited .access-box { opacity: .3; cursor: default; }
+
+  /* THE DISAGREEMENT MARK: a collapsed person whose agents hold a different
+     answer for this project. Absolutely positioned beside the box rather than
+     replacing it — the box must stay operable, and the mark is a statement
+     ABOUT the row, not a third checkbox state. */
+  .access-td-cell { position: relative; }
+  .access-mixed { display: none; position: absolute; top: 50%; margin-left: 3px;
+    transform: translateY(-50%); color: var(--att-orange);
+    font-size: calc(11px * var(--ui-scale)); }
+  .access-td-cell.is-mixed .access-mixed { display: inline; }
+
+  .access-actions { display: flex; align-items: center; justify-content: flex-end;
+    gap: 8px; margin-top: 10px; }
+  .access-save { font: inherit; font-size: calc(12px * var(--ui-scale));
+    font-family: var(--font-mono); color: var(--ink-soft); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 14px;
+    cursor: pointer; transition: border-color .2s, color .2s; }
+  .access-save:hover:not([disabled]) { border-color: var(--line-strong); color: var(--ink); }
+  .access-save[disabled] { opacity: .4; cursor: default; }
+  .access-status { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+    color: var(--ink-faint); }
+  .access-status.is-ok { color: var(--att-green); }
+  .access-status.is-bad { color: var(--att-red); }
+
+  /* -------------------------------------------------- agent credentials --- */
+  /* TASK-1117. Every font size scales — a plain px here silently opts out of
+     the text-size control, which is the one house rule easiest to break by
+     copying a snippet from anywhere else. */
+  .cred-agent { border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; margin-bottom: 10px; background: var(--panel); }
+  .cred-agent-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .cred-agent-name { font-family: var(--font-mono); color: var(--ink);
+    font-size: calc(13.5px * var(--ui-scale)); }
+  .cred-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 6px 0; border-top: 1px solid var(--line);
+    font-size: calc(12.5px * var(--ui-scale)); }
+  .cred-prefix { font-family: var(--font-mono); color: var(--ink-soft); }
+  .cred-scopes-txt { font-family: var(--font-mono); color: var(--ink-faint); }
+  .cred-when { color: var(--ink-faint); font-size: calc(11.5px * var(--ui-scale)); }
+  .cred-state { font-size: calc(11px * var(--ui-scale)); letter-spacing: .04em;
+    text-transform: uppercase; color: var(--ink-faint); }
+  .cred-state.is-ok { color: var(--att-green); }
+  .cred-state.is-warn { color: var(--att-orange); }
+  .cred-state.is-off { color: var(--ink-faint); opacity: .7; }
+  .cred-confirm { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+  .cred-btn { font: inherit; font-size: calc(12px * var(--ui-scale));
+    font-family: var(--font-mono); color: var(--ink-soft); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+    cursor: pointer; transition: border-color .2s, color .2s; }
+  .cred-btn:hover:not([disabled]) { border-color: var(--line-strong); color: var(--ink); }
+  .cred-btn[disabled] { opacity: .4; cursor: default; }
+  .cred-btn.is-primary { color: var(--ink); border-color: var(--line-strong); }
+  .cred-btn.is-danger { color: var(--att-red); border-color: var(--att-red); }
+  .cred-btn.is-quiet { color: var(--ink-faint); }
+
+  .cred-new, .cred-rotate { margin-top: 10px; }
+  .cred-new > summary, .cred-rotate > summary { cursor: pointer; color: var(--ink-soft);
+    font-size: calc(12.5px * var(--ui-scale)); }
+  .cred-form { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+  .cred-label { color: var(--ink-soft); font-size: calc(12px * var(--ui-scale));
+    margin-top: 8px; }
+  .cred-input { font: inherit; font-size: calc(13px * var(--ui-scale));
+    font-family: var(--font-mono); color: var(--ink); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; }
+  .cred-scopes { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 2px; }
+  .cred-scope { display: inline-flex; align-items: baseline; gap: 5px; cursor: pointer; }
+  .cred-check { accent-color: var(--accent); }
+  .cred-scope-name { font-family: var(--font-mono); color: var(--ink);
+    font-size: calc(12.5px * var(--ui-scale)); }
+  .cred-scope-why { color: var(--ink-faint); font-size: calc(11px * var(--ui-scale)); }
+  .cred-note { color: var(--ink-faint); font-size: calc(11.5px * var(--ui-scale));
+    margin: 2px 0 0; line-height: 1.45; }
+  .cred-warn { color: var(--att-orange); font-size: calc(12px * var(--ui-scale));
+    margin: 10px 0 0; }
+  .cred-form-actions { display: flex; align-items: center; justify-content: flex-end;
+    gap: 8px; margin-top: 12px; }
+  .cred-status { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+    color: var(--ink-faint); }
+  .cred-status.is-bad { color: var(--att-red); }
+
+  /* THE SECRET, SHOWN ONCE. Loud on purpose: it is the only moment this value
+     exists anywhere a person can read it, and the panel says so before it can
+     be dismissed. */
+  .cred-secret { border: 1px solid var(--att-orange); border-radius: 10px;
+    padding: 12px 14px; margin: 12px 0; background: var(--panel-2); }
+  .cred-secret-head { color: var(--att-orange); font-size: calc(12px * var(--ui-scale));
+    letter-spacing: .04em; text-transform: uppercase; margin-bottom: 8px; }
+  .cred-secret-value { display: block; font-family: var(--font-mono);
+    font-size: calc(12.5px * var(--ui-scale)); color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+    padding: 8px 10px; word-break: break-all; user-select: all; }
+  .cred-secret-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+
+  /* Visually hidden but still announced — the save column's header. */
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+  @media (max-width: 760px) {
+    .settings-overlay { padding: 0; }
+    .settings-sheet { border-radius: 0; min-height: 100%; }
+
+    /* THE RAIL BECOMES A CHIP ROW (2026-08-25). A left rail has no room on a
+       360px sheet — it would squeeze the content pane to almost nothing.
+       Chose a horizontal scrollable row over a slide-over content view: a
+       slide-over needs a second navigation affordance (a back control) this
+       overlay does not otherwise have, and a chip row keeps every section one
+       tap away with no extra state to restore when the overlay reopens. */
+    .settings-shell { flex-direction: column; gap: 0; min-height: 0; }
+    .settings-nav { flex-direction: row; flex: none; width: 100%;
+      overflow-x: auto; -webkit-overflow-scrolling: touch;
+      border-right: 0; border-bottom: 1px solid var(--line);
+      padding: 0 0 10px; margin-bottom: 12px; }
+    .settings-nav-btn { flex: none; white-space: nowrap; border: 1px solid var(--line);
+      border-radius: 999px; padding: 6px 13px; margin-right: 6px; }
+    .settings-nav-btn.is-active { border-color: var(--line-strong); }
+  }
+
+  /* ------------------------------------------------- "File work" (compose.js)
+     Reuses .settings-overlay/.settings-sheet/.settings-head/.settings-close/
+     .settings-body for the modal shell and .cred-form/.cred-label/.cred-input/
+     .cred-btn/.cred-status for the fields — both already exist for settings.js's
+     own forms and are generic enough that a second near-identical block here
+     would be exactly the kind of drift AGENTS.md warns about ("one place to
+     fix ... rather than three that drift"). Only what neither block already
+     has lives below. */
+  .composebtn { flex: none; font-family: var(--font-mono); font-size: calc(12px * var(--ui-scale));
+    color: var(--panel); background: var(--accent); border: 1px solid var(--accent);
+    border-radius: 999px; padding: 7px 14px; cursor: pointer; letter-spacing: .04em;
+    transition: filter .2s; }
+  .composebtn:hover:not(:disabled) { filter: brightness(1.08); }
+  .composebtn:disabled { opacity: .5; cursor: not-allowed; }
+
+  .compose-sheet { width: min(720px, 100%); }
+
+  /* One row per field: label, control, optional note, optional inline error —
+     same stack every field uses, so a screen reader (and a skim) meets the
+     same shape from Type down to Status. display:flex needs its own [hidden]
+     override, same reason .settings-overlay/.acct-menu already carry one:
+     the UA default `[hidden]{display:none}` loses to an author `display`
+     declaration on the same element otherwise (used for the Id row, hidden
+     when Type is "task" — a task's id is minted, never entered). */
+  .compose-picker { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+  .compose-picker[hidden] { display: none; }
+  .compose-picker-filter { margin-top: 2px; }
+  .compose-textarea { min-height: calc(90px * var(--ui-scale)); resize: vertical;
+    font-family: inherit; }
+
+  .compose-acc-list { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+  .compose-acc-row { display: flex; align-items: center; gap: 6px; }
+  .compose-acc-row .cred-input { flex: 1; }
+  .compose-acc-remove { flex: none; padding: 4px 9px; }
+
+  .compose-banner { margin: 0 0 14px; padding: 8px 12px; border-radius: 8px;
+    border: 1px solid var(--att-red); background: var(--panel-2); color: var(--att-red);
+    font-size: calc(12.5px * var(--ui-scale)); }
+  .compose-banner[hidden] { display: none; }
+
+  @media (max-width: 760px) {
+    .compose-sheet { width: 100%; }
+  }
+
+  /* ------------------------------------------- the people picker (mine.js)
+     STORY-atlas-people-picker: the Mine view's "Showing …" control was a
+     native <select>; it is now a link that opens a filterable overlay, for
+     the reason mine.js gives at the picker's own header — a dropdown has no
+     filter, so finding somebody means reading the whole roster, and the
+     roster only grows.
+
+     THE SHELL IS BORROWED, NOT COPIED. .settings-overlay/.settings-sheet/
+     .settings-head/.settings-close/.settings-body already draw this exact box
+     for Settings and for "File work"; only what neither of those has lives
+     below, the same arrangement as the compose block above. The trigger
+     reuses .multiselect-btn — it sits in the same .mine-ctl bar as the Status
+     and Type buttons and should not be a fourth pill shape. */
+  .people-sheet { width: min(520px, 100%); }
+  /* A person's name is prose and can be long; the trigger is capped so one
+     control cannot push the rest of the bar off the row. */
+  .mine-who-btn { max-width: calc(260px * var(--ui-scale)); overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
+  .people-filter { width: 100%; box-sizing: border-box; margin: 14px 0 4px; }
+  .people-filter:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .people-status { margin: 8px 0 0; }
+  .people-status[hidden] { display: none; }
+  /* Capped and scrolling: the overlay must stay one screen tall however many
+     accounts exist, which is the whole point of replacing the dropdown. */
+  .people-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px;
+    max-height: calc(360px * var(--ui-scale)); overflow-y: auto; }
+  .people-opt { display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; width: 100%; text-align: left; box-sizing: border-box;
+    font: inherit; font-size: calc(13px * var(--ui-scale)); color: var(--ink-soft);
+    background: transparent; border: 0; border-radius: 7px; padding: 8px 10px;
+    cursor: pointer; transition: background .15s, color .15s; }
+  .people-opt:hover { background: var(--panel-2); color: var(--ink); }
+  .people-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  /* Whose list is on screen right now — the one thing the old <select> said
+     for free by showing its own value. */
+  .people-opt.is-current { background: var(--panel-2); color: var(--ink); font-weight: 600; }
+  .people-opt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .people-opt-user { flex: none; font-family: var(--font-mono);
+    font-size: calc(11.5px * var(--ui-scale)); color: var(--ink-faint); }
+
+  @media (max-width: 760px) {
+    .people-sheet { width: 100%; }
+    .mine-who-btn { max-width: 100%; }
+  }

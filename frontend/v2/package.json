@@ -1,0 +1,6 @@
+{
+  "//": "Not a build. This file only tells `node --test` that the .js files here are ES modules, as the browser already treats them (ADR 0043). Nothing is installed and nothing is bundled.",
+  "name": "atlas-board-v2",
+  "private": true,
+  "type": "module"
+}

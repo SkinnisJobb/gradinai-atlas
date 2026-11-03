@@ -1,0 +1,149 @@
+# Static security checks on every pull request (STORY-atlas-lcm-plan, items 2, 3 and 5).
+#
+# ONE JOB, several steps, on purpose: Actions bills each job rounded up to the minute, and every
+# step here is seconds to a minute. In order:
+#
+#   eol        tools/ci/check_eol.py: no runtime the tree names (Python, Postgres, Caddy, Node) is
+#              past, or within six months of, its end of security support (offline table,
+#              tools/ci/eol.json; the weekly sbom-sca run compares it with endoflife.date), and
+#              no calendar-versioned image (cloudflared) is pinned to a release over 92 days old
+#   locks      tools/ci/check_locks.py: the hashed requirements-lock.txt files the images
+#              install with --require-hashes agree with requirements.txt
+#   semgrep    Semgrep OSS, the registry's Python, JavaScript and secrets rules (frontend/vendor
+#              excluded: third-party, covered by SCA)
+#   bandit     Bandit over every Python tree
+#   gitleaks   credentials in git history: the PR's own commits on a pull request, the whole
+#              history on master / manual runs. Redacted; no value reaches a log or an artifact.
+#   gate       tools/ci/sast_gate.py: a NEW high finding (not in the triaged baseline
+#              tools/ci/security-baseline.json) fails; mediums are reported only
+#
+# NOT CodeQL and NOT a SARIF upload: code scanning on a private repository needs GitHub Code
+# Security (Advanced Security), which this account does not have. Results go to the job summary
+# and the `sast` artifact instead. Not a duplicate of scrub.yml either: that one is the denylist
+# of private names; gitleaks looks for credential-shaped strings.
+
+name: sast
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE (2026-10-25, after the account ran out of Actions minutes; narrowed
+# 2026-10-26). A pull request runs on `pull_request` only, and its superseded runs are
+# cancelled. A master push does NOT run this workflow: it already ran on the pull request that
+# made the commit, and on the shared self-hosted runner pool every master run queues behind the PR runs.
+# Only verify.yml runs on a master push, because tools/deploy.sh gates on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  sast:
+    name: SAST, secrets, end-of-life, locks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0          # gitleaks reads history; the repo is a few MB
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/ci/sast-requirements.txt
+
+      - name: "eol: no shipped runtime near its end of security support"
+        run: |
+          python tools/ci/check_eol.py --self-test
+          python tools/ci/check_eol.py
+
+      - name: "locks: hashed requirements-lock.txt in step with requirements.txt"
+        run: |
+          python tools/ci/check_locks.py --self-test
+          python tools/ci/check_locks.py
+
+      - name: install the scanners
+        run: |
+          set -euo pipefail
+          pip install --quiet -r tools/ci/sast-requirements.txt
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/sast"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: cache gitleaks
+        id: gitleaks-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/bin/gitleaks
+          key: gitleaks-${{ env.GITLEAKS_VERSION }}-${{ env.GITLEAKS_SHA256 }}
+
+      - name: download gitleaks (checksum verified)
+        if: steps.gitleaks-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLO --retry 3 "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/$f"
+          echo "$GITLEAKS_SHA256  $f" | sha256sum -c -
+          tar -xzf "$f" -C bin gitleaks
+
+      - name: semgrep
+        run: |
+          set -euo pipefail
+          semgrep scan --metrics=off --disable-version-check \
+            --config p/python --config p/javascript --config p/secrets \
+            --exclude frontend/vendor --exclude '*-lock.txt' \
+            --json --output "$RUNNER_TEMP/sast/semgrep.json" --quiet
+          python -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d['results']), 'results,', len(d['errors']), 'errors')" "$RUNNER_TEMP/sast/semgrep.json"
+
+      - name: bandit
+        run: |
+          bandit -q -r backend mcp tools scripts tests deploy --exit-zero \
+            -f json -o "$RUNNER_TEMP/sast/bandit.json"
+
+      - name: gitleaks
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          range=()
+          if [ -n "${BASE_SHA:-}" ]; then
+            range=(--log-opts "$BASE_SHA..HEAD")
+            echo "scanning the pull request's commits: $BASE_SHA..HEAD"
+            git diff --name-only "$BASE_SHA...HEAD" > "$RUNNER_TEMP/sast/changed.txt"
+          else
+            echo "scanning the whole history"
+          fi
+          gitleaks git . "${range[@]}" --redact=100 --no-banner --exit-code 0 \
+            --report-format json --report-path "$RUNNER_TEMP/sast/gitleaks.json"
+
+      - name: "gate: a new high finding fails"
+        run: |
+          set -euo pipefail
+          python tools/ci/sast_gate.py --self-test
+          changed=()
+          [ -f "$RUNNER_TEMP/sast/changed.txt" ] && changed=(--changed-files "$RUNNER_TEMP/sast/changed.txt")
+          python tools/ci/sast_gate.py \
+            --semgrep "$RUNNER_TEMP/sast/semgrep.json" --bandit "$RUNNER_TEMP/sast/bandit.json" \
+            --gitleaks "$RUNNER_TEMP/sast/gitleaks.json" "${changed[@]}" \
+            --report "$RUNNER_TEMP/sast/findings.json"
+
+      - name: upload reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sast
+          path: ${{ runner.temp }}/sast
+          if-no-files-found: warn
+          retention-days: 14

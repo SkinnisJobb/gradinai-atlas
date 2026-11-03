@@ -1,0 +1,53 @@
+# The install smoke's leg 9b (OSS-26 A): the throwaway OpenID provider of leg 9, moved to where a
+# real IdP is, as seen from atlas-api: reachable ONLY through the `egress` network, which the
+# shipped overlay deploy/oss/oidc.yml gives atlas-api. Test-only, never part of an install;
+# deploy/oss/ does not reference it.
+#
+#   without oidc.yml:  docker compose -f docker-compose.yml -f <arbitrary-uid.yml> \
+#                        -f <secrets-only override> -f ../../tests/sso/docker-compose.idp-egress.yml
+#   with oidc.yml:     docker compose -f docker-compose.yml -f oidc.yml -f <arbitrary-uid.yml> \
+#                        -f ../../tests/sso/docker-compose.idp-egress.yml
+#
+# Leg 9's tests/sso/docker-compose.idp.yml put the IdP on its own internal `idp` network and
+# joined atlas-api to it, so the smoke could never notice that atlas-api has no route to an IdP
+# outside the node (OSS-26 finding A). Here the IdP shares NO network with atlas-api except
+# `egress`, and this file does not touch atlas-api's networks.
+#
+# The IdP is the same image, configuration and keystore as leg 9 (${SMOKE_SSO_DIR}/idp, made by
+# the job), answering as idp.test on the same port, so the issuer is unchanged. What this file
+# gives atlas-api is only what a private-CA IdP needs and oidc.yml leaves to the install: the
+# IdP's CA as a secret and SSL_CERT_FILE pointing at it (oidc.yml's commented `idp_ca` lines).
+
+services:
+  atlas-idp-egress:
+    # navikt/mock-oauth2-server 6.1.0, the same pin as tests/sso/docker-compose.idp.yml.
+    image: ghcr.io/navikt/mock-oauth2-server:6.1.0@sha256:ae4bacd3e5b08cd7ad12281e4524403290848a3358a29e4f7356c029b36ebe0b
+    environment:
+      SERVER_PORT: "8446"
+      JSON_CONFIG_PATH: /idp/config.json
+    volumes:
+      - type: bind
+        source: ${SMOKE_SSO_DIR:?set SMOKE_SSO_DIR}/idp
+        target: /idp
+        read_only: true
+    ports:
+      # Loopback only: the runner's client is the one browser this IdP serves.
+      - "127.0.0.1:8446:8446"
+    networks:
+      egress:
+        aliases:
+          - idp.test
+    restart: "no"
+
+  atlas-api:
+    environment:
+      SSL_CERT_FILE: /run/secrets/idp_ca
+    secrets:
+      - db_url
+      - password_pepper
+      - token_pepper
+      - idp_ca
+
+secrets:
+  idp_ca:
+    file: ${SMOKE_SSO_DIR:?set SMOKE_SSO_DIR}/idp-ca.crt

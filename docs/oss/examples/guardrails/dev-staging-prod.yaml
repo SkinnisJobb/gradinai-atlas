@@ -1,0 +1,56 @@
+# Example: an agent guardrails matrix for three environments, dev -> staging -> prod.
+# Validate, preview and apply it with atlas-admin inside atlas-api:
+#   atlas-admin guardrails validate dev-staging-prod.yaml
+#   atlas-admin guardrails apply dev-staging-prod.yaml --dry-run
+#   atlas-admin guardrails apply dev-staging-prod.yaml
+# The environments are yours: rename them and change branches and actions; no code change.
+
+# The format version; 1 is the only one.
+version: 1
+# A label, carried into the guardrails document and its ADR.
+name: Three environments (dev / staging / prod)
+# Ordered from closest to the developer to production.
+environments:
+  # dev: agents work freely and deploy automatically.
+  - name: dev
+    # The branches that belong to dev; a pattern may contain *.
+    branches: [dev, "feature/*"]
+    # Not protected: agents push here.
+    protected: false
+    # What an agent may do here on its own.
+    agent: [branch, commit, push, open_pr, deploy, read_logs, propose]
+    # What needs a person here.
+    human: [merge]
+  # staging: agents propose; the pipeline deploys after a person merges.
+  - name: staging
+    # The staging branch.
+    branches: [staging]
+    # Agents read logs, propose, open PRs, and deploy only through the pipeline.
+    agent: [read_logs, propose, open_pr, deploy_via_pipeline]
+    # A person merges.
+    human: [merge]
+    # One review before a merge (the default on a protected branch).
+    required_reviews: 1
+    # The CI check names a merge to staging needs (from the generated pipeline).
+    required_checks: [build, unit tests]
+  # prod: agents only read; a person approves and deploys, with a step-up sign-in.
+  - name: prod
+    # Production is main.
+    branches: [main]
+    # Exactly this environment is production.
+    production: true
+    # Agents read logs only; deploy rights are never an agent's in production.
+    agent: [read_logs]
+    # A person merges, approves and deploys.
+    human: [merge, approve_deploy, deploy]
+    # The deploy needs a fresh step-up sign-in.
+    step_up: [deploy]
+    # Two reviews before a merge to main.
+    required_reviews: 2
+    # The same checks as staging.
+    required_checks: [build, unit tests]
+    # The deploy command agents may not run (the Claude Code export denies it).
+    commands:
+      deploy: ["tools/deploy.sh prod*"]
+    # Free text, carried into the agents' intent.
+    notes: Production changes go through a reviewed merge to main and an approved deploy.

@@ -1,0 +1,80 @@
+# An external or managed PostgreSQL 16 instead of the bundled atlas-postgres (TASK-1471): an
+# OVERLAY, added on the command line by an install whose database runs elsewhere (a managed
+# service, or a server a database team looks after). The base install (docker-compose.yml alone)
+# is unchanged by this file's existence: atlas-postgres, and no route out for any service that
+# talks to the database.
+#
+#   docker compose -f docker-compose.yml -f external-db.yml up -d --build
+#   (with other overlays: -f docker-compose.yml -f external-db.yml -f oidc.yml ..., or
+#   COMPOSE_FILE=docker-compose.yml:external-db.yml in .env, with any other overlay after it)
+#
+# The whole procedure, and what still does not work, is docs/oss/guides/external-postgres.md.
+#
+# What it does, and nothing else:
+#   * atlas-postgres is moved to the profile `bundled-postgres`, which nothing turns on, so `up`
+#     never starts it; and atlas-migrate's `depends_on` on it is removed (`!reset`, Docker
+#     Compose 2.24.4 or later, the same requirement as release.yml). atlas-api still waits for
+#     atlas-migrate, and atlas-backup still waits for it too.
+#   * atlas-migrate, atlas-api and atlas-backup join `egress`, their route to the database
+#     server. `egress` is not internal: from here on those three can open connections out of the
+#     node, as atlas-api already can with retrieval.yml or oidc.yml. They stay on `data` too,
+#     which is internal and now holds only them. atlas-mcp, atlas-tls and the gateway do not
+#     talk to the database and are not touched.
+#   * the database server's CA as the compose secret `db_ca`, mounted at /run/secrets/db_ca in
+#     those three. Name it in the URL, `...?sslmode=verify-full&sslrootcert=/run/secrets/db_ca`:
+#     the URL's query parameters reach libpq in the application (SQLAlchemy + psycopg2) and in
+#     the backup tools (crunch_backup._conninfo), so one place serves both. The host file is
+#     ATLAS_DB_CA_SOURCE in .env; unset, /dev/null, an empty mount nothing reads (sslmode=require
+#     needs no file). PGSSLROOTCERT is deliberately NOT set: libpq treats a root certificate file
+#     that exists as a request to verify, so pointing it at the empty default would break
+#     sslmode=require.
+#
+# The URL itself stays where it always is: ./secrets/db_url, the compose secret `db_url`, read
+# through ATLAS_DB_URL_FILE. Never in .env, in an `environment:` block or on a command line.
+# Both files are read by containers under a UID that is not yours: chmod 0644, inside the 0700
+# ./secrets/ (init-secrets.sh's rule). tools/ci/check_oss_compose.py --external-db checks the
+# rendered result (S9).
+#
+# What it does NOT do: publish anything (the database is reached, never exposed), or change
+# atlas-postgres's own definition. `secrets/db_password` and the `atlas-pgdata` volume stay
+# declared and unused.
+
+services:
+  atlas-postgres:
+    profiles:
+      - bundled-postgres
+
+  atlas-migrate:
+    depends_on: !reset {}
+    networks:
+      egress: {}
+    secrets:
+      - db_url
+      - password_pepper
+      - token_pepper
+      - db_ca
+
+  atlas-api:
+    networks:
+      egress: {}
+    secrets:
+      - db_url
+      - password_pepper
+      - token_pepper
+      - tls_cert            # the base file's list, repeated (TASK-1419: cert_warnings)
+      - db_ca
+
+  atlas-backup:
+    networks:
+      egress: {}
+    secrets:
+      - db_url
+      - password_pepper
+      - token_pepper
+      - db_ca
+
+secrets:
+  db_ca:
+    # ./secrets/db-ca.crt (or wherever the database team's CA bundle is) when .env names it; an
+    # empty mount otherwise.
+    file: ${ATLAS_DB_CA_SOURCE:-/dev/null}

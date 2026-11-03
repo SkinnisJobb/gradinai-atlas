@@ -1,0 +1,187 @@
+# Dependabot version updates (TASK-1357).
+#
+# THE DECISION (owner decision, 2026-10-25). Images are referenced by tag plus digest
+# (`python:3.12-slim@sha256:...`), never `latest`. A bot opens a pull request when
+# a tag gets a new digest or a dependency a new version; CI runs the full suite on
+# it; the owner merges. Dependabot rather than Renovate: no app to install.
+# tools/ci/check_pins.py (run by .github/workflows/pins.yml with --enforce, TASK-1420)
+# fails a pull request on anything not pinned that way, and on a third-party action
+# not pinned to a commit SHA.
+#
+# WHAT A PR HERE MEANS FOR THE HOMELAB. Merging a docker or docker-compose PR
+# changes an image reference, and the next `docker compose up -d` on the server
+# recreates that container. That is why every PR is a human merge, and why the
+# runtime images ignore semver-major (and python semver-minor): moving postgres
+# 16 -> 17 or python 3.12 -> 3.13 is a deliberate change, not a weekly bump.
+#
+# HOW DEPENDABOT READS THE IMAGE REFERENCES (dependabot-core, docker/):
+#   - It follows a TAG. `image:tag@sha256:...` gets the digest refreshed when the
+#     tag moves, and the tag bumped within what `ignore` allows.
+#   - A bare tag (`postgres:16`, `python:3.12-slim`) only ever gets a newer tag; the
+#     bot never adds a digest. Pinning is the follow-up, not the bot's job.
+#   - A digest with no tag cannot be followed at all: pin as `image:<tag>@sha256:...`.
+#   - docker-compose matches files named like `(docker-)compose*.y(a)ml` only, so
+#     the deploy/*.override.yml overlays are NOT scanned by it. The one image they
+#     carry, cloudflare/cloudflared (tag + digest), is followed by hand instead:
+#     tools/ci/check_eol.py (sast.yml) fails the PR gate once its release month is
+#     more than 92 days old (tools/ci/eol.json `calver`), and its weekly --online run
+#     (sbom-sca.yml) warns when GitHub has a newer release. check_pins.py scans them too.
+#
+# SECURITY UPDATES are switched on at repository level (Settings -> Code security ->
+# Dependabot security updates), not in this file. The `applies-to: security-updates`
+# groups below only shape those PRs once that setting is on.
+#
+# Validated against the published schema (https://json.schemastore.org/dependabot-2.0.json)
+# by the `dependabot-schema` job in pins.yml.
+
+version: 2
+
+updates:
+  # --- Dockerfile FROM lines ----------------------------------------------------
+  - package-ecosystem: docker
+    directories:
+      - /backend
+      - /mcp
+      - /deploy/caddy      # also the image of mcp/docker-compose.tls.yml's atlas-mcp-tls
+      # atlas-postgres: Dockerfile (postgres:16-trixie, the homelab) and pgvector.Dockerfile
+      # (pgvector/pgvector:0.8.7-pg16-trixie, deploy/oss). Both tags name the Debian release, so
+      # a digest PR never changes glibc under a data directory (tools/db_collation_check.sh).
+      - /deploy/postgres
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Stockholm
+    ignore:
+      # A new Python line is a deliberate change: 3.12 -> 3.13 is semver-MINOR to the bot.
+      - dependency-name: python
+        update-types: [version-update:semver-major, version-update:semver-minor]
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+    groups:
+      docker-images:
+        applies-to: version-updates
+        patterns: ["*"]
+
+  # --- compose image: lines -------------------------------------------------------
+  # / is docker-compose.yml; /mcp is mcp/docker-compose*.yml; /deploy/oss the OSS install
+  # (its gateway image). Their Postgres is a `build:` of deploy/postgres since 2026-10-26,
+  # followed by the docker ecosystem above; these stay scanned so an image added there is too.
+  - package-ecosystem: docker-compose
+    directories:
+      - /
+      - /mcp
+      - /deploy/oss
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Stockholm
+    ignore:
+      # postgres 16 -> 17 needs a dump/restore or pg_upgrade of the live volume.
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
+    groups:
+      compose-images:
+        applies-to: version-updates
+        patterns: ["*"]
+
+  # --- Python requirements ----------------------------------------------------------
+  - package-ecosystem: pip
+    directories:
+      - /backend
+      - /mcp
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Stockholm
+    ignore:
+      # ADR 0006: mcp 2.x is a planned migration (TASK-1362), not a weekly bump.
+      - dependency-name: mcp
+        update-types: [version-update:semver-major]
+    groups:
+      # One PR for everything minor/patch, one separate PR for majors (ADR 0006: a
+      # major bump, e.g. mcp 1.x -> 2.x, is a gated change; read it before merging).
+      #
+      # THE 0.x RULE (owner decision, 2026-10-25). Under semver a 0.x package may break on a
+      # MINOR bump (0.115 -> 0.159), and Dependabot still calls that "minor": PR #110
+      # bundled fastapi 0.115 -> 0.159 and uvicorn 0.34 -> 0.54 into the routine group
+      # and broke CI. So the 0.x packages get their own PR, named as potentially
+      # breaking. Dependabot has no "0.x" selector, so the packages are listed by name.
+      #
+      # WHY BY NAME IN BOTH GROUPS (TASK-1361). PR #112 relied on the documented "a
+      # dependency matching several groups lands in the FIRST one" and put this group
+      # first. The next run (#118/#119) still bundled fastapi and uvicorn into
+      # pip-minor-patch. Its log (Dependabot Updates run 40179533058, 2026-10-25):
+      #   Detected existing pull request # for the dependency group 'pip-minor-patch'.
+      #   Marking group 'pip-minor-patch' as handled.
+      #   Adding dependencies as handled: (fastapi, uvicorn, sqlalchemy, ... httpx, ...)
+      #   Starting update group for 'pip-zerover-minor-maybe-breaking'
+      #   Skipping fastapi in group pip-zerover-minor-maybe-breaking as it has already
+      #   been handled by a previous group
+      # Membership overlapped: a group with no `patterns` contains EVERY dependency,
+      # so the open pip-minor-patch PR (#110) claimed fastapi/uvicorn/httpx before this
+      # group ran, and the refresh of that PR (#119) kept them. First-match ordering
+      # does not survive an open PR. What does: making the groups DISJOINT by name --
+      # `exclude-patterns` on pip-minor-patch ("If a dependency matches both a pattern
+      # and an exclude-pattern, then it is excluded from the group", docs.github.com
+      # .../dependabot-options-reference#groups--). With fastapi not a member there,
+      # no pip-minor-patch (or pip-major) PR can claim it. The consequence: the 0.x
+      # packages' PATCH bumps move into this group too (update-types [minor, patch]);
+      # a second group for them would overlap this one by name and repeat the claim.
+      #
+      # A NEW 0.x dependency in backend/ or mcp/requirements.txt must be added to all
+      # THREE lists below (and removed once it reaches 1.0); check_pins.py reports a 0.x
+      # pin missing from any of them. That includes the TRANSITIVE 0.x packages pinned in
+      # the hashed locks (requirements-lock.txt, STORY-atlas-lcm-plan item 3): Dependabot
+      # reads every requirements*.txt here, so to it they are pins like any other.
+      #
+      # THE LOCKS. backend/ and mcp/ each hold requirements.txt (the direct pins) and
+      # requirements-lock.txt (every package, exact version, sha256 hashes; what the
+      # Dockerfiles install with --require-hashes). A bump edits both files and their hashes
+      # in one PR. If a bump needs a transitive requirement moved as well, the PR's
+      # `locks` check (security.yml) is red: run `bash tools/ci/lock_requirements.sh` on the
+      # branch and push.
+      pip-zerover-minor-maybe-breaking:
+        applies-to: version-updates
+        patterns: ["fastapi", "uvicorn", "httpx", "annotated-doc", "annotated-types", "h11", "httptools", "httpx-sse", "python-multipart", "referencing", "typing-inspection", "uvloop"]
+        update-types: [minor, patch]
+      pip-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns: ["fastapi", "uvicorn", "httpx", "annotated-doc", "annotated-types", "h11", "httptools", "httpx-sse", "python-multipart", "referencing", "typing-inspection", "uvloop"]
+        update-types: [minor, patch]
+      # Excluded here too, for the same reason: an open pip-major PR would otherwise
+      # claim the 0.x packages and starve the group above. Their 0.x -> 1.0 bump is
+      # then an individual PR of its own, which is what a 1.0 deserves anyway.
+      pip-major:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns: ["fastapi", "uvicorn", "httpx", "annotated-doc", "annotated-types", "h11", "httptools", "httpx-sse", "python-multipart", "referencing", "typing-inspection", "uvloop"]
+        update-types: [major]
+      pip-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  # --- GitHub Actions -----------------------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: /          # Dependabot reads /.github/workflows from here
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Stockholm
+    # No 0.x rule here: every action in .github/workflows/ (checkout, setup-python,
+    # setup-node, upload-artifact) is >= 1.0. An action on 0.x would need the same
+    # treatment as pip above.
+    groups:
+      actions-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+      actions-major:
+        applies-to: version-updates
+        update-types: [major]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]

@@ -1,0 +1,97 @@
+# The generated first pipelines pass each platform's own validation (STORY-atlas-first-cicd,
+# criterion 1). tools/ci/cicd_lint.sh generates GitHub Actions, GitLab CI and Azure Pipelines
+# files from the shipped example matrix and answers, through `atlas-admin cicd generate`, once
+# per production deploy trigger, and validates each:
+#
+#   GitHub Actions   actionlint, pinned below and checksum-verified, plus the workflow schema.
+#   GitLab CI        GitLab's official CI JSON schema, through check-jsonschema (pinned).
+#                    GitLab has no fully offline linter (its real lint is the /ci/lint API of a
+#                    running GitLab); SCHEMA VALIDATION is what this job uses.
+#   Azure Pipelines  the Azure Pipelines YAML schema, through check-jsonschema (pinned). Azure
+#                    DevOps has no offline linter either (the full check is a preview run
+#                    against an organisation); SCHEMA VALIDATION is what this job uses.
+#
+# Each validator is also fed a copy with a misspelled key and must refuse it. No database, no
+# network beyond downloading the two pinned tools, and no secret.
+#
+# A separate file from verify.yml on purpose: a static check that needs no database and no
+# suite. backend/verify_cicd.py (in the suite) proves the guardrail half.
+
+name: cicd-lint
+
+on:
+  pull_request:
+    branches: [master]
+    # Path filter: the generator, its inputs and this check.
+    paths:
+      - "backend/cicd.py"
+      - "backend/guide_answers.py"
+      - "backend/guardrails.py"
+      - "backend/setup_guide.py"
+      - "backend/admin.py"
+      - "backend/data/cicd/**"
+      - "backend/data/guardrails/**"
+      - "backend/data/setup_guide/**"
+      - "tools/ci/cicd_lint.sh"
+      - ".github/workflows/cicd-lint.yml"
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE (2026-10-25, after the account ran out of Actions minutes; narrowed
+# 2026-10-26). A pull request runs on `pull_request` only, and its superseded runs are
+# cancelled. A master push does NOT run this workflow: it already ran on the pull request that
+# made the commit, and on the shared self-hosted runner pool every master run queues behind the PR runs.
+# Only verify.yml runs on a master push, because tools/deploy.sh gates on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  ACTIONLINT_VERSION: 1.7.12
+  # sha256 of actionlint_1.7.12_linux_amd64.tar.gz, from the release's checksums file.
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+  # The same check-jsonschema pin as pins.yml (keep the two in step).
+  CHECK_JSONSCHEMA_VERSION: 0.38.2
+
+jobs:
+  lint:
+    name: generated pipelines (actionlint, GitLab and Azure schemas)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"          # matches backend/Dockerfile
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: backend dependencies and check-jsonschema (pinned)
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet -r backend/requirements.txt
+          python -m pip install --quiet "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}"
+          check-jsonschema --version
+
+      - name: download actionlint (checksum verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP"
+          f="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO --retry 3 "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/$f"
+          echo "$ACTIONLINT_SHA256  $f" | sha256sum -c -
+          tar -xzf "$f" -C bin actionlint
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/bin/actionlint" --version
+
+      - name: generate and validate
+        env:
+          PYTHON: python
+        run: bash tools/ci/cicd_lint.sh

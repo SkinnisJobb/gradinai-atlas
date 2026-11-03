@@ -1,0 +1,245 @@
+{
+  "//": "Triaged HIGH findings of tools/ci/sast_gate.py (Semgrep ERROR, Bandit HIGH with confidence >= MEDIUM, every gitleaks hit), baselined 2026-10-25 on origin/master 238d242 (STORY-atlas-lcm-plan item 5). Only a high finding NOT listed here fails the SAST job. To accept a new one: copy its fingerprint from the job summary into an entry here with a triage line, in the PR that justifies it. Fingerprints are tool|rule|path|source line (whitespace removed), so a moved line still matches; gitleaks uses commit:file:rule:line.",
+  "findings": [
+    {
+      "tool": "bandit",
+      "rule": "B324:hashlib",
+      "path": "backend/passwords.py",
+      "line": 735,
+      "fingerprint": "459f751e9b579d38",
+      "triage": "accepted (protocol): SHA-1 is what the HIBP k-anonymity range API requires (only a 5-character prefix leaves the host); not a security use. usedforsecurity=False would silence it but changes the image, so not in this PR."
+    },
+    {
+      "tool": "gitleaks",
+      "rule": "generic-api-key",
+      "path": "backend/verify_loop_rails.py",
+      "line": 38,
+      "fingerprint": "15b3ebd8b2d8d2a3f923c39ab9c29039081e7d8a:backend/verify_loop_rails.py:generic-api-key:38",
+      "triage": "accepted (test fixture): a fixed base64 test pepper in a verify script's os.environ.setdefault (commit 15b3ebd, 2026-08-23), never a real credential."
+    },
+    {
+      "tool": "gitleaks",
+      "rule": "generic-api-key",
+      "path": "backend/verify_loop_rails.py",
+      "line": 39,
+      "fingerprint": "15b3ebd8b2d8d2a3f923c39ab9c29039081e7d8a:backend/verify_loop_rails.py:generic-api-key:39",
+      "triage": "accepted (test fixture): a fixed base64 test pepper in a verify script's os.environ.setdefault (commit 15b3ebd, 2026-08-23), never a real credential."
+    },
+    {
+      "tool": "gitleaks",
+      "rule": "generic-api-key",
+      "path": "scripts/render-gateway.py",
+      "line": 572,
+      "fingerprint": "7471a8dca3d71a58e87fbe461abbbe9bf7b492c5:scripts/render-gateway.py:generic-api-key:572",
+      "triage": "accepted (test fixture): a fixed hex literal session key in render-gateway.py --self-test (commit 7471a8d, TASK-1460, 2026-10-31), replaced by secrets.token_hex(32) in d9a6642, never a real credential."
+    },
+    {
+      "tool": "gitleaks",
+      "rule": "generic-api-key",
+      "path": "scripts/render-gateway.py",
+      "line": 603,
+      "fingerprint": "7471a8dca3d71a58e87fbe461abbbe9bf7b492c5:scripts/render-gateway.py:generic-api-key:603",
+      "triage": "accepted (test fixture): a fixed hex literal session key in render-gateway.py --self-test (commit 7471a8d, TASK-1460, 2026-10-31), replaced by secrets.token_hex(32) in d9a6642, never a real credential."
+    },
+    {
+      "tool": "gitleaks",
+      "rule": "jwt",
+      "path": "mcp/verify_oauth_resource.py",
+      "line": 43,
+      "fingerprint": "08d1e9921144a5216ec5f90f9225a42581f45e97:mcp/verify_oauth_resource.py:jwt:43",
+      "triage": "accepted (test fixture): a JWT-SHAPED string with a fake signature in a verify script (commit 08d1e99, 2026-10-25, STORY-oss-25), never a real token; the next commit builds these strings at run time instead."
+    },
+    {
+      "tool": "gitleaks",
+      "rule": "jwt",
+      "path": "mcp/verify_oauth_resource.py",
+      "line": 44,
+      "fingerprint": "08d1e9921144a5216ec5f90f9225a42581f45e97:mcp/verify_oauth_resource.py:jwt:44",
+      "triage": "accepted (test fixture): a JWT-SHAPED string with a fake signature in a verify script (commit 08d1e99, 2026-10-25, STORY-oss-25), never a real token; the next commit builds these strings at run time instead."
+    },
+    {
+      "tool": "gitleaks",
+      "rule": "jwt",
+      "path": "mcp/verify_oauth_resource.py",
+      "line": 45,
+      "fingerprint": "08d1e9921144a5216ec5f90f9225a42581f45e97:mcp/verify_oauth_resource.py:jwt:45",
+      "triage": "accepted (test fixture): a JWT-SHAPED string with a fake signature in a verify script (commit 08d1e99, 2026-10-25, STORY-oss-25), never a real token; the next commit builds these strings at run time instead."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/deps.py",
+      "line": 1128,
+      "fingerprint": "b028e5e77890b860",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/main.py",
+      "line": 202,
+      "fingerprint": "370d35da51c96af8",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/migrate_add_write_scope.py",
+      "line": 94,
+      "fingerprint": "66b60ebb072d88f6",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/migrate_add_write_scope.py",
+      "line": 179,
+      "fingerprint": "11ad6f4dbe771a0f",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/migrate_add_write_scope.py",
+      "line": 194,
+      "fingerprint": "4338746c2c923c58",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/migrate_add_write_scope.py",
+      "line": 195,
+      "fingerprint": "721ab33c9cac2328",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/migrate_drop_status_override.py",
+      "line": 72,
+      "fingerprint": "902899bacb32ca2f",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/migrate_drop_status_override.py",
+      "line": 132,
+      "fingerprint": "b66486d73b16fc80",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/models_graph.py",
+      "line": 1048,
+      "fingerprint": "91fe810d385b5d7e",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/models_graph.py",
+      "line": 1052,
+      "fingerprint": "91fe810d385b5d7e",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/models_graph.py",
+      "line": 1056,
+      "fingerprint": "91fe810d385b5d7e",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/models_graph.py",
+      "line": 1064,
+      "fingerprint": "91fe810d385b5d7e",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/models_graph.py",
+      "line": 1076,
+      "fingerprint": "91fe810d385b5d7e",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/models_graph.py",
+      "line": 1182,
+      "fingerprint": "91fe810d385b5d7e",
+      "triage": "accepted (false positive, 2026-10-29): the workitem_comment search index, the same CREATE INDEX shape as the four above; the f-string is WORKITEM_COMMENT_SEARCH_SQL, a module constant. No request input reaches it."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/routers/adrs.py",
+      "line": 138,
+      "fingerprint": "dacb72a3ea8ff1cc",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/routers/search.py",
+      "line": 178,
+      "fingerprint": "61c669460fe5028d",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/verify_fresh_install.py",
+      "line": 182,
+      "fingerprint": "e5d0b24b6c6c55a8",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/verify_system_node.py",
+      "line": 111,
+      "fingerprint": "93b898e9786aed9b",
+      "triage": "accepted (test, false positive): verify_system_node.py's whole-database digest, the same shape as verify_fresh_install.py's entry above. The f-string's only value is a table name read from pg_tables of the script's own disposable test database, double-quoted; no request or user input exists in a verify script."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/verify_oidc_login.py",
+      "line": 278,
+      "fingerprint": "92357a4827efb23e",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.jwt.security.jwt-none-alg.jwt-python-none-alg",
+      "path": "backend/verify_oidc_login.py",
+      "line": 346,
+      "fingerprint": "e4eae9d6a2bd0d07",
+      "triage": "accepted (test): verify_oidc_login.py builds an alg=none token on purpose, to prove the OIDC login REFUSES it."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text",
+      "path": "backend/verify_upgrade_command.py",
+      "line": 141,
+      "fingerprint": "c7a89af149978bd7",
+      "triage": "accepted (false positive): text() over SQL assembled from module constants (table/constraint names, *_SEARCH_SQL fragments, ORM-compiled column types); every user value is a bound parameter (:q, :ids, :regex). No request input reaches the f-string."
+    },
+    {
+      "tool": "semgrep",
+      "rule": "python.lang.security.audit.dangerous-subprocess-use-tainted-env-args.dangerous-subprocess-use-tainted-env-args",
+      "path": "tools/run_log.py",
+      "line": 616,
+      "fingerprint": "4f863e75f0ad9000",
+      "triage": "accepted, follow-up: argv list, no shell, so no injection; but the Atlas token goes to curl as a -H argument (visible in the client machine's process list). Follow-up: send the header from a file (curl -H @file), per the secrets rule."
+    }
+  ]
+}

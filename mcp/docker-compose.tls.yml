@@ -1,0 +1,64 @@
+# TLS IN FRONT OF atlas-mcp (OSS-24). An overlay on docker-compose.yml, used with it:
+#
+#   cd mcp && docker compose -f docker-compose.yml -f docker-compose.tls.yml \
+#       --env-file ../deploy/homelab/atlas-mcp.env up -d --build
+#
+# WHY. Every MCP request carries the caller's own `Authorization: Bearer atlas_svc_...`
+# (caller auth, PR #82). atlas-mcp speaks plain HTTP on :8092, so it must never be
+# published past loopback; this Caddy is the only door from the network, and it speaks
+# HTTPS. It reaches atlas-mcp by name on this compose project's own network.
+#
+# The same image as the board's caddy-lan (deploy/caddy/Dockerfile: pinned, with the
+# Cloudflare DNS plugin), a different Caddyfile (deploy/caddy/Caddyfile.mcp). Where the
+# certificate comes from is ATLAS_MCP_TLS_MODE, one of deploy/caddy/tls/*.caddy:
+#   acme-cloudflare  public cert by DNS-01; needs ATLAS_MCP_TLS_CF_TOKEN_FILE (homelab)
+#   files            your PKI's cert + key in ATLAS_MCP_TLS_CERT_DIR (enterprise)
+#   internal         Caddy's private CA; clients trust its root (no DNS, no PKI)
+# mcp/README.md, "TLS", has the client side of each.
+#
+# An install that already has its own TLS terminator (an F5, an ingress controller)
+# can leave this file out and point that terminator at 127.0.0.1:8092 on this host.
+
+services:
+  atlas-mcp-tls:
+    build:
+      context: ../deploy/caddy
+      dockerfile: Dockerfile
+    container_name: atlas-mcp-tls
+    restart: unless-stopped
+    environment:
+      # The DNS name clients connect to, no scheme, no port. The certificate is for it,
+      # and Caddy answers only for it.
+      CADDY_SITE: ${ATLAS_MCP_TLS_SITE:?set ATLAS_MCP_TLS_SITE to the DNS name clients use; see deploy/homelab/atlas-mcp.env}
+      CADDY_TLS_MODE: ${ATLAS_MCP_TLS_MODE:-acme-cloudflare}
+      CADDY_UPSTREAM: atlas-mcp:8092
+    ports:
+      # Loopback by default like every publish here (OSS-02); the homelab opts in to the
+      # LAN in deploy/homelab/atlas-mcp.env. This one MAY face the network: it is TLS.
+      - "${ATLAS_MCP_TLS_BIND:-127.0.0.1}:${ATLAS_MCP_TLS_PORT:-8446}:8446"
+    secrets:
+      - cf_dns_api_token
+    volumes:
+      - ../deploy/caddy/Caddyfile.mcp:/etc/caddy/Caddyfile:ro
+      - ../deploy/caddy/tls:/etc/caddy/tls:ro
+      # files mode only: tls.crt (full chain) and tls.key. An empty directory otherwise.
+      - ${ATLAS_MCP_TLS_CERT_DIR:-../deploy/caddy/certs-empty}:/certs:ro
+      # Issued certificates (and, in internal mode, Caddy's CA) survive a recreate, so a
+      # restart does not re-request from Let's Encrypt and walk into its rate limits.
+      - atlas-mcp-tls-data:/data
+      - atlas-mcp-tls-config:/config
+    depends_on:
+      - atlas-mcp
+
+# The Cloudflare DNS token for acme-cloudflare mode, as a FILE (read by the Caddyfile's
+# {file./run/secrets/cf_dns_api_token}), never an environment variable. /dev/null when
+# unset: the other modes need no token, and acme mode then fails loudly at issuance.
+secrets:
+  cf_dns_api_token:
+    file: ${ATLAS_MCP_TLS_CF_TOKEN_FILE:-/dev/null}
+
+# MUST stay at the bottom: a top-level key placed mid-file silently swallows every
+# service declared after it.
+volumes:
+  atlas-mcp-tls-data:
+  atlas-mcp-tls-config:

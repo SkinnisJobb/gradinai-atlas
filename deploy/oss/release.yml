@@ -1,0 +1,63 @@
+# Released images instead of local builds (OSS-26 E): an OVERLAY, added on the command line by an
+# install that runs a published release. The base install (docker-compose.yml alone) is
+# unchanged by this file's existence: it builds every image from the checkout, as before.
+#
+#   docker compose -f docker-compose.yml -f release.yml pull
+#   docker compose -f docker-compose.yml -f release.yml up -d --wait --wait-timeout 600
+#
+# (or COMPOSE_FILE=docker-compose.yml:release.yml in .env, with any other overlay after it).
+# Never `--build` with this overlay: there is nothing to build, every service below has a
+# pinned image instead.
+#
+# What it does, and nothing else: each service that docker-compose.yml BUILDS gets the published
+# image of the same recipe, by tag AND digest, and its `build:` is removed (`!reset`, Docker
+# Compose 2.24.4 or later). Networks, secrets, volumes, healthchecks and commands stay exactly as
+# the base file has them. The references come from .env (the "Released images" block of
+# .env.example), and every one is required: a missing one stops compose with its name, rather
+# than silently building or pulling something else.
+#
+#   service          image (.github/workflows/images.yml, on a v* tag)   built from
+#   atlas-postgres   ATLAS_IMAGE_POSTGRES  .../gradinai-atlas-postgres    deploy/postgres/pgvector.Dockerfile
+#   atlas-migrate    ATLAS_IMAGE_API       .../gradinai-atlas-api         backend/Dockerfile, target hardened
+#   atlas-api        ATLAS_IMAGE_API       .../gradinai-atlas-api         backend/Dockerfile, target hardened
+#   atlas-mcp        ATLAS_IMAGE_MCP       .../gradinai-atlas-mcp         mcp/Dockerfile, target hardened
+#   atlas-tls        ATLAS_IMAGE_TLS       .../gradinai-atlas-tls         deploy/caddy/Dockerfile
+#   atlas-retrieval  ATLAS_IMAGE_API       .../gradinai-atlas-api         (profile retrieval)
+#   atlas-backup     ATLAS_IMAGE_BACKUP    .../gradinai-atlas-backup      backend/Dockerfile, target backup
+#
+# atlas-gateway (profile gateway) is an upstream image already pinned tag@digest in the base
+# file; it is not republished. Every release attaches `release-images.env` with the five lines
+# to paste, and docs/oss/RELEASES.md lists them per release.
+#
+# The checkout is still needed, at the SAME release tag as the images: the Caddyfile, the
+# retrieval check and the TLS snippets are mounted from it, and the schema the images expect is
+# the one that release's atlas-migrate creates.
+
+services:
+  atlas-postgres:
+    build: !reset null
+    image: ${ATLAS_IMAGE_POSTGRES:?set ATLAS_IMAGE_POSTGRES in .env (release.yml; see .env.example)}
+
+  atlas-migrate:
+    build: !reset null
+    image: ${ATLAS_IMAGE_API:?set ATLAS_IMAGE_API in .env (release.yml; see .env.example)}
+
+  atlas-api:
+    build: !reset null
+    image: ${ATLAS_IMAGE_API:?set ATLAS_IMAGE_API in .env (release.yml; see .env.example)}
+
+  atlas-mcp:
+    build: !reset null
+    image: ${ATLAS_IMAGE_MCP:?set ATLAS_IMAGE_MCP in .env (release.yml; see .env.example)}
+
+  atlas-tls:
+    build: !reset null
+    image: ${ATLAS_IMAGE_TLS:?set ATLAS_IMAGE_TLS in .env (release.yml; see .env.example)}
+
+  atlas-retrieval:
+    build: !reset null
+    image: ${ATLAS_IMAGE_API:?set ATLAS_IMAGE_API in .env (release.yml; see .env.example)}
+
+  atlas-backup:
+    build: !reset null
+    image: ${ATLAS_IMAGE_BACKUP:?set ATLAS_IMAGE_BACKUP in .env (release.yml; see .env.example)}

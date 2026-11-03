@@ -1,0 +1,16 @@
+# Example: a crunch-week configuration. For one week production deploys after green CI without
+# the staging step, and the pipeline backs up the database before every production deploy.
+# An instance owner switches it on from the board (the crunch-week panel, with their password),
+# which sends these fields as the `config` of PUT /api/crunch. It is checked against the
+# guardrails matrix in force (here guardrails/dev-staging-prod.yaml). Crunch week always ends.
+
+# Start now (no starts_at: the server's clock sets it) and last 168 hours, one week.
+duration_hours: 168
+# Back up before every production deploy, and keep the backups 14 days.
+backup:
+  # none | once | per_deploy | hourly | daily. per_deploy is a step in the generated pipeline.
+  policy: per_deploy
+  # Days a backup is kept (1-365).
+  retention_days: 14
+# The environments whose step is skipped on the way to production; never production itself.
+skip_envs: [staging]

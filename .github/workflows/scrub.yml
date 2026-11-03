@@ -1,0 +1,259 @@
+# Personal-reference scrub gate (STORY-oss-05).
+#
+# Counts personal references in the tracked files - names, the personal
+# domain, homelab hostnames, LAN addresses - so the OSS scrub can be measured
+# before it starts and enforced once it is done. The scanner is
+# tools/scrub/scan.py; its docstring has the file formats.
+#
+# THE DENYLIST IS NOT IN THIS REPO, on purpose: committing the personal terms
+# would publish exactly what is being scrubbed. It lives in the repository
+# secret SCRUB_DENYLIST (one term per line; `re:<regex>` for a regex) and is
+# written to a 0600 file under $RUNNER_TEMP for the one step that needs it.
+# The scanner reports denylist patterns as denylist[N] and never prints
+# matched text. With the secret absent (not yet added, or a fork's PR) the
+# job warns and runs the generic patterns only (RFC 1918 IPv4, *.local hosts,
+# email addresses); it does not fail for that.
+#
+# Locally: python tools/scrub/scan.py --denylist ~/.secrets/scrub-denylist.txt
+# (keep that file outside the repo).
+#
+# MODES. `SCRUB_MODE` below is `report`: the job prints counts, writes them to
+# the run summary, uploads them as the `scrub-report` artifact and stays green.
+# To make it a gate:
+#   1. Drive the counts to zero, or allowlist real exceptions in
+#      tools/scrub/allowlist.txt (a comment per entry, terms as denylist[N]).
+#   2. Change `SCRUB_MODE: report` to `SCRUB_MODE: enforce`. The scan step then
+#      exits 1 on any non-allowlisted finding.
+#   3. Optionally enforce on a subtree only: set `SCRUB_PATHS` to
+#      space-separated globs (e.g. "clients/* docs/oss/* README.md" - the paths
+#      the OSS export carries, STORY-oss-23) and the enforce step scans those.
+#      `SCRUB_EXCLUDE` takes globs back out of that set (a file the export
+#      does not carry as it is); the whole-repo report still counts them.
+#   4. Add the `scrub` check to master's branch protection; a workflow alone
+#      reports, it does not block a merge (see verify.yml's header).
+
+name: scrub
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE (2026-10-25, after the account ran out of Actions minutes; narrowed
+# 2026-10-26). A pull request runs on `pull_request` only, and its superseded runs are
+# cancelled. A master push does NOT run this workflow: it already ran on the pull request that
+# made the commit, and on the shared self-hosted runner pool every master run queues behind the
+# PR runs. Only verify.yml runs on a master push, because tools/deploy.sh gates on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # report | enforce - see the header. `enforce` applies to SCRUB_PATHS only while that is set;
+  # the whole-repo scan then stays a report.
+  SCRUB_MODE: enforce
+  # Globs for enforce-on-a-subtree; empty = whole repo. clients/* is the Claude Code client
+  # pack (STORY-oss-19), public from the start: enforced there, reported everywhere else.
+  # The handbook (STORY-atlas-system-node-handbook) is public too, on an install that sets
+  # ATLAS_PUBLIC_DOCS=1 (ADR 0047): its source module and the site generated from it.
+  # docs/oss/* and README.md are the OSS product docs (STORY-oss-20); `*` crosses `/` in scan.py,
+  # so docs/oss/* covers docs/oss/guides/ and docs/oss/adr/ too.
+  # The self seed profile (TASK-1461) ships in the image and is seeded under ATLAS_SEED=self:
+  # its data module and its review files are held to the same bar.
+  # The product website (TASK-1463) is public once ATLAS_LANDING=v2: its page, style and script.
+  # The backend (STORY-oss-23 A4/A4b, A8) ships whole in the OSS export, and so does the baseload:
+  # its generated module and its authored sources. backend/* already covers the two backend
+  # modules named above; they stay listed so each one's reason stays next to it.
+  SCRUB_PATHS: ""
+  # Globs taken back out of the enforced set (same fnmatch rules; `*` crosses `/`), for a file
+  # that matches SCRUB_PATHS but never ships as it is. That is not an allowlisted exception: the
+  # whole-repo report still counts it.
+  # backend/distribution.py holds the homelab's own estate values; the export replaces it with an
+  # overlay (STORY-oss-23 manifest), so the private file is not held to the public bar.
+  # backend/seed.py, backend/plans/*, backend/verify_run_guard.py and backend/verify_run_log.py
+  # (the homelab seed, its plans and the agent-loop checks): never exported (manifest); owner
+  # decision 2026-11-03; the export's own scrub over the exported tree is the gate for what ships.
+  SCRUB_EXCLUDE: "backend/distribution.py backend/seed.py backend/plans/* backend/verify_run_guard.py backend/verify_run_log.py"
+
+jobs:
+  scrub:
+    name: scrub
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: self-test (fake fixture terms; a denylisted fixture must fail enforce)
+        # The tests that pass no --mode expect scan.py's own default (report), which the
+        # job-level SCRUB_MODE would otherwise override.
+        env:
+          SCRUB_MODE: report
+        run: python tools/scrub/test_scan.py
+
+      - name: materialise denylist from secret
+        id: denylist
+        env:
+          SCRUB_DENYLIST: ${{ secrets.SCRUB_DENYLIST }}
+        run: |
+          if [ -z "$SCRUB_DENYLIST" ]; then
+            echo "::warning title=scrub::SCRUB_DENYLIST secret not available - scanning generic patterns only"
+            echo "file=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          f="$RUNNER_TEMP/scrub-denylist.txt"
+          ( umask 077; printf '%s\n' "$SCRUB_DENYLIST" > "$f" )
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+
+      - name: scan (whole repo)
+        env:
+          SCRUB_DENYLIST_FILE: ${{ steps.denylist.outputs.file }}
+        run: |
+          mkdir -p scrub-report
+          mode="$SCRUB_MODE"
+          # Enforce on a subtree only: the whole-repo scan stays a report.
+          if [ -n "$SCRUB_PATHS" ]; then mode=report; fi
+          # Mask the owner's own github.com link (owner decision 2026-11-03).
+          python tools/scrub/scan.py --mask-github-owner "$GITHUB_REPOSITORY_OWNER" --mode "$mode" \
+            --json scrub-report/scrub.json --markdown scrub-report/scrub.md
+
+      - name: scan (enforced paths)
+        if: env.SCRUB_PATHS != ''
+        env:
+          SCRUB_DENYLIST_FILE: ${{ steps.denylist.outputs.file }}
+        run: |
+          set -f            # the globs are for scan.py, not for the shell
+          args=()
+          if [ -z "$SCRUB_EXCLUDE" ]; then
+            for g in $SCRUB_PATHS; do args+=(--path "$g"); done
+          else
+            # Resolve the include and exclude globs to the tracked files they leave, and pass each
+            # file as its own --path (a literal path is a glob that matches itself).
+            mapfile -t files < <(python -c '
+          import fnmatch, os, subprocess
+          inc = os.environ["SCRUB_PATHS"].split()
+          exc = os.environ["SCRUB_EXCLUDE"].split()
+          out = subprocess.run(["git", "ls-files", "-z"], capture_output=True, check=True).stdout
+          for f in sorted(p for p in out.decode("utf-8", "replace").split("\0") if p):
+              if any(fnmatch.fnmatchcase(f, g) for g in inc) and not any(fnmatch.fnmatchcase(f, g) for g in exc):
+                  print(f)
+          ')
+            if [ "${#files[@]}" -eq 0 ]; then
+              echo "::error title=scrub::SCRUB_PATHS minus SCRUB_EXCLUDE matches no tracked file"
+              exit 1        # an empty --path list would scan the whole repo instead
+            fi
+            for f in "${files[@]}"; do args+=(--path "$f"); done
+            echo "enforced set: ${#files[@]} tracked files (excluded: $SCRUB_EXCLUDE)"
+          fi
+          # Mask the owner's own github.com link (owner decision 2026-11-03).
+          python tools/scrub/scan.py --mask-github-owner "$GITHUB_REPOSITORY_OWNER" --mode "$SCRUB_MODE" "${args[@]}" \
+            --json scrub-report/scrub-enforced.json
+
+      # The self seed's own check (TASK-1461): the scan's patterns plus home-directory and secrets
+      # paths, and the profile's shape (no dangling edge or intent). Standard library only.
+      - name: self seed check (tools/export_self_seed.py check)
+        if: ${{ !cancelled() }}
+        env:
+          SCRUB_DENYLIST_FILE: ${{ steps.denylist.outputs.file }}
+        run: python tools/export_self_seed.py check
+
+      # DOCS FRESHNESS (STORY-oss-20, TASK-1406). docs/oss/MCP-TOOLS.md, CONFIG.md and API.md are
+      # generated and committed; each generator's --check renders the page in memory from the
+      # current sources and exits 1 when the committed page differs. The generators import the
+      # real mcp and backend code, so they get the HASHED locks the images install (the API page
+      # depends on the exact FastAPI version), in a throwaway venv so nothing lands in the
+      # runner's shared Python. The two locks are resolved together (tools/ci/lock_requirements.sh)
+      # and install into one environment. gen_api_ref also scans its page against the denylist
+      # when SCRUB_DENYLIST_FILE is set (exit 2 on a hit), which is why this sits before the
+      # file is removed. Runs even when a scan above failed, so one run reports both.
+      - name: pip cache (docs freshness)
+        if: ${{ !cancelled() }}
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pip
+          key: pip-docs-${{ runner.os }}-py3.12-${{ hashFiles('backend/requirements-lock.txt', 'mcp/requirements-lock.txt') }}
+
+      - name: docs freshness (generated pages match their sources; self-test proves a stale page fails)
+        if: ${{ !cancelled() }}
+        env:
+          SCRUB_DENYLIST_FILE: ${{ steps.denylist.outputs.file }}
+        run: |
+          set -euo pipefail
+          venv="$RUNNER_TEMP/docs-venv"
+          rm -rf "$venv"
+          python -m venv "$venv"
+          "$venv/bin/python" -m pip install --quiet --disable-pip-version-check --require-hashes \
+            -r backend/requirements-lock.txt -r mcp/requirements-lock.txt
+          py="$venv/bin/python"
+          gens=(tools/gen_tool_ref.py tools/gen_config_ref.py tools/gen_api_ref.py tools/gen_baseload.py)
+          pages=(docs/oss/MCP-TOOLS.md docs/oss/CONFIG.md docs/oss/API.md backend/baseload_data.py)
+          # Whatever happens below, the committed pages are what the later steps see.
+          trap 'git checkout -- "${pages[@]}"' EXIT
+          fail=0
+
+          for i in "${!gens[@]}"; do
+            g="${gens[$i]}"; page="${pages[$i]}"
+            rc=0; "$py" "$g" --check || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              fail=1
+              echo "::error file=$page,title=docs freshness::$g --check exited $rc; run \`python $g\` and commit $page"
+              if [ "$rc" -eq 1 ]; then
+                # Show exactly what differs: regenerate into the workspace, diff, restore.
+                echo "::group::diff for $page (committed -> regenerated here)"
+                env -u SCRUB_DENYLIST_FILE "$py" "$g" >/dev/null || true
+                git --no-pager diff --stat -- "$page"
+                git --no-pager diff -- "$page" || true
+                git checkout -- "$page"
+                echo "::endgroup::"
+              fi
+            fi
+          done
+
+          # SELF-TEST: a hand-edited page must make --check exit 1. Each page gets a stray line
+          # appended in this throwaway checkout, is checked, and is restored.
+          for i in "${!gens[@]}"; do
+            g="${gens[$i]}"; page="${pages[$i]}"
+            printf '\nhand edit (docs-freshness self-test)\n' >> "$page"
+            rc=0; env -u SCRUB_DENYLIST_FILE "$py" "$g" --check >/dev/null 2>&1 || rc=$?
+            git checkout -- "$page"
+            if [ "$rc" -ne 1 ]; then
+              fail=1
+              echo "::error title=docs freshness self-test::$g --check exited $rc on a hand-edited $page, expected 1"
+            else
+              echo "self-test: $g --check caught a hand-edited $page (exit 1)"
+            fi
+          done
+
+          exit "$fail"
+
+      # DOCS AUDIENCE (STORY-oss-20, TASK-1429). Every .md under docs/oss/, at any depth, starts
+      # with the frontmatter `audience: user` or `audience: operations-security` and nothing else;
+      # the generators above emit it for their three pages. Standard library only, so it runs on
+      # the setup-python interpreter. The self-test first proves a bad page fails the check. Runs
+      # even when a step above failed, so one run reports everything.
+      - name: docs audience (every docs/oss page declares user or operations-security; self-test proves a bad page fails)
+        if: ${{ !cancelled() }}
+        run: |
+          python tools/check_docs_audience.py --self-test
+          python tools/check_docs_audience.py
+
+      - name: remove denylist file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/scrub-denylist.txt"
+
+      - name: upload report (counts and paths only, no matched text)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: scrub-report
+          path: scrub-report/
+          if-no-files-found: ignore
+          retention-days: 7

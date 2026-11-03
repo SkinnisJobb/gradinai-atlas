@@ -1,0 +1,220 @@
+# The OSS install's TLS ingress (OSS-24): the only door into the stack, and the TLS front of
+# atlas-api for atlas-mcp's own hop. Run by deploy/oss/docker-compose.yml (service atlas-tls),
+# from the same pinned Caddy image as every other front in this repo (deploy/caddy/Dockerfile).
+#
+# Every request that reaches atlas-api or atlas-mcp carries a Bearer token or a session cookie,
+# so EVERY hop is HTTPS with the certificate verified, this proxy's own legs to its upstreams
+# included (OSS-26 D):
+#
+#   browser / agent --https--> :8443  {$CADDY_PUBLIC_HOST}   board + API, and /mcp -> atlas-mcp
+#   atlas-mcp       --https--> :9443  atlas-api              the API, for atlas-mcp only
+#   atlas-gateway   --https--> :9444  atlas-mcp              /mcp -> atlas-mcp, for the
+#                                                            gateway profile only
+#   this proxy      --https--> atlas-api-origin:8443 / atlas-mcp-origin:8493, each on its own
+#                              internal compose network that no other service shares, each
+#                              verified against /certs/origin-ca.crt under that name
+#
+# :9443 is NOT published. atlas-mcp reaches it by the name `atlas-api`, a network alias this
+# container holds on the network it shares with atlas-mcp; atlas-api itself is not on that
+# network, so atlas-mcp has no plain-HTTP route to the API at all.
+#
+# Configured from the environment (the compose file sets these):
+#   CADDY_PUBLIC_HOST   the name clients use, no scheme, no port (ATLAS_PUBLIC_HOST)
+#   CADDY_TLS_MODE      the public certificate: one of deploy/caddy/tls/<mode>.caddy
+#                         files            /certs/tls.crt + tls.key (init-certs.sh, or your PKI)
+#                         internal         Caddy's own CA
+#                         acme-cloudflare  Let's Encrypt by DNS-01 (token as a file)
+#   CADDY_CLIENT_AUTH   the mTLS leg on :9443: off (default) | require
+#                         (client-auth-<mode>.caddy beside this file; trust pool
+#                         /certs/client-ca.crt)
+# The :9443 certificate is always /certs/tls.crt: it must carry the SAN `atlas-api` and chain
+# to the CA atlas-mcp trusts (ATLAS_CA_BUNDLE), which init-certs.sh's server.crt does.
+#
+# The upstreams are fixed: atlas-api and atlas-mcp serve only TLS in this layout (uvicorn's
+# own listener, with init-certs.sh's api-origin.crt and mcp-origin.crt), and there is no
+# plain-HTTP upstream to fall back to. /certs/origin-ca.crt is the install CA, or the separate
+# CA `init-certs.sh --origin-only` made for an install that predates these listeners.
+{
+	# No admin API: unauthenticated on localhost by default, and this container's whole job
+	# is to sit in front of an authenticated app.
+	admin off
+	# No plain-HTTP listener for redirects: nothing here is served over http://.
+	auto_https disable_redirects
+	# In `internal` mode, do not try to install Caddy's root into this container's store.
+	skip_install_trust
+}
+
+# The TLS transport of every upstream (OSS-26 D). NOTE: for an https:// upstream Caddy sets Host
+# to the upstream's own name unless told otherwise, so every block below sets Host itself: the
+# client's ({hostport}), or the fixed name of the :9444 hop. The certificate is verified against the
+# origin CA ONLY (not the system store), under the name this proxy dials ({args[0]}). There is
+# no switch to turn verification off (tools/ci/check_tls.sh R4, R6).
+(origin_tls) {
+	transport http {
+		tls_trust_pool file /certs/origin-ca.crt
+		tls_server_name {args[0]}
+	}
+}
+
+# Applied to every upstream. Atlas never reads Cloudflare Access headers (it authenticates for
+# itself); a proxy that forwards attacker-settable identity headers is one refactor away from
+# mattering. CF-Connecting-IP is SET from the socket peer, replacing anything a client sent,
+# so atlas-api's per-IP rate limit sees the real client (it believes the header only from
+# ATLAS_TRUSTED_PROXY_CIDRS, the network this proxy shares with it).
+(upstream_headers) {
+	header_up -Cf-Access-Jwt-Assertion
+	header_up -Cf-Access-Authenticated-User-Email
+	header_up -Cf-Access-Client-Id
+	header_up -Cf-Access-Client-Secret
+	header_up CF-Connecting-IP {remote_host}
+}
+
+# Browser security headers on the public door (LCM patch round 1). Atlas itself sets none, so
+# this proxy is where they live; the homelab's own Caddyfiles (deploy/caddy/) do not carry them
+# yet. tools/ci/check_oss_headers.py checks this block statically (and the legacy board's script
+# hashes against frontend/board.html); tools/ci/oss_tls_front.sh reads them off a live response.
+#
+# THE CSP, per directive, and what in the tree needs it:
+#   script-src 'self'          every board v2 script is a file under /assets (index.html has no
+#                              inline script, prepaint.js included); no eval: mermaid's and d3's
+#                              only `Function(...)` uses are lodash's globalThis fallback (never
+#                              reached in a browser) and d3-dsv's parser (the board does not call it).
+#   style-src 'unsafe-inline'  mermaid writes a <style> element into every SVG it draws, and the
+#                              sign-in pages and the legacy board carry inline styles. (Setting
+#                              element.style from script, which v2 and d3 do, is not affected.)
+#   img-src data: https:       the favicon is a data: URI; markdown in node prose may show an
+#                              image from any https host. Referrer-Policy keeps the URL to us.
+#   connect-src 'self'         every fetch is same-origin (/api, /auth); the MCP is not browsed.
+#   form-action 'self'         the sign-in, password and sign-out forms post here; "Sign in with
+#                              SSO" is a plain link, so an identity provider needs no entry.
+#   frame-ancestors 'none'     nothing embeds the board (and X-Frame-Options for old browsers).
+# /board/legacy (frozen, ADR 0043) has two inline <script> blocks: allowed by their sha256 only,
+# never 'unsafe-inline'. A change to frontend/board.html changes a hash; check_oss_headers.py
+# fails until the hash here is updated.
+#
+# HSTS: one year, without includeSubDomains or preload (the install does not own the rest of
+# its domain). Not sent for localhost / 127.0.0.1: HSTS ignores the port, so a trial install on
+# localhost would otherwise force https:// onto every other local dev server in that browser.
+# A browser only honours HSTS from a certificate it trusts, so an install CA not yet imported
+# does not pin anything.
+(security_headers) {
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+	}
+	@board_legacy path /board/legacy
+	@not_board_legacy not path /board/legacy
+	header @not_board_legacy Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	header @board_legacy Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-uqEYzVErqOU/i8hkErbH8GXAj2kpteGxdE5qc0/DX4E=' 'sha256-XDXTAAqAHycihZ+oMbHNywZ2abo5pKOL+n6K4FTsIyk='; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	@hsts not host localhost 127.0.0.1 ::1
+	header @hsts Strict-Transport-Security "max-age=31536000"
+}
+
+# The public door. The Host header is forwarded unchanged: atlas-api matches it against the
+# origins derived from ATLAS_PUBLIC_URL, atlas-mcp against ATLAS_MCP_ALLOWED_HOSTS.
+{$CADDY_PUBLIC_HOST}:8443 {
+	import /etc/caddy/tls/{$CADDY_TLS_MODE:files}.caddy
+	import security_headers
+
+	# The OAuth protected-resource metadata (RFC 9728, STORY-oss-25) is atlas-mcp's: it is
+	# served only while ATLAS_OAUTH_RESOURCE is set, and is atlas-mcp's 404 otherwise.
+	@mcp path /mcp /mcp/ /mcp/* /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
+	handle @mcp {
+		reverse_proxy https://atlas-mcp-origin:8493 {
+			import origin_tls atlas-mcp-origin
+			# Caddy rewrites Host to the upstream's name for an https:// upstream; the
+			# client's Host is what atlas-api / atlas-mcp check (a 421 otherwise).
+			header_up Host {hostport}
+			# Streamable HTTP answers with server-sent events: flush each one at once.
+			flush_interval -1
+			import upstream_headers
+		}
+	}
+	handle {
+		reverse_proxy https://atlas-api-origin:8443 {
+			import origin_tls atlas-api-origin
+			# Caddy rewrites Host to the upstream's name for an https:// upstream; the
+			# client's Host is what atlas-api / atlas-mcp check (a 421 otherwise).
+			header_up Host {hostport}
+			import upstream_headers
+		}
+	}
+}
+
+# atlas-api's TLS front for atlas-mcp (ATLAS_BASE_URL=https://atlas-api:9443). atlas-api admits
+# Bearer on this Host only because ATLAS_INTERNAL_HOSTS names atlas-api:9443, with the port:
+# the Host is forwarded unchanged over the TLS leg to atlas-api-origin:8443, and any other
+# internal Host is a 421.
+atlas-api:9443 {
+	tls /certs/tls.crt /certs/tls.key {
+		import /etc/caddy/oss/client-auth-{$CADDY_CLIENT_AUTH:off}.caddy
+	}
+	reverse_proxy https://atlas-api-origin:8443 {
+		import origin_tls atlas-api-origin
+		# Caddy rewrites Host to the upstream's name for an https:// upstream; the
+		# client's Host is what atlas-api / atlas-mcp check (a 421 otherwise).
+		header_up Host {hostport}
+		import upstream_headers
+	}
+}
+
+# atlas-mcp's TLS front for the `gateway` profile (STORY-oss-15). atlas-gateway (AgentGateway)
+# reaches it as https://atlas-mcp:9444/mcp/, by the network alias this container holds on the
+# internal `gateway` network, and verifies /certs/tls.crt (SAN `atlas-mcp`) against the install
+# CA. atlas-mcp itself is not on that network, so the gateway has no plain-HTTP route to it.
+#
+# The site has no host in its address: AgentGateway sends the CLIENT's Host upstream (v1.6.0,
+# mcp/upstream IncomingRequestContext::apply), not atlas-mcp's name. Host is therefore set here
+# to the fixed name of this hop, which ATLAS_MCP_ALLOWED_HOSTS lists (atlas-mcp's DNS-rebinding
+# check); the gateway's own route answers only for ATLAS_PUBLIC_HOST. Not published; when the
+# profile is off nothing else is on the `gateway` network.
+:9444 {
+	tls /certs/tls.crt /certs/tls.key {
+		protocols tls1.2 tls1.3
+	}
+	@mcp path /mcp /mcp/ /mcp/*
+	handle @mcp {
+		reverse_proxy https://atlas-mcp-origin:8493 {
+			import origin_tls atlas-mcp-origin
+			flush_interval -1
+			import upstream_headers
+			header_up Host atlas-mcp:9444
+		}
+	}
+	handle {
+		respond 404
+	}
+}
+
+# The healthcheck's own door (TASK-1470): atlas-tls is healthy only while BOTH its origins answer
+# through it. A probe of the TLS port alone stayed green while the legs behind it were dead (a host
+# restart that lost Docker's bridge rules left /healthz a 502, with `ps` and `--wait` all healthy).
+# The compose healthcheck asks this site with busybox `wget`, from inside the container:
+#
+#   /healthz      -> atlas-api-origin:8443/healthz, with the public Host (atlas-api's Host check)
+#   /healthz/mcp  -> atlas-mcp-origin:8493/health
+#
+# Plain HTTP, bound to loopback in this container only: nothing else can reach it, it carries no
+# token, and both legs it opens are the same verified TLS legs as the public door's. Anything
+# else here is a 404.
+http://127.0.0.1:8081 {
+	bind 127.0.0.1
+	handle /healthz {
+		reverse_proxy https://atlas-api-origin:8443 {
+			import origin_tls atlas-api-origin
+			header_up Host {$CADDY_PUBLIC_HOST}
+			import upstream_headers
+		}
+	}
+	handle /healthz/mcp {
+		rewrite * /health
+		reverse_proxy https://atlas-mcp-origin:8493 {
+			import origin_tls atlas-mcp-origin
+			import upstream_headers
+		}
+	}
+	handle {
+		respond 404
+	}
+}

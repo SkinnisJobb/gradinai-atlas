@@ -1,0 +1,230 @@
+{
+  "_comment": [
+    "The AUTHORED half of the baseload (agent/plans/oss-baseload.md section 5.1): prose, names and the",
+    "choices a person makes. tools/gen_baseload.py reads it with the generated sources and renders",
+    "backend/baseload_data.py; edit here, regenerate, commit both. Product description only: no host,",
+    "no address, no person, no estate (scrub enforce and the forbidden patterns run over this file).",
+    "Open decisions live in `decisions` below; each is one value to flip."
+  ],
+  "decisions": {
+    "_D-B1": "flat: every capability and every new top-level part sits directly under atlas-system. To add a layer, give a node a different `parent` here; the seven handbook nodes cannot move (system_node never re-parents).",
+    "capability_parent": "atlas-system",
+    "_D-B2": "identifier: tool and CLI nodes are named by the identifier they answer to (atlas_get, atlas-admin user); backend/node_types.py name_register_warnings skips generated baseload nodes, and backend/verify_baseload.py checks that. `prose` names them `Tool atlas_get` / `Command group atlas-admin user` instead.",
+    "identifier_names": "identifier",
+    "_D-B6": "per_tool: one node per MCP tool under its group node. `per_group`: group nodes only, each listing its tools and requiring the union of their API areas.",
+    "tool_nodes": "per_tool"
+  },
+
+  "compose_services": {
+    "_comment": "deploy/oss/docker-compose.yml service -> the node that describes it. A service missing here fails the generator.",
+    "atlas-postgres": "atlas-system-postgres",
+    "atlas-migrate": "atlas-system-migrate",
+    "atlas-api": "atlas-system-api",
+    "atlas-mcp": "atlas-system-mcp",
+    "atlas-tls": "atlas-system-tls",
+    "atlas-retrieval": "atlas-system-retrieval-check",
+    "atlas-gateway": "atlas-system-gateway",
+    "atlas-backup": "atlas-system-backup"
+  },
+
+  "handbook_extras": {
+    "_comment": "Additions to the seven handbook nodes, written ONLY when that node is added in the same run (a fresh graph, or system_node.py --apply on an install that lacks it). An existing node is never touched.",
+    "atlas-system-postgres": {"guides": [["docs/oss/guides/external-postgres.md", "runbook", "External Postgres"]]},
+    "atlas-system-retrieval": {"guides": [["docs/oss/guides/retrieval.md", "runbook", "Retrieval add-on guide"]], "setting": "ATLAS_RETRIEVAL=on"}
+  },
+
+  "services": [
+    {
+      "id": "atlas-system-tls", "parent": "atlas-system", "type": "service", "name": "atlas-tls",
+      "summary": "The TLS front: the one published port, the internal origin the MCP calls the API through, the install's certificate authority and optional client certificates.",
+      "abstract": "atlas-tls is the only service an install publishes. Browsers and agent clients reach the board, the API and the MCP through it over TLS. It also serves the API to atlas-mcp on an internal listener that is not published, so the MCP never talks to the API in plain text. Where its certificate comes from is a setting (`ATLAS_TLS_MODE`); whether it asks for a client certificate is another (`ATLAS_TLS_CLIENT_AUTH`).",
+      "settings": ["ATLAS_TLS_*", "ATLAS_PUBLIC_HOST", "ATLAS_ORIGIN_SUBNET"]
+    },
+    {
+      "id": "atlas-system-migrate", "parent": "atlas-system", "type": "service", "name": "atlas-migrate",
+      "summary": "A one-shot schema upgrade that runs before atlas-api starts: `atlas-migrate upgrade`.",
+      "abstract": "atlas-migrate runs the same image as atlas-api with one command, `atlas-migrate upgrade`, and exits. atlas-api starts only after it has succeeded, so an upgraded image never serves against a schema it does not expect. It changes the schema only additively; a destructive step is a separate, deliberate command."
+    },
+    {
+      "id": "atlas-system-backup", "parent": "atlas-system", "type": "service", "name": "atlas-backup",
+      "summary": "Scheduled, verified logical backups of the Atlas database (compose profile `backup`).",
+      "abstract": "atlas-backup takes a logical dump of the Atlas database on a schedule, restores it into a scratch database to prove it can be read back, and keeps a bounded number of copies. It talks to Postgres and nothing else and publishes no port. `atlas-admin backup run|restore|rollback` drive the same code by hand.",
+      "setting": "COMPOSE_PROFILES=backup",
+      "settings": ["ATLAS_BACKUP_*"]
+    },
+    {
+      "id": "atlas-system-retrieval-check", "parent": "atlas-system-retrieval", "type": "service", "name": "atlas-retrieval",
+      "summary": "A one-shot check of the retrieval add-on's configuration (compose profile `retrieval`); the indexing itself runs inside atlas-api.",
+      "abstract": "atlas-retrieval reads the retrieval add-on's configuration, refuses what could not be right (no endpoint, a key that is not a file, a vector length that does not fit) and exits. The add-on itself, the reconciler that keeps embeddings current and the vector half of search, runs inside atlas-api when `ATLAS_RETRIEVAL=on`.",
+      "setting": "COMPOSE_PROFILES=retrieval"
+    }
+  ],
+
+  "requires": [
+    ["atlas-system-mcp", "atlas-system-api", "The MCP holds no logic and calls the API with the caller's own token."],
+    ["atlas-system-mcp", "atlas-system-tls", "On the bundled install the MCP reaches the API through the TLS front's internal listener."],
+    ["atlas-system-api", "atlas-system-postgres", "Every row Atlas owns is in the database."],
+    ["atlas-system-migrate", "atlas-system-postgres", "It upgrades the schema before the API starts."],
+    ["atlas-system-backup", "atlas-system-postgres", "It dumps and verifies the database."],
+    ["atlas-system-tls", "atlas-system-api", "It proxies every request to the API."],
+    ["atlas-system-gateway", "atlas-system-mcp", "It federates the MCP for clients behind it."],
+    ["atlas-system-board", "atlas-system-api", "The board reads and writes only through /api/*."],
+    ["atlas-system-cli", "atlas-system-postgres", "atlas-admin writes the database directly."],
+    ["atlas-system-clients-claude-code", "atlas-system-mcp", "The client pack points Claude Code at the MCP."]
+  ],
+
+  "api": {
+    "_comment": "One node per module that declares routes (backend/routers/<m>.py, and `auth` for the gate's own routes). A module missing here still gets a node, with a generated name and summary.",
+    "node": {"name": "API areas", "summary": "atlas-api's routes, one child per router module, each with its route table."},
+    "areas": {
+      "auth": {"name": "Sign-in routes", "summary": "Sign-in, sign-out, password change, the privacy page and the single sign-on callbacks, served by the gate itself.", "capability": "atlas-system-identity"},
+      "graph": {"name": "Graph routes", "summary": "The graph read: the whole graph or a neighbourhood, the outline, the path between two nodes, the tree.", "capability": "atlas-system-graph"},
+      "nodes": {"name": "Node routes", "summary": "Read and write one node, its structure and its status.", "capability": "atlas-system-graph"},
+      "edges": {"name": "Edge routes", "summary": "Create and delete edges.", "capability": "atlas-system-graph"},
+      "intents": {"name": "Intent routes", "summary": "List, create, edit and delete node intents.", "capability": "atlas-system-graph"},
+      "workitems": {"name": "Workitem routes", "summary": "Workitems: create, update, list, acceptance proposals, and the vocabulary an install allows.", "capability": "atlas-system-work"},
+      "comments": {"name": "Comment routes", "summary": "Comments on a workitem: list, add, edit and delete.", "capability": "atlas-system-work"},
+      "search": {"name": "Search route", "summary": "Search over names, prose, documents, acceptance, results, comments, ADRs and labels; returns pointers.", "capability": "atlas-system-search"},
+      "context": {"name": "Context route", "summary": "The context answer: the best-matching nodes, their neighbours, intents, decisions and documents, within budgets.", "capability": "atlas-system-context"},
+      "docs": {"name": "Document routes", "summary": "Read, write and delete a node's documents, served only when listed in the node's docs[].", "capability": "atlas-system-docs"},
+      "handbook": {"name": "Handbook site routes", "summary": "The static handbook at /docs, rendered from the system node set's documents.", "capability": "atlas-system-docs"},
+      "events": {"name": "Event routes", "summary": "The graph event log and the sign-in event log.", "capability": "atlas-system-audit"},
+      "audit": {"name": "Audit export route", "summary": "The read audit as JSON Lines, for an owner.", "capability": "atlas-system-audit"},
+      "access": {"name": "Access routes", "summary": "Visibility marks, grants, groups, project role bindings and the people list.", "capability": "atlas-system-access"},
+      "me": {"name": "Account routes", "summary": "The signed-in account: who it is, its password, its agent credentials.", "capability": "atlas-system-identity"},
+      "stats": {"name": "Personal statistics route", "summary": "The signed-in account's own work counts.", "capability": "atlas-system-signals"},
+      "adrs": {"name": "ADR routes", "summary": "The architecture decision record registry: search, read and record.", "capability": "atlas-system-adrs"},
+      "config": {"name": "Configuration routes", "summary": "Every setting with its effective value and source, for an owner; one write route when board writes are switched on.", "capability": "atlas-system-config"},
+      "setup": {"name": "Setup guide routes", "summary": "The first-run setup guide: where it stands, recorded answers, and accepting the decisions they produce.", "capability": "atlas-system-setup"},
+      "crunch": {"name": "Crunch week routes", "summary": "Read, start and end crunch week, and the banner the board shows during it.", "capability": "atlas-system-crunch"},
+      "retrieval": {"name": "Retrieval routes", "summary": "The retrieval add-on's status and a re-index request.", "capability": "atlas-system-retrieval", "setting": "ATLAS_RETRIEVAL=on"},
+      "health": {"name": "Health routes", "summary": "Liveness, readiness and the API's health report with its drift warnings.", "capability": "atlas-system-install"},
+      "assets": {"name": "Board and asset routes", "summary": "The landing page, the board pages and their static assets.", "capability": "atlas-system-install"},
+      "landing": {"name": "Product site routes", "summary": "The product website's own files under /site.", "capability": "atlas-system-install", "setting": "ATLAS_LANDING=v2"},
+      "legacy_v0": {"name": "First-generation routes", "summary": "The first-generation tree, summary, priority and goals routes, kept for installs that still read them.", "capability": "atlas-system-graph", "setting": "ATLAS_LEGACY_V0=1"}
+    }
+  },
+
+  "mcp": {
+    "_comment": "Tool groups, keyed by the title tools/gen_tool_ref.py derives from descriptions.py's `# ---- <group>` comments. An unknown group gets a slug made from its title.",
+    "groups": {
+      "Read": {"slug": "read", "name": "Read tools", "summary": "The tools that read: health, outline, context, search, structure, nodes, trees, paths, intents, documents, ADRs and the vocabulary."},
+      "Work": {"slug": "work", "name": "Work tools", "summary": "File a workitem and update one."},
+      "Graph writes": {"slug": "graph-write", "name": "Graph-write tools", "summary": "Write nodes, edges, documents and intents, and the permanent delete."},
+      "Comments": {"slug": "comments", "name": "Comment tools", "summary": "Read and write comments on a workitem."},
+      "The first-run setup guide": {"slug": "setup", "name": "Setup-guide tool", "summary": "The first-run setup guide's interview."},
+      "Session": {"slug": "session", "name": "Session tool", "summary": "Sign-off: an agent's own writes in a session and the procedure for recording them."}
+    },
+    "settings": {"atlas_delete": "ATLAS_MCP_ENABLE_DELETE=1", "atlas_save_work": "ATLAS_DISABLED_FEATURES (save_work)"}
+  },
+
+  "board": {
+    "node": {"id": "atlas-system-board", "name": "Board", "summary": "The browser board at /board: a radial graph of the world, a work board scoped by it, and a node panel.",
+             "abstract": "The board is a static page with no build step that reads and writes only through /api/*. The graph shows what exists; selecting a node scopes the work board to the work bound there and below; the node panel shows one node's overview, intents, comments, history, documents, links, decisions and configuration.",
+             "capability": "atlas-system-graph"},
+    "views": {
+      "_comment": "frontend/v2/views/<entry> -> name and summary. An entry missing here still gets a node with a generated name.",
+      "graph": {"name": "Graph view", "summary": "The radial graph of the world: nodes by family and type, contains as the spokes."},
+      "work": {"name": "Work board", "summary": "The workitems bound to the selected node and everything it contains, by status."},
+      "panel": {"name": "Node panel", "summary": "One node in full, one tab per aspect."},
+      "dashboard": {"name": "Dashboard", "summary": "The signed-in person's own view: boxes of what needs attention and their tasks."},
+      "search": {"name": "Search box", "summary": "Search from the board, over the same sources as /api/search."},
+      "access": {"name": "Access administration", "summary": "Visibility marks, groups and project roles, for an owner."},
+      "settings": {"name": "Settings", "summary": "Personal settings, agent credentials, crunch week and the password notice."}
+    },
+    "tabs": {
+      "overview": "The node's prose, type and place in the graph.",
+      "intent": "The intents that apply to the node, its own and inherited.",
+      "comments": "The comments on a workitem.",
+      "history": "The graph events recorded on the node.",
+      "docs": "The node's documents.",
+      "links": "The node's edges other than contains.",
+      "decisions": "The ADRs recorded on the node's project.",
+      "config": "The settings of a system part, with their effective values."
+    },
+    "legacy": {"name": "Legacy board", "summary": "The first board, frozen, at /board/legacy: world tree, work tree and Mine."}
+  },
+
+  "cli": {
+    "node": {"id": "atlas-system-cli", "name": "Admin CLI", "summary": "atlas-admin, the operator's command line inside the atlas-api image: accounts, tokens, guardrails, backups.",
+             "abstract": "atlas-admin runs inside the atlas-api container (`docker compose exec atlas-api atlas-admin ...`) and writes the database directly. It never accepts a credential as an argument: the system generates every secret and shows it once."},
+    "groups": {
+      "user": "atlas-system-identity", "session": "atlas-system-identity", "bot": "atlas-system-identity",
+      "token": "atlas-system-identity", "rbac": "atlas-system-access", "audit": "atlas-system-audit",
+      "guardrails": "atlas-system-guardrails", "cicd": "atlas-system-guardrails",
+      "backup": "atlas-system-install", "init-db": "atlas-system-install"
+    }
+  },
+
+  "clients": {
+    "node": {"id": "atlas-system-clients", "name": "Client packs", "summary": "How agent clients connect to the MCP: a configuration template, helpers and skills per client."},
+    "packs": [
+      {"id": "atlas-system-clients-claude-code", "name": "Claude Code client pack",
+       "summary": "The pack in clients/claude-code: an MCP configuration template, credential helpers and a plugin with Atlas skills.",
+       "guides": [["clients/claude-code/README.md", "integration", "Claude Code client pack"], ["docs/oss/guides/agents.md", "integration", "Agents guide"]]}
+    ]
+  },
+
+  "capabilities": [
+    {"id": "atlas-system-graph", "name": "Graph and world model",
+     "summary": "One graph of nodes and typed edges: world nodes for what exists, workitems for what is being done, intents for what must stay true.",
+     "abstract": "Everything Atlas holds is rows in one graph. World nodes (`org`, `project`, `system`, `service`, `component`, `db`, `host`, `capability`, `agent`) are arranged by `contains`, which means *is part of* and nothing else. Workitems attach to the world by `works_on`. Edge types are a registry with declared family pairs, and drift is reported, not refused. Intents are statements on a node that stay true when all open work is done; they inherit downwards.",
+     "guides": [["docs/oss/guides/concepts.md", "architecture", "Concepts guide"], ["docs/oss/ARCHITECTURE.md", "architecture", "Architecture"]],
+     "settings": []},
+    {"id": "atlas-system-work", "name": "Work store",
+     "summary": "Workitems with acceptance criteria, results, comments, priority, labels and per-project keys.",
+     "abstract": "A workitem's spec, its acceptance criteria and its recorded result are separate stores, so recording an outcome never overwrites what it was measured against. Acceptance criteria are changed by a person, or by an agent with a person's recorded approval where an install allows it. Tasks get ids from a sequence, or from a project's own key.",
+     "settings": ["ATLAS_ACCEPTANCE_AGENT_WRITE", "ATLAS_STRICT_API"]},
+    {"id": "atlas-system-context", "name": "Context answer",
+     "summary": "\"Tell me about X\" in one call: the best-matching nodes, their neighbours, dependants, intents, decisions and documents to read next.",
+     "abstract": "The context answer is assembled from the graph by atlas-api and returned as pointers within budgets: every part is bounded by a parameter and says when it was cut. The full text is one node read or one document read away.",
+     "settings": []},
+    {"id": "atlas-system-identity", "name": "Identity and sign-in",
+     "summary": "Accounts, passwords, single sign-on, agent accounts linked to the person accountable for them, and their tokens.",
+     "abstract": "People sign in with a password or through an OIDC identity provider. Every agent has its own account, linked to the person who is accountable for it, and acts with its own token; tokens carry scopes (read, write, admin) that bound what they may do. Identity-provider access tokens can act as an agent of the person they were issued to.",
+     "guides": [["docs/oss/guides/identity-and-access.md", "runbook", "Identity and access guide"]],
+     "settings": ["ATLAS_AUTH_PROVIDERS", "ATLAS_LOCAL_LOGIN", "ATLAS_OIDC_*", "ATLAS_OAUTH_*", "ATLAS_LOGIN_ORIGINS", "ATLAS_PASSWORD_PEPPER", "ATLAS_TOKEN_PEPPER", "ATLAS_BREACH_CHECK", "ATLAS_ALLOW_SESSION_MINT", "ATLAS_BEARER_HOSTS", "ATLAS_INTERNAL_HOSTS", "ATLAS_REQUIRE_SECRET_FILES"]},
+    {"id": "atlas-system-access", "name": "Visibility and project roles",
+     "summary": "Who sees what: private and shared marks, grants, groups, and project roles when they are switched on.",
+     "abstract": "Visibility is resolved inside every query, so a hidden node is absent rather than filtered after the fact, and rollups never count what the caller cannot see. With project roles on, each project is shared or private and a person holds viewer, editor, maintainer or owner on it, directly or through a group.",
+     "guides": [["docs/oss/guides/identity-and-access.md", "runbook", "Identity and access guide"]],
+     "settings": ["ATLAS_RBAC", "ATLAS_DEFAULT_PROJECT_VISIBILITY", "ATLAS_SHARED_PROJECT_ROLE", "ATLAS_INSTANCE_ADMIN_IMPLICIT_PROJECT_OWNER"]},
+    {"id": "atlas-system-audit", "name": "Audit trail",
+     "summary": "Every graph write as an event with its actor, sign-in events, and an optional audit of agent reads.",
+     "abstract": "Graph writes are recorded by one writer as graph events naming the person and the agent. Sign-in and grant changes are recorded separately. With read auditing on, every agent read of a node, a search or a document is recorded too, and an owner exports it as JSON Lines.",
+     "guides": [["docs/oss/guides/tokens-and-audit.md", "runbook", "Tokens and audit guide"]],
+     "settings": ["ATLAS_AUDIT_*"]},
+    {"id": "atlas-system-signals", "name": "Attention and rollup",
+     "summary": "Derived state on every node: attention, completion and open work, rolled up the contains tree.",
+     "abstract": "Work rolls up: an item bound to a node shows there and on every node containing it. Attention and completion are recomputed after each write, and a rollup takes the caller's visible set as an input so it never leaks a count.",
+     "settings": []},
+    {"id": "atlas-system-docs", "name": "Node documents and the handbook",
+     "summary": "Markdown documents on any node, served only when listed in the node's docs[]; the handbook is the system node set's documents.",
+     "abstract": "A node's documents are rows, written and read through the API and listed in the node's `attributes.docs`. The handbook is the documents of the `atlas-system` set, also rendered as a static site at /docs.",
+     "settings": ["ATLAS_PUBLIC_DOCS"]},
+    {"id": "atlas-system-adrs", "name": "ADR registry",
+     "summary": "Architecture decision records per project, with ids, status and links, from git or recorded in Atlas.",
+     "abstract": "Each project has its own ADR prefix and numbering. A record either mirrors a file in a repository or is recorded in Atlas directly, and the registry is searched and read through the API and the MCP.",
+     "settings": []},
+    {"id": "atlas-system-setup", "name": "Setup guide",
+     "summary": "The first-run interview: topics asked of a person, each answered topic recorded as a proposed decision.",
+     "guides": [["docs/oss/guides/setup-guide.md", "runbook", "Setup guide"]],
+     "settings": ["ATLAS_SETUP_QUESTIONS_FILE"]},
+    {"id": "atlas-system-guardrails", "name": "Agent guardrails and first CI/CD",
+     "summary": "A matrix of what agents may do, applied to the install and exported as agent policy files, and a first CI/CD pipeline generated from it.",
+     "guides": [["docs/oss/guides/guardrails.md", "runbook", "Guardrails guide"], ["docs/oss/guides/first-cicd.md", "runbook", "First CI/CD guide"]],
+     "settings": []},
+    {"id": "atlas-system-crunch", "name": "Crunch week",
+     "summary": "A release mode for a fixed period: releases go straight out, with a verified backup at the start and the end.",
+     "guides": [["docs/oss/guides/crunch-week.md", "runbook", "Crunch week guide"]],
+     "settings": []},
+    {"id": "atlas-system-config", "name": "Configuration and feature flags",
+     "summary": "Every setting described once, shown to an owner with its effective value and source; optional features switched off by name.",
+     "guides": [["docs/oss/guides/configuration-panel.md", "runbook", "Configuration panel guide"]],
+     "settings": ["ATLAS_CONFIG_WRITES", "ATLAS_DISABLED_FEATURES", "ATLAS_PUBLIC_URL", "ATLAS_PRODUCT_NAME", "ATLAS_PRIVACY_*", "ATLAS_LANDING", "ATLAS_FRONTEND_DIR"]},
+    {"id": "atlas-system-install", "name": "Install, upgrade and releases",
+     "summary": "The bundled install, its upgrade path, released images, certificates, backups and restore.",
+     "guides": [["docs/oss/INSTALL.md", "runbook", "Install"], ["docs/oss/RELEASES.md", "runbook", "Releases"], ["docs/oss/guides/operations.md", "runbook", "Operations guide"], ["docs/oss/guides/server-requirements.md", "runbook", "Server requirements"]],
+     "settings": ["ATLAS_SEED", "ATLAS_LEGACY_V0", "ATLAS_RESEED", "ATLAS_DB_URL", "ATLAS_CERT_EXPIRY_*", "ATLAS_IMAGE_*", "COMPOSE_*", "ATLAS_TRUSTED_PROXY_CIDRS", "ATLAS_ADMIN_ACTOR"]}
+  ]
+}

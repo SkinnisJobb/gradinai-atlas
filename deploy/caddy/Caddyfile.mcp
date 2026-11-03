@@ -1,0 +1,49 @@
+# TLS terminator in front of atlas-mcp (OSS-24). Run by mcp/docker-compose.tls.yml.
+#
+# Every MCP request carries a caller's `Authorization: Bearer atlas_svc_...` (PR #82),
+# so the hop into atlas-mcp is HTTPS. atlas-mcp itself listens on plain HTTP :8092,
+# reachable only on its compose network and the host's loopback; this proxy is the only
+# way in from the network.
+#
+# Configured entirely from the environment, so one file serves the homelab and an
+# enterprise install:
+#   CADDY_SITE       the name clients connect to, e.g. atlas.example.com (no port)
+#   CADDY_TLS_MODE   which deploy/caddy/tls/<mode>.caddy supplies the certificate:
+#                      acme-cloudflare  public cert by ACME DNS-01 (the homelab default)
+#                      files            a cert + key you supply in /certs (enterprise PKI)
+#                      internal         Caddy's own private CA (clients trust its root)
+#   CADDY_UPSTREAM   atlas-mcp's address on the compose network (default atlas-mcp:8092)
+{
+	# No admin API: unauthenticated on localhost by default, and this container's
+	# whole job is to sit in front of an authenticated service.
+	admin off
+}
+
+{$CADDY_SITE}:8446 {
+	import /etc/caddy/tls/{$CADDY_TLS_MODE:acme-cloudflare}.caddy
+
+	# Only the MCP endpoint, the health probe and the OAuth protected-resource metadata
+	# (RFC 9728, STORY-oss-25: served only while ATLAS_OAUTH_RESOURCE is set, else a 404
+	# from atlas-mcp) are proxied; anything else is a 404 from here and never reaches the app.
+	@mcp path /mcp /mcp/ /mcp/* /health /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
+	handle @mcp {
+		reverse_proxy {$CADDY_UPSTREAM:atlas-mcp:8092} {
+			# Streamable HTTP answers with server-sent events: flush each event at
+			# once instead of buffering the stream.
+			flush_interval -1
+
+			# The caller's own `Authorization` header is forwarded unchanged (Caddy's
+			# default). It is the credential atlas-mcp checks (app/caller_auth.py).
+			# Strip Cloudflare Access identity headers: atlas-mcp never reads them,
+			# and a proxy that forwards attacker-settable identity headers is one
+			# refactor away from mattering. Same rule as the board's Caddyfile.
+			header_up -Cf-Access-Jwt-Assertion
+			header_up -Cf-Access-Authenticated-User-Email
+			header_up -Cf-Access-Client-Id
+			header_up -Cf-Access-Client-Secret
+		}
+	}
+	handle {
+		respond 404
+	}
+}

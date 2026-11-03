@@ -1,0 +1,7 @@
+# CADDY_TLS_MODE=internal: Caddy's own private CA, for an install with neither a
+# public DNS name nor an enterprise PKI. Caddy issues and renews the certificate
+# itself. Clients must trust its root, which lives in the atlas-mcp-tls-data volume
+# at /data/caddy/pki/authorities/local/root.crt. Copy that file (it is a public
+# certificate, not a key) to each client and point ATLAS_CA_BUNDLE /
+# backendTLS.root / NODE_EXTRA_CA_CERTS at it.
+tls internal

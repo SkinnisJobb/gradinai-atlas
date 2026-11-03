@@ -1,0 +1,558 @@
+# Atlas, the OSS install: one node, one compose file (STORY-oss-10, with OSS-24's TLS wiring).
+#
+# ADDITIVE. This file is new and stands alone. The homelab's compose files (the root
+# docker-compose.yml, mcp/docker-compose.yml, deploy/*.override.yml) are not read, changed or
+# needed by it, and with no new configuration the homelab runs exactly as before.
+#
+# WHAT RUNS (everything on this node; nothing here reaches a host or a service outside it):
+#
+#   atlas-postgres  Postgres 16 with pgvector, its own volume, on the internal `data` network
+#   atlas-migrate   one-shot `atlas-migrate upgrade` (OSS-09): the schema, then it exits
+#   atlas-api       the board and the API; HTTPS :8443 (uvicorn's own TLS listener, OSS-26 D),
+#                   NOT published, reachable only by atlas-tls on the internal `origin` network.
+#                   It serves no plain HTTP at all: nothing listens on :8000
+#   atlas-mcp       the MCP server; HTTPS :8493 (its own TLS listener), NOT published, reachable
+#                   only by atlas-tls on the internal `mcp` network; nothing listens on :8092.
+#                   It calls the API at https://atlas-api:9443,
+#                   verified against the install CA (ATLAS_CA_BUNDLE). It shares no network with
+#                   atlas-api, so it has no plain-HTTP route to the API at all.
+#   atlas-tls       the TLS ingress (Caddy, deploy/oss/caddy/Caddyfile): the ONE published port,
+#                   https://ATLAS_PUBLIC_HOST (board, API, /mcp), plus the API's TLS front
+#                   :9443 for atlas-mcp, unpublished
+#   atlas-retrieval profile `retrieval` only, not started by default: a configuration check for
+#                   the retrieval add-on, which runs inside atlas-api (overlay retrieval.yml)
+#   atlas-gateway   profile `gateway` only, not started by default: AgentGateway in front of
+#                   atlas-mcp (and any other MCP server in deploy/gateway/gateway.yaml), HTTPS
+#                   on its own published port. See its block below.
+#   atlas-backup    profile `backup` only, not started by default: the backup loop, which acts
+#                   while a crunch with a scheduled backup policy is on, and on the routine
+#                   schedule when ATLAS_BACKUP_SCHEDULE sets one (OSS-26 C). See its block below.
+#
+#   browser/agent --https--> atlas-tls :443 --https, `origin` net--> atlas-api :8443
+#                                           --https, `mcp` net-----> atlas-mcp :8493
+#   atlas-mcp ------https--> atlas-tls :9443 (name `atlas-api`) --https--> atlas-api :8443
+#   agent --https--> atlas-gateway :8444 --https, `gateway` net--> atlas-tls :9444 (name
+#                    `atlas-mcp`) --https, `mcp` net--> atlas-mcp :8493     (profile `gateway`)
+#
+# EVERY HOP IS TLS (OSS-26 D). The two legs from atlas-tls to its upstreams used to be plain
+# HTTP on their two-member internal networks; they carry Bearer tokens and session cookies, so
+# atlas-api and atlas-mcp now terminate TLS themselves on those legs (uvicorn --ssl-certfile /
+# --ssl-keyfile, with their own certificates api-origin.crt and mcp-origin.crt from
+# init-certs.sh), and atlas-tls verifies each against ./secrets/tls/origin-ca.crt, which is the
+# install CA (a copy of ca.crt) unless `init-certs.sh --origin-only` made a separate one. An
+# install made before this change runs `../../scripts/init-certs.sh --origin-only` once before
+# `up` (docs/oss/guides/operations.md, "Upgrading"). The homelab reads none of this file.
+#
+# INSTALL, from a checkout, in this directory (deploy/oss/):
+#
+#   cp .env.example .env               # then set ATLAS_PUBLIC_HOST, ATLAS_PUBLIC_URL, the MCP
+#                                      # host lists and the privacy contact (comments in it)
+#   ../../scripts/init-secrets.sh      # ./secrets/: DB password, peppers, and (no PKI of your
+#                                      # own) the install CA + certificates via init-certs.sh
+#   docker compose up -d --build       # atlas-migrate runs first; atlas-api waits for it
+#   docker compose exec atlas-api atlas-admin user add <name> --role owner
+#                                      # the first owner (OSS-07); prints a one-time password
+#
+# Then open https://ATLAS_PUBLIC_HOST/ and sign in. Clients that are not browsers trust
+# ./secrets/tls/ca.crt (curl --cacert, NODE_EXTRA_CA_CERTS for Claude Code), unless the
+# certificate comes from your PKI or ACME (ATLAS_TLS_MODE in .env).
+#
+# HARDENED IMAGES (STORY-oss-18). atlas-migrate, atlas-api, atlas-mcp (and atlas-retrieval)
+# build `target: hardened` of backend/Dockerfile and mcp/Dockerfile: a numeric non-root USER
+# (10001:0), every file group 0 and read-only to it, HOME=/home/atlas group-writable, nothing
+# else written at run time, and a HEALTHCHECK in python. They start under ANY UID in group 0, so
+# an OpenShift-style arbitrary UID works unchanged (`user: "1000770000:0"`; the install smoke
+# runs the whole stack that way). That is why init-secrets.sh writes the secret files 0644
+# inside a 0700 ./secrets/: the container's UID is not yours. An install made before OSS-18
+# needs `chmod 0644 secrets/db_url secrets/password_pepper secrets/token_pepper
+# secrets/tls/mcp-client.key` once. Released images (.github/workflows/images.yml, on a v* tag,
+# Trivy-gated like sbom-sca.yml): every image this file builds, as
+# ghcr.io/<owner>/gradinai-atlas-{api,mcp,backup,postgres,tls}, tagged with the release. To pull
+# them instead of building, add the overlay release.yml (OSS-26 E) and the release's
+# ATLAS_IMAGE_* lines (tag@digest) to .env; docs/oss/RELEASES.md has the procedure.
+# The homelab builds the default stage, which is today's image (root, unchanged).
+#
+# WHY THIS PLACE (deploy/oss/ rather than a root compose.oss.yml): compose reads `.env` and
+# resolves `./secrets/` relative to the compose file's directory, and the repository root
+# already holds the homelab's `.env` and compose file. Here the install has its own `.env`,
+# its own `./secrets/` and its own project name, and cannot pick up a homelab value by
+# accident. The ingress may publish to every interface only because tools/ci/check_binds.sh
+# accepts that under deploy/ with a `bind-ok` marker; tools/ci/check_tls.sh R5 forbids
+# publishing a plain-HTTP token port from this directory at all.
+#
+# WHY `env_file: .env` FOR atlas-api AND atlas-mcp (the homelab compose has none): every
+# variable the code reads is listed in .env.example (tools/ci/check_env_example.py fails when
+# one is missing), and with env_file what .env says is what the process sees, so the homelab's
+# "set in .env but never reached the container" trap (see deploy/prod.override.yml) cannot
+# happen. .env holds NO secret: secrets are files under ./secrets/, passed as compose
+# `secrets:` and read through the *_FILE settings, and ATLAS_REQUIRE_SECRET_FILES=1 makes the
+# services refuse a secret given as a plain variable. The `environment:` blocks below fix the
+# values this layout depends on; they override anything .env says.
+
+name: atlas
+
+x-api-environment: &api-environment
+  # Secrets, as file paths (the compose `secrets:` below). Never a value.
+  ATLAS_DB_URL_FILE: /run/secrets/db_url
+  ATLAS_PASSWORD_PEPPER_FILE: /run/secrets/password_pepper
+  ATLAS_TOKEN_PEPPER_FILE: /run/secrets/token_pepper
+  # atlas-mcp's door: Bearer (no cookie) is admitted on this Host only, and only with the TLS
+  # port, which is the Host atlas-tls's :9443 front forwards unchanged. Any other internal Host
+  # (atlas-api:8000, atlas-api-origin:8443) is a 421.
+  ATLAS_INTERNAL_HOSTS: atlas-api:9443
+  # Believe CF-Connecting-IP only from the `origin` network, where atlas-tls is the only other
+  # member; atlas-tls sets it from the real client (the per-IP login throttle needs it).
+  ATLAS_TRUSTED_PROXY_CIDRS: ${ATLAS_ORIGIN_SUBNET:?set ATLAS_ORIGIN_SUBNET in .env (see .env.example)}
+
+x-api-secrets: &api-secrets
+  - db_url
+  - password_pepper
+  - token_pepper
+
+services:
+  atlas-postgres:
+    # pgvector/pgvector 0.8.7 on PostgreSQL 16, Debian 13, with gosu replaced by a setpriv shim
+    # (deploy/postgres/pgvector.Dockerfile, base pinned tag@digest there). The extension is only
+    # CREATEd by the retrieval add-on; the base install does not use it. An install initialised
+    # before 2026-10-26 ran the Debian 12 image: after upgrading, run
+    # `bash tools/db_collation_check.sh "$(docker compose ps -q atlas-postgres)"` (SECURITY.md).
+    build:
+      context: ../postgres
+      dockerfile: pgvector.Dockerfile
+    environment:
+      POSTGRES_USER: atlas
+      POSTGRES_DB: atlas
+      # Read by the image's entrypoint on FIRST initialisation of the volume only. Changing the
+      # file later does not rotate the password of an existing database.
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - atlas-pgdata:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  atlas-migrate:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+      # OSS-18: the non-root, UID-agnostic stage (the homelab builds the default stage).
+      target: hardened
+    # OSS-09: startup's schema steps, then exit 0. atlas-api starts only after it succeeded.
+    command: ["atlas-migrate", "upgrade"]
+    # A one-shot serves nothing: the image's HEALTHCHECK (it probes the API's listener) would
+    # only mark it unhealthy while it runs and after it exits.
+    healthcheck:
+      disable: true
+    env_file:
+      - .env
+    environment: *api-environment
+    secrets: *api-secrets
+    networks:
+      - data
+    depends_on:
+      atlas-postgres:
+        condition: service_healthy
+    restart: "no"
+
+  atlas-api:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+      target: hardened
+    # OSS-26 D: uvicorn's own TLS listener on :8443, with atlas-api's origin certificate (SAN
+    # atlas-api-origin, the name atlas-tls dials and verifies). This replaces the image's CMD
+    # (plain HTTP :8000), so the hardened image serves no plain HTTP here. The homelab builds and
+    # runs its own default stage with its own CMD, unchanged.
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8443",
+              "--ssl-certfile", "/run/secrets/api_origin_cert", "--ssl-keyfile", "/run/secrets/api_origin_key"]
+    env_file:
+      - .env
+    environment:
+      <<: *api-environment
+      # TASK-1419: /api/health warns (`cert_warnings`) before the install's server certificate
+      # expires, ATLAS_CERT_EXPIRY_WARN_DAYS (default 30) ahead. atlas-api terminates no TLS;
+      # it only reads the PUBLIC certificate atlas-tls serves, mounted below. Never its key.
+      ATLAS_CERT_EXPIRY_FILE: /run/secrets/tls_cert
+    secrets:
+      - db_url
+      - password_pepper
+      - token_pepper
+      - tls_cert            # ./secrets/tls/server.crt, 0644, read for its expiry date only
+      - api_origin_cert     # ./secrets/tls/api-origin.crt + .key: the :8443 listener (OSS-26 D)
+      - api_origin_key
+      - origin_ca           # for the healthcheck below, which verifies its own listener
+    # No `ports:`. The TLS listener is reachable only on `origin`, by atlas-tls.
+    networks:
+      data: {}
+      origin:
+        # The name atlas-tls proxies to. Not `atlas-api`: on the `mcp` network that name
+        # belongs to atlas-tls itself (the TLS front), and one name must mean one thing.
+        aliases:
+          - atlas-api-origin
+    depends_on:
+      atlas-migrate:
+        condition: service_completed_successfully
+    # Liveness (/healthz: no database, no token) on the TLS listener, from inside the
+    # container, with the certificate verified against origin-ca.crt (api-origin.crt names
+    # 127.0.0.1). The Host header must be one atlas-api answers for, or the gate's Host check
+    # makes it a 421: ATLAS_PUBLIC_HOST, which reaches the container through env_file.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, ssl, urllib.request as u; u.urlopen(u.Request('https://127.0.0.1:8443/healthz', headers={'Host': os.environ['ATLAS_PUBLIC_HOST']}), timeout=4, context=ssl.create_default_context(cafile='/run/secrets/origin_ca'))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 6
+    restart: unless-stopped
+
+  atlas-mcp:
+    build:
+      context: ../../mcp
+      target: hardened
+    # OSS-26 D: atlas-mcp's own TLS listener on :8493 (SAN atlas-mcp-origin), in place of the
+    # image's plain-HTTP :8092 CMD. The homelab's atlas-mcp (mcp/docker-compose*.yml) is not
+    # this file and keeps its own.
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8493",
+              "--ssl-certfile", "/run/secrets/mcp_origin_cert", "--ssl-keyfile", "/run/secrets/mcp_origin_key"]
+    env_file:
+      - .env
+    environment:
+      # The API's TLS front (atlas-tls, the alias `atlas-api` on the `mcp` network). https is
+      # required by app/tls.py; the certificate is checked against ONLY the install CA.
+      ATLAS_BASE_URL: https://atlas-api:9443
+      ATLAS_CA_BUNDLE: /run/secrets/atlas_ca
+    secrets:
+      - atlas_ca
+      # The optional mTLS leg: present only when .env sets ATLAS_MCP_CLIENT_CERT_FILE /
+      # ATLAS_MCP_CLIENT_KEY_FILE to these paths (/run/secrets/mcp_client_cert, _key).
+      - mcp_client_cert
+      - mcp_client_key
+      - mcp_origin_cert     # ./secrets/tls/mcp-origin.crt + .key: the :8493 listener (OSS-26 D)
+      - mcp_origin_key
+      - origin_ca           # for the healthcheck below
+    # No `ports:`. Reached only through atlas-tls (/mcp on the public door, and :9444 for the
+    # gateway profile). The image's HEALTHCHECK probes the plain :8092, which is not served
+    # here: this one probes the TLS listener, verified against origin-ca.crt.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import ssl, urllib.request as u; u.urlopen('https://127.0.0.1:8493/health', timeout=4, context=ssl.create_default_context(cafile='/run/secrets/origin_ca'))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    networks:
+      mcp:
+        # The name atlas-tls proxies to. Not `atlas-mcp`: on the `gateway` network that name
+        # belongs to atlas-tls itself (the TLS front :9444 for the gateway profile), and
+        # inside atlas-tls the bare name would resolve to itself.
+        aliases:
+          - atlas-mcp-origin
+    depends_on:
+      atlas-api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  atlas-tls:
+    # The same pinned Caddy build as every TLS front in this repo (Cloudflare DNS plugin
+    # included, for ATLAS_TLS_MODE=acme-cloudflare).
+    build:
+      context: ../caddy
+      dockerfile: Dockerfile
+    environment:
+      CADDY_PUBLIC_HOST: ${ATLAS_PUBLIC_HOST:?set ATLAS_PUBLIC_HOST in .env (see .env.example)}
+      CADDY_TLS_MODE: ${ATLAS_TLS_MODE:-files}
+      CADDY_CLIENT_AUTH: ${ATLAS_TLS_CLIENT_AUTH:-off}
+    ports:
+      # The one published port, and the only one that may face the network: it is TLS.
+      # Every other service publishes nothing (tools/ci/check_tls.sh R5).
+      - "${ATLAS_TLS_BIND:-0.0.0.0}:${ATLAS_TLS_PORT:-443}:8443"  # bind-ok: the OSS install's TLS ingress
+    secrets:
+      - source: tls_cert
+        target: /certs/tls.crt
+      - source: tls_key
+        target: /certs/tls.key
+      - source: client_ca
+        target: /certs/client-ca.crt
+      # The CA atlas-tls verifies atlas-api's and atlas-mcp's own TLS listeners against
+      # (OSS-26 D): the install CA, or the separate one `init-certs.sh --origin-only` made.
+      - source: origin_ca
+        target: /certs/origin-ca.crt
+      - cf_dns_api_token
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy:/etc/caddy/oss:ro
+      - ../caddy/tls:/etc/caddy/tls:ro
+      # Issued certificates (ACME) and Caddy's own CA (internal mode) survive a recreate.
+      - atlas-tls-data:/data
+      - atlas-tls-config:/config
+    networks:
+      edge: {}
+      origin: {}
+      mcp:
+        aliases:
+          - atlas-api
+      # The gateway profile's hop: atlas-tls answers there as `atlas-mcp` (:9444, TLS), so the
+      # gateway reaches atlas-mcp over HTTPS and has no plain-HTTP route to it. Joined always
+      # (nothing else is on this network when the profile is off).
+      gateway:
+        aliases:
+          - atlas-mcp
+    depends_on:
+      atlas-api:
+        condition: service_healthy
+      atlas-mcp:
+        condition: service_healthy
+    # Health THROUGH the proxy (TASK-1470): atlas-api's /healthz and atlas-mcp's /health, each
+    # fetched over this container's own verified TLS legs, via the loopback-only site at the end
+    # of caddy/Caddyfile. A dead leg (the origin down, or a host restart that lost Docker's
+    # bridge rules) is an unhealthy atlas-tls, so `ps` and `--wait` show it. It used to be
+    # `nc -z 127.0.0.1 8443`, which stayed green with both legs dead. (Caddy's admin API is off;
+    # the install smoke still checks the public door with the install CA from outside.)
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -T 4 -O /dev/null http://127.0.0.1:8081/healthz && wget -q -T 4 -O /dev/null http://127.0.0.1:8081/healthz/mcp"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 6
+    restart: unless-stopped
+
+  # PROFILE `retrieval`: a CONFIGURATION CHECK, not started by default
+  # (`docker compose --profile retrieval up` runs it). The retrieval add-on itself
+  # (ADR 0044) runs INSIDE atlas-api, switched on by ATLAS_RETRIEVAL=on in .env and given its
+  # route out and its key by the overlay retrieval.yml. It reaches embeddings only through the
+  # OpenAI-compatible endpoint in ATLAS_EMBED_URL (Azure AI Foundry, or a model on another
+  # node over TLS); no model and no embedding service ship in any image here. This one-shot
+  # reads that configuration, refuses what could not be right, and exits.
+  atlas-retrieval:
+    profiles:
+      - retrieval
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+      target: hardened
+    command: ["python", "/opt/atlas-oss/retrieval_check.py"]
+    healthcheck:
+      disable: true        # a one-shot, like atlas-migrate
+    env_file:
+      - .env
+    volumes:
+      - ./retrieval_check.py:/opt/atlas-oss/retrieval_check.py:ro
+    networks:
+      - egress
+    restart: "no"
+
+  # PROFILE `gateway` (STORY-oss-15): AgentGateway in front of atlas-mcp. Not started by
+  # default. To turn it on, from this directory:
+  #
+  #   python3 ../../scripts/render-gateway.py      # ./gateway/agentgateway.yaml, from
+  #                                                # ../gateway/gateway.yaml and .env
+  #   docker compose --profile gateway up -d       # or COMPOSE_PROFILES=gateway in .env
+  #
+  # Agents then connect to https://ATLAS_PUBLIC_HOST:ATLAS_GATEWAY_PORT/mcp with their own
+  # Bearer token, trusting the same CA as the main door. The gateway:
+  #   * serves HTTPS only, with the install's certificate (./secrets/tls/server.crt + .key,
+  #     SANs ATLAS_PUBLIC_HOST and `gateway`); plain HTTP on its port gets no MCP answer;
+  #   * reaches atlas-mcp at https://atlas-mcp:9444, atlas-tls's internal TLS front on the
+  #     `gateway` network, verifying it against ./secrets/tls/ca.crt (the install CA, or your
+  #     PKI's root); it shares no network with atlas-mcp or atlas-api;
+  #   * forwards each caller's own Authorization header to atlas-mcp, so every call is that
+  #     caller's (attribution, RBAC); other servers get no token unless marked so;
+  #   * keeps tool names as the servers name them (`atlas_get`, never `atlas_atlas_get`);
+  #   * allows CORS from ATLAS_PUBLIC_URL (plus named origins), never "*".
+  # ATLAS_MCP_ALLOWED_HOSTS in .env must include atlas-mcp:9444 (.env.example does): that is
+  # the Host atlas-mcp sees on this hop.
+  atlas-gateway:
+    profiles:
+      - gateway
+    # AgentGateway v1.7.0 (2026-10-27), pinned tag@digest (the multi-arch index).
+    image: cr.agentgateway.dev/agentgateway:v1.7.0@sha256:60216aafb03d37f94e952ff3d51d2f630a65b10ecaebdc0a864882f92610c45b
+    command: ["-f", "/etc/agentgateway/config.yaml"]
+    # The image's default user cannot read ./secrets/tls/server.key (0600, owned by whoever ran
+    # init-secrets.sh). It runs as root with every capability dropped except the one that
+    # lets it READ such a file; it listens on 8443 (no low port) and gains nothing at exec.
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_READ_SEARCH
+    security_opt:
+      - no-new-privileges:true
+    secrets:
+      - source: tls_cert
+        target: /certs/tls.crt
+      - source: tls_key
+        target: /certs/tls.key
+      - source: atlas_ca
+        target: /certs/ca.crt
+    volumes:
+      # Rendered by render-gateway.py. Missing: `up` fails here, rather than starting a
+      # gateway with an empty directory for a configuration. With ATLAS_GATEWAY_SESSION_KEY_FILE
+      # set in .env (TASK-1460) it holds the session key and is 0600; DAC_READ_SEARCH reads it.
+      - type: bind
+        source: ./gateway/agentgateway.yaml
+        target: /etc/agentgateway/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      # The gateway's own door, TLS (tools/ci/check_tls.sh R5: no plain-HTTP token port).
+      - "${ATLAS_GATEWAY_BIND:-0.0.0.0}:${ATLAS_GATEWAY_PORT:-8444}:8443"  # bind-ok: the gateway profile's TLS door
+    networks:
+      # `gateway`: internal, to atlas-tls's :9444 only. `gateway-edge`: its published port
+      # and nothing else (a container on internal networks alone cannot publish).
+      - gateway
+      - gateway-edge
+    depends_on:
+      atlas-tls:
+        condition: service_healthy
+    # No healthcheck: the image has no shell, curl or nc, and nothing that can probe it from
+    # inside. Checked on v1.7.0's amd64 image (TASK-1470): its layers are ld.so, ldconfig and
+    # /app/agentgateway, whose only flags are -f/-c (config), --validate-only, the version flags
+    # and --copy-self; it serves a readiness port, but no client in the image can ask it. The
+    # install smoke checks the door from outside with the install CA.
+    restart: unless-stopped
+
+  # PROFILE `backup` (STORY-atlas-crunch-mode): the crunch-week backup loop. Not started by
+  # default, and with the profile on it still does NOTHING unless a crunch is active whose
+  # backup policy is `hourly`, `daily` or `once` (one backup at activation): every tick
+  # (60 s) it asks crunch.current() and otherwise only says so once. OSS-26 C adds an opt-in
+  # ROUTINE schedule outside crunch: ATLAS_BACKUP_SCHEDULE=hourly|daily|weekly in .env (and
+  # ATLAS_BACKUP_KEEP, the number of routine backups kept, default 7). Unset, nothing changes;
+  # the crunch path is asked first either way. Turn it on with
+  #
+  #   docker compose --profile backup up -d        # or COMPOSE_PROFILES=backup in .env
+  #
+  # A backup is pg_dump (custom format) of the Atlas database, its sha256 beside it, restored
+  # into a temporary database in atlas-postgres and counted (node, edge, graph_event) against
+  # the source before it counts; retention is the crunch's `retention_days` (backend/
+  # crunch_backup.py has the whole design). Files land in the `atlas-backups` volume, or in
+  # the host directory ATLAS_BACKUP_HOST_DIR names (an absolute path, writable by group 0 or
+  # UID 10001; see .env.example). The CI/CD per-deploy step and an operator use the same
+  # image, profile or not:
+  #
+  #   docker compose run --rm atlas-backup atlas-admin backup run --reason per_deploy
+  #   docker compose run --rm atlas-backup atlas-admin backup run            # manual, always
+  #   docker compose run --rm atlas-backup atlas-admin backup run --verify-only /var/lib/atlas/backups
+  #
+  # Restore (OSS-26 C, backend/backup_restore.py): checksum, restore into a staging database
+  # and count against the manifest, then swap it in, keeping the old database as a safety copy.
+  # It refuses while anything is connected to the database, so stop atlas-api first:
+  #
+  #   docker compose stop atlas-api
+  #   docker compose run --rm --no-deps atlas-backup atlas-admin backup restore latest --dry-run
+  #   docker compose run --rm --no-deps atlas-backup atlas-admin backup restore latest
+  #   docker compose start atlas-api
+  #   docker compose run --rm --no-deps atlas-backup atlas-admin backup rollback   # the copies
+  #
+  # The `backup` stage of backend/Dockerfile is `hardened` plus the Postgres client; atlas-api
+  # and atlas-migrate carry none. It is on `data` only (it talks to Postgres and nothing else),
+  # publishes nothing, and reads the DB URL from the same secret file as atlas-api.
+  atlas-backup:
+    profiles:
+      - backup
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+      target: backup
+    command: ["python", "-m", "crunch_backup", "--dir", "/var/lib/atlas/backups"]
+    healthcheck:
+      disable: true        # the image's HEALTHCHECK probes the API's listener, not this loop
+    env_file:
+      - .env
+    environment: *api-environment
+    secrets: *api-secrets
+    volumes:
+      # The named volume by default. ATLAS_BACKUP_HOST_DIR (an absolute host path) makes it a
+      # bind mount there instead, so the files are on the host for an off-host copy.
+      - ${ATLAS_BACKUP_HOST_DIR:-atlas-backups}:/var/lib/atlas/backups
+    networks:
+      - data
+    depends_on:
+      atlas-migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+secrets:
+  # Written by ../../scripts/init-secrets.sh (and init-certs.sh), never committed (.gitignore
+  # `secrets/`). Paths are relative to this directory.
+  db_password:
+    file: ./secrets/db_password
+  db_url:
+    file: ./secrets/db_url
+  password_pepper:
+    file: ./secrets/password_pepper
+  token_pepper:
+    file: ./secrets/token_pepper
+  # TLS. The install CA by default; with your own PKI, put your files at the same paths (see
+  # .env.example, "TLS").
+  atlas_ca:
+    file: ./secrets/tls/ca.crt
+  tls_cert:
+    file: ./secrets/tls/server.crt
+  tls_key:
+    file: ./secrets/tls/server.key
+  client_ca:
+    file: ${ATLAS_TLS_CLIENT_CA_FILE:-./secrets/tls/client-ca.crt}
+  mcp_client_cert:
+    file: ./secrets/tls/mcp-client.crt
+  mcp_client_key:
+    file: ./secrets/tls/mcp-client.key
+  # OSS-26 D: the origin listeners' certificates and the CA atlas-tls checks them against. All
+  # from init-certs.sh (or --origin-only on an install made before them, or with its own PKI).
+  origin_ca:
+    file: ./secrets/tls/origin-ca.crt
+  api_origin_cert:
+    file: ./secrets/tls/api-origin.crt
+  api_origin_key:
+    file: ./secrets/tls/api-origin.key
+  mcp_origin_cert:
+    file: ./secrets/tls/mcp-origin.crt
+  mcp_origin_key:
+    file: ./secrets/tls/mcp-origin.key
+  # ATLAS_TLS_MODE=acme-cloudflare only: a file holding the Cloudflare DNS token. /dev/null
+  # otherwise (the other modes read no token).
+  cf_dns_api_token:
+    file: ${ATLAS_TLS_CF_TOKEN_FILE:-/dev/null}
+
+networks:
+  # Postgres, atlas-migrate, atlas-api. No route out.
+  data:
+    internal: true
+  # atlas-api and atlas-tls only (HTTPS to atlas-api-origin:8443). Pinned so
+  # ATLAS_TRUSTED_PROXY_CIDRS is true by construction.
+  origin:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ATLAS_ORIGIN_SUBNET:?set ATLAS_ORIGIN_SUBNET in .env (see .env.example)}
+  # atlas-mcp and atlas-tls only (HTTPS to atlas-mcp-origin:8493; atlas-tls answers there as
+  # `atlas-api`).
+  mcp:
+    internal: true
+  # atlas-tls's published port and its ACME traffic.
+  edge: {}
+  # The route to an embedding endpoint: the retrieval profile's check, and atlas-api when the
+  # overlay retrieval.yml is added. Also atlas-api's route to the IdP when the overlay oidc.yml
+  # is added (single sign-on).
+  egress: {}
+  # The gateway profile: atlas-gateway and atlas-tls only (atlas-tls answers there as
+  # `atlas-mcp`, the TLS front :9444).
+  gateway:
+    internal: true
+  # The gateway profile's published port. Only atlas-gateway is on it.
+  gateway-edge: {}
+
+# MUST stay at the bottom: a top-level key placed mid-file silently swallows every service
+# declared after it.
+volumes:
+  atlas-pgdata:
+  # The backup profile's files (atlas-backup). Created only when that service first runs,
+  # and not used when ATLAS_BACKUP_HOST_DIR names a host directory instead.
+  atlas-backups:
+  atlas-tls-data:
+  atlas-tls-config:

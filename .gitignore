@@ -1,0 +1,35 @@
+__pycache__/
+*.pyc
+.env
+# Written hourly on the deploy host by tools/deploy-watch.sh; read by the containers.
+.deploy-watch/
+.venv/
+venv/
+node_modules/
+*.log
+.DS_Store
+
+# Agent worktrees — transient, and they are embedded git repos.
+# Swept in by a `git add -A` on 2026-08-18; ignored so it cannot recur.
+.claude/worktrees/
+
+# OSS-24: atlas-mcp-tls reads the Cloudflare DNS token from this directory (a file per secret).
+mcp/secrets/
+
+# OSS-24 / OSS-10: scripts/init-certs.sh and scripts/init-secrets.sh write keys, peppers and the
+# database password under ./secrets/ of the directory they run in (deploy/oss/secrets/ for the
+# OSS install). Any directory of that name, anywhere: nothing under one is ever committed.
+secrets/
+
+# tools/deploy.sh keeps the full output of each run here (ADR 0046).
+.agent-runs/
+
+# STORY-oss-15: scripts/render-gateway.py writes the gateway profile's rendered configuration
+# here (deploy/oss/gateway/agentgateway.yaml), and an install keeps its own server list beside it.
+deploy/oss/gateway/
+
+# TASK-1470: files docs/oss/INSTALL.md has an install write in deploy/oss/, beside its .env. Section
+# 7's Claude Code entry (atlas.mcp.json) and section 10's database backup (atlas-backup.sql, which
+# holds password verifiers and token digests) belong to the install, never to the repo.
+deploy/oss/atlas.mcp.json
+deploy/oss/atlas-backup.sql

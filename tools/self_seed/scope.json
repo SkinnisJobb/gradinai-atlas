@@ -1,0 +1,14 @@
+{
+ "_comment": "Nodes under the root that are NOT exported (TASK-1461), with the reason. A node listed here is dropped with its subtree, its documents, its intents and every edge it is an endpoint of. These are deployment instances of one estate (its own staging and test copies, CI runners, tunnel and LAN proxy), not parts of the product a fresh install has.",
+ "exclude_nodes": {
+  "atlas-api-staging": "one estate's staging copy of atlas-api",
+  "atlas-api-test": "one estate's test copy of atlas-api",
+  "atlas-caddy-lan": "one estate's LAN reverse proxy; an install has its own (deploy/oss atlas-tls)",
+  "atlas-caddy-lan-staging": "one estate's staging proxy",
+  "atlas-caddy-lan-test": "one estate's test proxy",
+  "atlas-ci-runner": "one estate's self-hosted CI runners",
+  "atlas-cloudflared": "one estate's tunnel to its public host",
+  "atlas-postgres-staging": "one estate's staging database",
+  "atlas-postgres-test": "one estate's test database"
+ }
+}

@@ -1,0 +1,42 @@
+{
+  "//": "End-of-security-support dates of the runtimes Atlas ships or builds with, read by tools/ci/check_eol.py (STORY-atlas-lcm-plan item 2). Source: endoflife.date's API, https://endoflife.date/api/v1/products/<product>/ (field eolFrom), read on the `checked` date. Refresh with `python tools/ci/check_eol.py --online --update`; the weekly security run compares this table with the API and fails when they disagree, and the PR gate fails once `checked` is older than max_age_days.",
+  "checked": "2026-10-25",
+  "max_age_days": 120,
+  "margin_days": 183,
+  "products": {
+    "python": {
+      "cycles": {
+        "3.12": {"eol": "2028-10-31"},
+        "3.13": {"eol": "2029-10-31"},
+        "3.14": {"eol": "2030-10-31"}
+      }
+    },
+    "postgresql": {
+      "cycles": {
+        "16": {"eol": "2028-11-09"},
+        "17": {"eol": "2029-11-08"},
+        "18": {"eol": "2030-11-14"}
+      }
+    },
+    "caddy": {
+      "cycles": {
+        "2": {"eol": null, "note": "no end of life announced for 2.x; fixes ship only in the newest 2.x release, which Dependabot (tag + digest) and the Trivy scan cover"}
+      }
+    },
+    "nodejs": {
+      "cycles": {
+        "20": {"eol": "2026-04-30"},
+        "22": {"eol": "2027-04-30"},
+        "24": {"eol": "2028-04-30"}
+      }
+    }
+  },
+  "calver": {
+    "cloudflared": {
+      "max_age_days": 92,
+      "github": "cloudflare/cloudflared",
+      "note": "deploy/prod.override.yml's tunnel connector (internet-facing). Dependabot does not read that file; this rule fails the gate once the pinned release month is more than 92 days old. Cloudflare supports a release for one year, but fixes only ship in new releases."
+    }
+  },
+  "waivers": []
+}

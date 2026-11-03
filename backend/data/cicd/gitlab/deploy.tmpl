@@ -1,0 +1,17 @@
+deploy-@@ENV@@:
+  # @@WHO@@
+  stage: deploy
+  # ENFORCED BY GITLAB when @@ENV@@ is a protected environment: who may run this job, and the
+  # environment-scoped DEPLOY_CREDENTIAL reaching this job and no other.@@GATE_NOTE@@
+  environment:
+    name: @@ENV@@
+    deployment_tier: @@TIER@@
+  resource_group: deploy-@@ENV@@
+  rules:
+@@RULES@@
+@@ALLOW_FAILURE@@
+  script:
+@@BACKUP_STEP@@
+    - 'test -n "$DEPLOY_CREDENTIAL" || { echo "DEPLOY_CREDENTIAL is not set for environment @@ENV@@" >&2; exit 1; }'
+    # TODO(atlas): replace the next line with the deploy to @@ENV@@, using $DEPLOY_CREDENTIAL.
+    - echo "TODO(atlas) the deploy to @@ENV@@ is not configured yet" && exit 1

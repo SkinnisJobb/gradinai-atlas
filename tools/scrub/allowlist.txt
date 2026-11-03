@@ -1,0 +1,30 @@
+# Scrub gate allowlist - legitimate exceptions to tools/scrub/scan.py.
+#
+# One rule per line:
+#   <path-glob>              every pattern is allowed in matching paths
+#   <path-glob> <pattern>    only that pattern is allowed there
+# Pattern names: rfc1918-ipv4, dot-local-host, email, denylist[N].
+# Globs are fnmatch-style on the repo-relative path; '*' also crosses '/'.
+#
+# Keep every entry justified by a comment. Never paste a denylist term here:
+# refer to it as denylist[N] (its position in the SCRUB_DENYLIST secret).
+
+# Vendored third-party bundles: minified JS property access on `.local`
+# matches the .local host pattern; nothing personal ships in upstream builds.
+frontend/vendor/*.min.js dot-local-host
+
+# The OSS install's default subnet for its internal `origin` compose network (atlas-tls and
+# atlas-api only; ATLAS_TRUSTED_PROXY_CIDRS is set from it). A container-internal address
+# range chosen for the template, not any machine's LAN address.
+deploy/oss/.env.example rfc1918-ipv4
+
+# The copyright notice names the copyright holder on purpose: that line is meant to ship with
+# the code, and two denylist terms match it. Only those two terms, and only in NOTICE.
+NOTICE denylist[1]
+NOTICE denylist[2]
+
+# Third-party password-list data: backend/data/breached-passwords.txt is generated from SecLists (MIT)
+# Passwords/Common-Credentials, and one of its entries is email-shaped. It names nobody and it is data
+# the password check compares against, not an address. Only the email pattern, only that file
+# (owner decision, 2026-11-03).
+backend/data/breached-passwords.txt email

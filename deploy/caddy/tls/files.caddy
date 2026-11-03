@@ -1,0 +1,9 @@
+# CADDY_TLS_MODE=files: an enterprise's own PKI. Issue a server certificate for
+# CADDY_SITE from the internal CA and put two PEM files in the directory named by
+# ATLAS_MCP_TLS_CERT_DIR (mounted read-only at /certs):
+#   tls.crt   the server certificate, followed by any intermediates (full chain)
+#   tls.key   its private key (readable by the container only; never committed)
+# Clients then trust the issuing root: ATLAS_CA_BUNDLE for atlas-mcp's own hop,
+# backendTLS.root for AgentGateway, NODE_EXTRA_CA_CERTS for Claude Code.
+# Caddy does not renew these; reissue before expiry and restart atlas-mcp-tls.
+tls /certs/tls.crt /certs/tls.key

@@ -1,0 +1,61 @@
+# The install smoke's "external" PostgreSQL 16 (job `external-db`, TASK-1471): a database server
+# that is NOT part of the Atlas install. Its own compose project (`atlas-extdb`) and network,
+# nothing published. The job then attaches it to the Atlas stack's `egress` network as `db.test`,
+# so the stack reaches it over the route the overlay deploy/oss/external-db.yml gives it, without
+# any traffic between bridges (the workflow's external 2 step says why); every connection out of
+# the stack's bridges stays dropped.
+#
+# TLS: a server certificate for `db.test` from a throwaway CA the job makes (SMOKE_EXTDB_DIR).
+# pg_hba.conf beside this file accepts TCP only over TLS (hostssl, scram-sha-256) and rejects
+# plain TCP, so a connection that works is a TLS one. The superuser is reached only over the
+# local socket inside the container (docker exec), for the job's own setup and checks.
+#
+# The image is the PostgreSQL 16 the repository already pins (deploy/postgres/Dockerfile's base),
+# not the pgvector build atlas-postgres runs: an external server is plain PostgreSQL.
+name: atlas-extdb
+
+services:
+  extdb:
+    image: postgres:16-trixie@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97
+    environment:
+      # The image's superuser password, read on first initialisation only. 0644 in the job's
+      # 0700 directory: the entrypoint reads it after dropping to the `postgres` UID.
+      POSTGRES_PASSWORD_FILE: /run/extdb/superuser_password
+    # The key must belong to the server's UID with mode 0600, which a bind mount of the job's file
+    # cannot be: copied into place as root, then the image's own entrypoint (which drops to
+    # `postgres`) with TLS on and this file's pg_hba.conf.
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        install -d -o postgres -g postgres -m 0700 /var/lib/postgresql/tls &&
+        install -o postgres -g postgres -m 0644 /run/extdb/server.crt /var/lib/postgresql/tls/server.crt &&
+        install -o postgres -g postgres -m 0600 /run/extdb/server.key /var/lib/postgresql/tls/server.key &&
+        exec docker-entrypoint.sh postgres
+        -c ssl=on
+        -c ssl_cert_file=/var/lib/postgresql/tls/server.crt
+        -c ssl_key_file=/var/lib/postgresql/tls/server.key
+        -c hba_file=/run/extdb/pg_hba.conf
+        -c log_connections=on
+    volumes:
+      - ${SMOKE_EXTDB_DIR:?set SMOKE_EXTDB_DIR}/server.crt:/run/extdb/server.crt:ro
+      - ${SMOKE_EXTDB_DIR:?set SMOKE_EXTDB_DIR}/server.key:/run/extdb/server.key:ro
+      - ${SMOKE_EXTDB_DIR:?set SMOKE_EXTDB_DIR}/superuser_password:/run/extdb/superuser_password:ro
+      - ./pg_hba.conf:/run/extdb/pg_hba.conf:ro
+      - extdb-data:/var/lib/postgresql/data
+    networks:
+      - extdb
+    healthcheck:
+      # Over TCP, not the socket: the entrypoint's first-run temporary server listens on the
+      # socket only, so this is ready only once the real (TLS) server is up. pg_isready needs no
+      # password and no TLS to tell that the server accepts connections.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+networks:
+  # No fixed bridge name: the self-hosted runners share one kernel, and two jobs would collide.
+  extdb: {}
+
+volumes:
+  extdb-data:

@@ -1,0 +1,28 @@
+  - stage: deploy_@@JOB@@
+    # @@WHO@@
+    displayName: deploy @@ENV@@
+    dependsOn: checks
+    condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'), @@COND@@)
+    jobs:
+      # ENFORCED BY AZURE DEVOPS: the approvals and checks on environment @@ENV@@ and on the
+      # variable group deploy-@@ENV@@ run before this job starts.@@GATE_NOTE@@
+      - deployment: deploy_@@JOB@@
+        displayName: deploy @@ENV@@
+        pool:
+          vmImage: ubuntu-latest
+        environment: @@ENV@@
+        variables:
+          - group: deploy-@@ENV@@
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+@@BACKUP_STEP@@
+                # TODO(atlas): replace the deploy line with the deploy to @@ENV@@.
+                - script: |
+                    test -n "$DEPLOY_CREDENTIAL" || { echo "DEPLOY_CREDENTIAL is not set in variable group deploy-@@ENV@@" >&2; exit 1; }
+                    echo "TODO(atlas) the deploy to @@ENV@@ is not configured yet" && exit 1
+                  displayName: deploy to @@ENV@@
+                  env:
+                    DEPLOY_CREDENTIAL: $(DEPLOY_CREDENTIAL)

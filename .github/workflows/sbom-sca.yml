@@ -1,0 +1,261 @@
+# SBOM + SCA (STORY-atlas-lcm-plan, items 1, 2 and 4).
+#
+# WHAT IT COVERS, each with a CycloneDX SBOM and a Trivy vulnerability report:
+#
+#   atlas-api, atlas-mcp, atlas-caddy   built here from this checkout (backend/Dockerfile,
+#                                       mcp/Dockerfile, deploy/caddy/Dockerfile), the same
+#                                       recipes the homelab and deploy/oss build. Building them
+#                                       also proves the hashed locks install (--require-hashes).
+#   atlas-postgres,                     built here too: deploy/postgres/Dockerfile (postgres:16,
+#   atlas-postgres-pgvector             the homelab) and pgvector.Dockerfile (deploy/oss), the
+#                                       upstream images with gosu replaced (see that Dockerfile)
+#   every `image:` the compose files    cloudflared (deploy/prod.override.yml), the optional
+#   ship                                gateway (deploy/oss), by tag + digest
+#   python-backend, python-mcp          backend/ and mcp/requirements-lock.txt
+#   vendored-js                         frontend/vendor/*.min.js (tools/ci/vendor_sbom.py names
+#                                       them from their banners; Trivy scans that SBOM)
+#
+# THE GATE (tools/ci/sca_gate.py): a CRITICAL or HIGH finding WITH a fix fails the job; one with
+# no fix is reported in the summary and the artifact, never failing; tools/ci/sca-accepted.json
+# can defer a fixable one until a date, in the artefacts its `in` names (the report names below:
+# `scan NAME`, and an image's repo basename-tag). --full-scan: this job scans everything, so an
+# acceptance whose artefact has no report here, or that matches no finding, fails as stale.
+#
+# WHEN. Every pull request except docs-only ones, master pushes, a weekly run (new CVEs land
+# against unchanged code; that run also compares tools/ci/eol.json with endoflife.date), a
+# published release (the SBOMs are attached to it), and by hand.
+#
+# MINUTES. One job. Image layers come from the GitHub Actions cache (buildx type=gha), the Trivy
+# binary and its vulnerability DB from actions/cache (the DB at most once a day). No SARIF:
+# code scanning on a private repository needs GitHub Code Security, which this account lacks.
+
+name: sbom-sca
+
+on:
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - "docs/**"
+      - "notes/**"
+      - "research/**"
+      - "**/*.md"
+  release:
+    types: [published]
+  schedule:
+    - cron: "30 4 * * 1"      # Monday 04:30 UTC, before Dependabot's 06:00 Stockholm run
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  TRIVY_VERSION: 0.75.0
+  TRIVY_SHA256: c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
+  # mirror.gcr.io first: ghcr.io rate-limits anonymous DB pulls from shared runner IPs.
+  TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db,ghcr.io/aquasecurity/trivy-db
+  TRIVY_NO_PROGRESS: "true"
+  TRIVY_DISABLE_VEX_NOTICE: "true"
+
+jobs:
+  sbom-sca:
+    name: SBOM + SCA (images, locks, vendored JS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: prepare
+        id: prep
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/sbom" "$RUNNER_TEMP/sca" "$RUNNER_TEMP/locks/backend" "$RUNNER_TEMP/locks/mcp"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: cache trivy
+        id: trivy-bin
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/bin/trivy
+          key: trivy-bin-${{ env.TRIVY_VERSION }}-${{ env.TRIVY_SHA256 }}
+
+      - name: download trivy (checksum verified)
+        if: steps.trivy-bin.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO --retry 3 "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "$TRIVY_SHA256  $f" | sha256sum -c -
+          tar -xzf "$f" -C bin trivy
+
+      # One DB per day: an exact hit skips the update entirely, a restore-key hit updates it.
+      - name: cache the trivy DB
+        id: trivy-db
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/trivy/db
+          key: trivy-db-${{ steps.prep.outputs.day }}
+          restore-keys: trivy-db-
+
+      - name: trivy DB
+        run: |
+          set -euo pipefail
+          trivy --version
+          if [ "${{ steps.trivy-db.outputs.cache-hit }}" = "true" ]; then
+            echo "TRIVY_SKIP_DB_UPDATE=true" >> "$GITHUB_ENV"; echo "DB from today's cache"
+          else
+            trivy image --download-db-only --quiet
+          fi
+
+      # On the self-hosted runner (CI_RUNNER set) buildx builds in the runner's own docker: no
+      # BuildKit container per job, no second copy of every layer through `load`, and the layers the
+      # last run built are reused. The GitHub Actions cache needs the docker-container driver, so it
+      # is used only on GitHub's runners. operations.md on atlas-ci-runner, "Builds".
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: ${{ vars.CI_RUNNER && 'docker' || 'docker-container' }}
+
+      - name: build atlas-api
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          tags: atlas-api:ci
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-api' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-api' || '' }}
+
+      - name: build atlas-mcp
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: mcp
+          tags: atlas-mcp:ci
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-mcp' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-mcp' || '' }}
+
+      - name: build atlas-caddy (deploy/caddy, the TLS fronts and deploy/oss's atlas-tls)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/caddy
+          tags: atlas-caddy:ci
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-caddy' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-caddy' || '' }}
+
+      - name: build atlas-postgres (deploy/postgres, the homelab's Postgres)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/postgres
+          tags: atlas-postgres:ci
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-postgres' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-postgres' || '' }}
+
+      - name: build atlas-postgres-pgvector (deploy/postgres/pgvector.Dockerfile, deploy/oss's Postgres)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/postgres
+          file: deploy/postgres/pgvector.Dockerfile
+          tags: atlas-postgres-pgvector:ci
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-postgres-pgvector' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-postgres-pgvector' || '' }}
+
+      - name: scan the images and write their SBOMs
+        run: |
+          set -euo pipefail
+          scan() {  # name ref
+            trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/$1.json" "$2"
+            trivy convert --quiet --format cyclonedx -o "$RUNNER_TEMP/sbom/$1.cdx.json" "$RUNNER_TEMP/sca/$1.json"
+            echo "$1: $2"
+          }
+          scan atlas-api atlas-api:ci
+          scan atlas-mcp atlas-mcp:ci
+          scan atlas-caddy atlas-caddy:ci
+          scan atlas-postgres atlas-postgres:ci
+          scan atlas-postgres-pgvector atlas-postgres-pgvector:ci
+          # Every pulled image the compose files ship, exactly as referenced (tag@digest).
+          for ref in $(grep -hE '^\s*image:' docker-compose.yml deploy/oss/docker-compose.yml deploy/*.override.yml \
+                         | awk '{print $2}' | grep -v '\${' | sort -u); do
+            name=$(echo "${ref%%@*}" | sed -E 's#.*/##; s#[:]#-#g')
+            scan "$name" "$ref"
+          done
+
+      - name: scan the Python locks and the vendored JS
+        run: |
+          set -euo pipefail
+          # Trivy's pip analyzer reads files named requirements.txt only: scan a copy of each lock.
+          for c in backend mcp; do
+            cp "$c/requirements-lock.txt" "$RUNNER_TEMP/locks/$c/requirements.txt"
+            trivy fs --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/python-$c.json" "$RUNNER_TEMP/locks/$c"
+            trivy convert --quiet --format cyclonedx -o "$RUNNER_TEMP/sbom/python-$c.cdx.json" "$RUNNER_TEMP/sca/python-$c.json"
+          done
+          python tools/ci/vendor_sbom.py "$RUNNER_TEMP/sbom/vendored-js.cdx.json"
+          trivy sbom --quiet --scanners vuln --format json -o "$RUNNER_TEMP/sca/vendored-js.json" "$RUNNER_TEMP/sbom/vendored-js.cdx.json"
+          ls -l "$RUNNER_TEMP/sbom"
+
+      - name: "gate: a fixable critical or high fails"
+        run: |
+          python tools/ci/sca_gate.py --self-test
+          python tools/ci/sca_gate.py "$RUNNER_TEMP/sca" --full-scan --summary-md "$RUNNER_TEMP/sca/summary.md"
+
+      - name: "weekly: tools/ci/eol.json against endoflife.date"
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: python tools/ci/check_eol.py --online
+
+      - name: upload SBOMs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom
+          path: ${{ runner.temp }}/sbom
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: upload SCA reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sca
+          path: ${{ runner.temp }}/sca
+          if-no-files-found: warn
+          retention-days: 30
+
+  # A published release gets the SBOMs as assets. Its own job, so only it holds contents: write.
+  attach:
+    name: attach SBOMs to the release
+    needs: sbom-sca
+    # Also when the gate failed: the SBOM describes the release either way, and a fixable
+    # finding in it is a patch-SLA matter (SECURITY.md), not a reason to hide it.
+    if: ${{ !cancelled() && github.event_name == 'release' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # public-ci: allow-permissions attaches the SBOMs to a published release, on release events only
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: sbom
+          path: sbom
+      - name: gh release upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          for f in sbom/*.cdx.json; do mv "$f" "sbom/sbom-${TAG}-$(basename "$f")"; done
+          gh release upload "$TAG" sbom/*.cdx.json --clobber --repo "$GITHUB_REPOSITORY"

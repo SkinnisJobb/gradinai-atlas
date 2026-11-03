@@ -1,0 +1,2543 @@
+# The install smoke (STORY-oss-17): the executable Definition of Done of the OSS epic.
+#
+# On a clean runner, a stranger's install: `cp .env.example .env`, set the names the example
+# says to set, `init-secrets.sh`, `docker compose up` (images built from this checkout). Then
+# sign in, connect an agent with your own token, and check what the epic promised. Each leg is
+# its own step, so a red run names the DoD item that broke:
+#
+#   leg 1  install          the stack from .env.example; every service healthy. The hardened
+#                           images (OSS-18), started under an arbitrary UID (1000770000:0)
+#   leg 1b no egress        from here on no container may open a connection out of the
+#                           project's own networks (DOCKER-USER drop + counter, see below)
+#   leg 2  migrate          atlas-migrate's one-shot succeeded; `atlas-migrate upgrade` again
+#                           is idempotent
+#   leg 3  users            two people (one owner) by `atlas-admin user add`, first sign-in and
+#                           forced change through the real form, an agent token each
+#                           (`atlas-admin token mint --out`, OSS-26 C)
+#   leg 4  mcp contract     401 without a token; tools/list per token; per-user attribution in
+#                           /api/events (tests/mcp_contract/test_mcp_contract.py)
+#   leg 5  isolation        ATLAS_RBAC=projects as shipped: 404 without a role, viewer reads and
+#                           is refused a write (tests/mcp_contract/test_isolation.py); a
+#                           group-mapped maintainer deletes in A, is refused in B
+#                           (tests/mcp_contract/test_rbac_delete.py)
+#   leg 5b gateway          STORY-oss-15: `--profile gateway` (AgentGateway, rendered by
+#                           scripts/render-gateway.py). Through it: tools/list is atlas-mcp's
+#                           own, un-doubled (atlas_get); a write with alice's token is alice's,
+#                           bob's is bob's; no token, no session; then the allow-list enforced
+#                           (a restricted rendering) and the upstream certificate verified (a
+#                           rendering that trusts the wrong file); then session-ID encryption on
+#                           (ATLAS_GATEWAY_SESSION_KEY_FILE, a generated key file, TASK-1460):
+#                           rendered 0600, no session-key warning, MCP served through an
+#                           encrypted session ID. tests/mcp_contract/test_gateway.py
+#   leg 6  tls              OSS-24 criterion 6 on the live stack (tools/ci/oss_install_tls.sh),
+#                           with the gateway still up: T5 is the gateway hop. T6 (OSS-26 D) the
+#                           ingress's own legs to atlas-api and atlas-mcp: TLS verified against
+#                           the install CA, and the old plain ports 8000 / 8092 closed
+#   leg 7  playwright       login form, file a story, see it on the board v2 work board
+#   leg 8  client pack      STORY-oss-19 criterion 3: clients/claude-code/README.md's three steps
+#                           against this stack. `atlas-admin token mint --out` into a file, moved
+#                           to ~/.config/atlas/token (a scratch HOME) without being printed; the
+#                           headers helper and the template installed; the pinned Claude Code CLI
+#                           reports the server Connected (`claude mcp list`); /api/me and an MCP
+#                           session (tools/list, atlas_get) with the header the template's own
+#                           helper command prints (tests/mcp_contract/test_client_pack.py)
+#   leg 8b retrieval        criterion 7 (STORY-atlas-retrieval-indexing): atlas-api recreated
+#                           with the overlay deploy/oss/retrieval.yml and .env.example's
+#                           Retrieval block filled in (ATLAS_RETRIEVAL=on, the key as a secret
+#                           file), pointed at a STUB OpenAI-compatible endpoint in the job
+#                           (tests/retrieval/embed_stub.py) over TLS verified against the install
+#                           CA. The index fills (pending_sources 0, chunks > 0), health `on`;
+#                           then the stub stops, a reindex makes health `degraded: …`, and search
+#                           still answers 200 by the API and MCP, full text. Never a real
+#                           provider; the egress drop covers the new `egress` network too. Last,
+#                           atlas-api back on the shipped file alone (tests/retrieval/test_retrieval.py)
+#   leg 9  sso             STORY-oss-13 on the live stack: atlas-api recreated on .env.example's
+#                           sign-in block (ATLAS_AUTH_PROVIDERS=oidc, ATLAS_LOCAL_LOGIN=break-glass,
+#                           a required group, a group map, 12 h sessions) beside a throwaway
+#                           OpenID provider over HTTPS (tests/sso/docker-compose.idp.yml says why
+#                           navikt/mock-oauth2-server). The real code flow + PKCE: a person in the
+#                           required group signs in and /api/me shows them; one outside it is
+#                           refused; the same person, out of the group, is refused at the next
+#                           login; link-idp keeps bob's account and resumes his agent at his first
+#                           SSO login; alice's password is refused and the break-glass owner's is
+#                           accepted. Then the database: auth_login_flow made on first use, the
+#                           12 h session, the IdP group memberships, the auth_event reasons
+#                           (tests/sso/test_oidc_login.py). Last, because it changes how people sign in
+#   leg 8c entra (OSS-26 A) retrieval in entra mode with NO embed_key file
+#                           (ATLAS_EMBED_KEY_SOURCE=/dev/null) and the token from workload identity:
+#                           the shipped retrieval-workload-identity.yml mounts the federated token,
+#                           the stub plays the Entra authority (tests/retrieval/test_retrieval_entra.py)
+#   leg 9b sso via egress   (OSS-26 A) the same IdP on `egress` ONLY: without deploy/oss/oidc.yml
+#                           sign-in is a 503 (oidc:discovery_unavailable); with it a new person signs
+#                           in through the code flow (tests/sso/test_oidc_egress.py)
+#   leg 9c sso agent token  (OSS-26 B) ATLAS_OIDC_STEP_UP=on: an SSO-only person mints their own
+#                           agent token after a named, fresh IdP sign-in; a stale auth_time is
+#                           refused; the token makes an MCP call (tests/sso/test_step_up_mint.py)
+#   leg 9d sso config write (OSS-26 K) ATLAS_CONFIG_WRITES=1 on 9c's stack: an owner moved to SSO
+#                           (user add, link-idp) changes a setting after a fresh IdP sign-in
+#                           naming it; without one and after a stale one it is refused; once
+#                           only (tests/sso/test_step_up_config.py)
+#   leg 9e sso password     (OSS-26 M) on 9d's stack: a person made WITH a temporary password
+#                           (user add, link-idp) signs in through SSO and reaches the board; a
+#                           personal password is refused without a step-up and after a stale
+#                           one, set after a fresh one, once (tests/sso/test_sso_password_set.py)
+#   leg 9f backup with sso  (OSS-26 L) on 9e's stack: `backup run`, data changed, `restore --dry-run`,
+#                           `restore` in atlas-backup, which has .env's OIDC settings but not their
+#                           files; identical counts, SSO accounts and IdP memberships; atlas-api
+#                           back, offering SSO. Another verb there is still refused at import
+#   leg 9g linked password  (OSS-26 N) on 9f's stack, switched to local,oidc: a linked account's
+#                           personal password signs in under its local name (ATLAS_LOCAL_LOGIN=all);
+#                           a temporary one is forced to change; --no-local-name until
+#                           `user set-local-name`; with break-glass only a flagged account, audited
+#   leg 9h migrate with sso (TASK-1457) on 9g's stack: atlas-migrate and atlas-api recreated as an
+#                           upgrade's `up -d` does; the one-shot, which has .env's OIDC settings
+#                           but not their files, exits 0 and atlas-api comes back healthy
+#   leg 8d backup/restore   OSS-26 C: the `backup` image as operations.md says. atlas-api stopped;
+#                           every table counted; `atlas-admin backup run`; data changed and
+#                           deleted; `backup restore --dry-run` changes nothing; a session held
+#                           open is refused; `backup restore`; every table's count identical to
+#                           before the backup; atlas-api started again on the restored database
+#                           (OSS-26 C; runs after 8c, before leg 9)
+#   leg 10 db password      (OSS-26 J) on 9g's stack: scripts/rotate-db-password.sh as operations.md
+#                           section 4 says. A rotation made to fail after the services were
+#                           recreated rolls back (old files, old password, healthy); then the
+#                           rotation: new password in both files, atlas-api
+#                           recreated and healthy, a marker row and every table's count kept, a
+#                           token request served, the old password refused, neither password in
+#                           the script's output or the postgres log
+#   sizing                 peak memory and CPU per service, per leg (artifact + job summary)
+#
+# The `backend-pytest` job runs the backend suite through backend/test_verify_all.py (pytest),
+# beside verify.yml's `python verify_all.py`, so the pytest entry point cannot rot: a smoke
+# subset on a pull request, every script on the Tuesday cron and on workflow_dispatch.
+#
+# The `upgrade` job (OSS-26 C, TASK-1416) upgrades an install of the PREVIOUS release, run from
+# its published images, to this checkout built from source: seed, backup, switch, schema step,
+# identical counts, the old backup still readable, the collation check, the data still served.
+# `upgrade-from` finds the previous release first; with none, the upgrade job is skipped.
+#
+# The `external-db` job (TASK-1471) installs the stack with the overlay deploy/oss/external-db.yml
+# against a PostgreSQL 16 that is not part of it (tests/external_db/), over TLS with
+# sslmode=verify-full: no atlas-postgres, migrate, /healthz, a write then a read through the API
+# and MCP found in the external server, the wrong CA refused, backup and restore there, and no
+# connection out of the stack's bridges (the server is reached on `egress` itself).
+#
+# SECRETS. Every credential here is generated in the job and lives in a 0700 directory under
+# $RUNNER_TEMP, one file each; steps pass FILES, never values, and each value is also
+# registered with ::add-mask:: by the Python that reads it. No repository secret is used.
+
+name: install-smoke
+
+on:
+  pull_request:
+    branches: [master]
+    # Path filter on pull requests only; master pushes and manual runs always run it.
+    # deploy/caddy/** and deploy/postgres/** are here because the stack builds atlas-tls and
+    # atlas-postgres from them.
+    paths:
+      - "deploy/oss/**"
+      - "deploy/gateway/**"
+      - "deploy/caddy/**"
+      - "deploy/postgres/**"
+      - "backend/**"
+      - "mcp/**"
+      - "frontend/**"
+      - "scripts/**"
+      - "tests/**"
+      - "tools/ci/**"
+      - "clients/claude-code/**"
+      - ".github/workflows/install-smoke.yml"
+  schedule:
+    - cron: "0 4 * * 2"       # Tuesday 04:00 UTC: drift no pull request triggers (base images)
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE (2026-10-25, after the account ran out of Actions minutes; narrowed
+# 2026-10-26). A pull request runs on `pull_request` only, and its superseded runs are
+# cancelled. A master push does NOT run this workflow: it already ran on the pull request that
+# made the commit, and on the shared self-hosted runner pool every master run queues behind the PR runs.
+# Only verify.yml runs on a master push, because tools/deploy.sh gates on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  SMOKE_HOST: atlas.test
+  SMOKE_URL: https://atlas.test
+
+jobs:
+  smoke:
+    name: install smoke (OSS stack from .env.example)
+    # The OSS stack is compose project `atlas` with fixed host ports, so two stack jobs on the
+    # self-hosted runners would collide. Only the runner labelled `<CI_RUNNER>-stack` takes them,
+    # one at a time; the other runner keeps the light jobs (ops node atlas-ci-runner).
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            mcp/requirements.txt
+            tests/requirements.txt
+
+      # Node for the Claude Code CLI of leg 8 (the same pin as tools.yml's client-pack job).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # Everything the RUNNER needs is fetched here, before the stack exists. After leg 1 the
+      # containers get no route out; the runner itself only talks to the ingress on loopback.
+      - name: prepare the runner (client deps, Playwright's Chromium, Claude Code, the test names)
+        run: |
+          set -euo pipefail
+          SMOKE_DIR="$RUNNER_TEMP/smoke"; mkdir -m 0700 "$SMOKE_DIR"
+          echo "SMOKE_DIR=$SMOKE_DIR" >> "$GITHUB_ENV"
+          echo "SMOKE_ARTIFACTS=$RUNNER_TEMP/smoke-artifacts" >> "$GITHUB_ENV"
+          echo "SMOKE_CA=$GITHUB_WORKSPACE/deploy/oss/secrets/tls/ca.crt" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/smoke-artifacts"
+          pip install -r mcp/requirements.txt -r tests/requirements.txt
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y --no-install-recommends libnss3-tools >/dev/null
+          npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.310
+          claude --version
+          echo "127.0.0.1 $SMOKE_HOST" | sudo tee -a /etc/hosts
+          # Leg 9's throwaway IdP, published on loopback only.
+          echo "127.0.0.1 idp.test" | sudo tee -a /etc/hosts
+          docker version --format 'docker {{.Server.Version}}'; docker compose version
+
+      - name: start the resource sampler
+        run: |
+          # Every container's cgroup, every ~0.5 s, until the job ends; legs.tsv marks each leg.
+          nohup bash tools/ci/install_smoke_sampler.sh "$SMOKE_DIR/stats.tsv" >/dev/null 2>&1 &
+          printf '%s\t%s\n' "$(date +%s.%N)" "1-install" >> "$SMOKE_DIR/legs.tsv"
+
+      - name: "leg 1: install from .env.example, every service healthy"
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          # What .env.example says to set: the public name (and so ATLAS_PUBLIC_URL, the MCP
+          # host lists) and the privacy contact. Nothing else is changed.
+          sed -i -e "s/atlas\.example\.com/$SMOKE_HOST/g" -e "s/privacy@example\.com/privacy@$SMOKE_HOST/" .env
+          echo "--- .env against .env.example (the whole of what this install changed):"
+          diff .env.example .env || true
+          bash ../../scripts/init-secrets.sh
+          ls -l secrets secrets/tls
+          docker compose config --services
+          if docker compose config --services | grep -qx atlas-retrieval; then
+            echo "atlas-retrieval starts by default: the base leg must run with no embedding service" >&2; exit 1
+          fi
+          # OSS-18: the stack builds the `hardened` image stage, and this run starts it under an
+          # ARBITRARY UID in group 0, the way OpenShift's restricted SCC does (the UID is not the
+          # image's 10001 and has no /etc/passwd entry). Every later leg runs against it. The
+          # override lives only on this runner; the shipped compose file is unchanged by it.
+          cat > "$SMOKE_DIR/arbitrary-uid.yml" <<'YML'
+          services:
+            atlas-migrate: {user: "1000770000:0"}
+            atlas-api: {user: "1000770000:0"}
+            atlas-mcp: {user: "1000770000:0"}
+          YML
+          docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" up -d --build --wait --wait-timeout 600
+          docker compose ps -a
+          echo "--- health of every service:"
+          bad=0
+          for svc in $(docker compose config --services); do
+            cid=$(docker compose ps -aq "$svc")
+            [ -n "$cid" ] || { echo "$svc: no container"; bad=1; continue; }
+            state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid")
+            echo "$svc: $state"
+            case "$svc:$state" in
+              atlas-migrate:"exited exit=0 health=none") ;;
+              *:"running exit=0 health=healthy") ;;
+              *) bad=1 ;;
+            esac
+          done
+          [ "$bad" = 0 ] || { echo "a service is not healthy" >&2; exit 1; }
+          echo "--- OSS-18: hardened images, run under an arbitrary UID:"
+          for svc in atlas-migrate atlas-api atlas-mcp; do
+            cid=$(docker compose ps -aq "$svc")
+            img=$(docker inspect -f '{{.Image}}' "$cid")
+            iuser=$(docker image inspect -f '{{.Config.User}}' "$img")
+            ihc=$(docker image inspect -f '{{if .Config.Healthcheck}}{{index .Config.Healthcheck.Test 0}}{{else}}none{{end}}' "$img")
+            cuser=$(docker inspect -f '{{.Config.User}}' "$cid")
+            echo "$svc: image USER=$iuser HEALTHCHECK=$ihc; container ran as $cuser"
+            case "$iuser" in ""|0|0:*|root|root:*) echo "$svc: the image runs as root" >&2; bad=1 ;; esac
+            [ "$ihc" != none ] || { echo "$svc: the image has no HEALTHCHECK" >&2; bad=1; }
+            [ "$cuser" = "1000770000:0" ] || { echo "$svc: not started under the arbitrary UID" >&2; bad=1; }
+          done
+          for svc in atlas-api atlas-mcp; do
+            ids=$(docker compose exec -T "$svc" id | tr -d '\r')
+            echo "$svc: $ids"
+            case "$ids" in "uid=1000770000 gid=0(root)"*) ;; *) bad=1 ;; esac
+          done
+          [ "$bad" = 0 ] || { echo "a service is not the hardened image under the arbitrary UID" >&2; exit 1; }
+
+      # ACCEPTANCE 6: no network call outside the compose project after `up`. Every network
+      # of the project except `edge` is `internal: true` (no route out by construction); this
+      # adds, for EVERY bridge of the project, a DOCKER-USER rule that logs and drops a NEW
+      # connection leaving that bridge for anywhere else, and the final step fails if any such
+      # packet was counted after this point. A probe from atlas-tls (the one container on a
+      # non-internal network) proves the rule bites. Container DNS goes through Docker's
+      # embedded resolver on the host and is not covered by this rule.
+      - name: "leg 1b: deny egress from the stack's networks"
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "1b-egress" >> "$SMOKE_DIR/legs.tsv"
+          : > "$SMOKE_DIR/bridges"
+          for id in $(docker network ls -q --filter label=com.docker.compose.project=atlas); do
+            read -r name internal < <(docker network inspect -f '{{.Name}} {{.Internal}}' "$id")
+            br="br-$id"
+            ip link show "$br" >/dev/null
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j DROP
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j LOG --log-prefix "atlas-egress $name: "
+            echo "$br" >> "$SMOKE_DIR/bridges"
+            echo "network $name internal=$internal bridge=$br: egress dropped"
+          done
+          if docker compose -f deploy/oss/docker-compose.yml exec -T atlas-tls wget -q -T 5 -O /dev/null http://1.1.1.1/ 2>/dev/null; then
+            echo "atlas-tls reached 1.1.1.1 with egress denied" >&2; exit 1
+          fi
+          echo "probe: atlas-tls -> http://1.1.1.1/ refused, as it must be"
+          sudo iptables -L DOCKER-USER -v -x -n
+          # The baseline: whatever the probe counted. Any later count is a real egress attempt.
+          sudo iptables -L DOCKER-USER -v -x -n | awk '$3=="DROP"{s+=$1} END{print s+0}' > "$SMOKE_DIR/egress.baseline"
+
+      - name: "leg 2: atlas-migrate upgrade (one-shot ran; idempotent)"
+        timeout-minutes: 8
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "2-migrate" >> "$SMOKE_DIR/legs.tsv"
+          docker compose logs --no-color atlas-migrate | tail -20
+          rc=$(docker inspect -f '{{.State.ExitCode}}' "$(docker compose ps -aq atlas-migrate)")
+          echo "the atlas-migrate one-shot exited $rc"; [ "$rc" = 0 ]
+          # TASK-1470: leg 1's single `up` ran the one-shot on a new volume, so its log says it
+          # built the schema; each re-run says, unchanged, that nothing was missing.
+          docker compose logs --no-color atlas-migrate | grep -q '\[atlas-migrate\] upgrade: empty database, schema created (' \
+            || { echo "the one-shot on an empty database did not say it created the schema" >&2; exit 1; }
+          for i in 1 2; do
+            out=$(docker compose exec -T atlas-api atlas-migrate upgrade | tr -d '\r')
+            echo "$out"
+            [ "$(printf '%s\n' "$out" | tail -n 1)" = "[atlas-migrate] upgrade: schema is up to date" ] \
+              || { echo "re-run $i did not say the schema is up to date" >&2; exit 1; }
+          done
+          echo "atlas-migrate upgrade: twice more, exit 0 both times, nothing missing"
+
+      - name: "leg 3: two people and their agent tokens (atlas-admin)"
+        timeout-minutes: 8
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "3-users" >> "$SMOKE_DIR/legs.tsv"
+          umask 077
+          admin() { docker compose exec -T atlas-api atlas-admin --actor install-smoke "$@"; }
+          for spec in alice:owner bob:member; do
+            u=${spec%%:*}; role=${spec##*:}
+            # The temp password goes to a file, never to the log.
+            admin user add "$u" --role "$role" > "$SMOKE_DIR/$u.add"
+            grep '^created' "$SMOKE_DIR/$u.add"
+            # OSS-26 C: `token mint` (STORY-oss-13) makes the agent <u>-agent, linked to <u>, and
+            # writes the raw token ONLY to the --out file in the container. It comes to this
+            # runner through a pipe into a 0600 file (umask above) and is deleted in the
+            # container, as in leg 8; it is on no command line and in no log.
+            admin token mint --user "$u" --purpose agent --scopes read,write --out "/tmp/$u.token"
+            docker compose exec -T atlas-api cat "/tmp/$u.token" > "$SMOKE_DIR/$u.token"
+            docker compose exec -T atlas-api rm "/tmp/$u.token"
+            test -s "$SMOKE_DIR/$u.token"
+            # Masked at once, at the start of a line (a workflow command anywhere else is just
+            # printed). $(<file) is a shell read: the value is on no process's command line.
+            echo "::add-mask::$(<"$SMOKE_DIR/$u.token")"
+          done
+          # bob's second, admin-scoped agent token, for the RBAC delete check in leg 5. Still
+          # `token add` on the agent `token mint` made: `token mint` caps a member's agent at
+          # read,write (models_auth.SELF_MINTABLE_SCOPES), and leg 5 needs bob's agent with admin.
+          admin token add bob-agent --scopes read,write,admin --label install-smoke-admin --out - > "$SMOKE_DIR/bob.admin.token"
+          echo "::add-mask::$(<"$SMOKE_DIR/bob.admin.token")"
+          ls -l "$SMOKE_DIR"
+          # First sign-in through the real form: temp password, forced change, new password.
+          python ../../tests/bootstrap_users.py alice bob
+
+      - name: "leg 4: MCP contract (401, tools/list per token, per-user attribution)"
+        timeout-minutes: 8
+        run: |
+          printf '%s\t%s\n' "$(date +%s.%N)" "4-mcp-contract" >> "$SMOKE_DIR/legs.tsv"
+          python -m pytest -v -s -p no:cacheprovider tests/mcp_contract/test_mcp_contract.py
+          # STORY-atlas-system-node-handbook: the system node set and the public /docs site.
+          python -m pytest -v -s -p no:cacheprovider tests/mcp_contract/test_system_node.py
+
+      - name: "leg 5: isolation (ATLAS_RBAC=projects: 404 without a role, viewer cannot write, group RBAC delete)"
+        timeout-minutes: 8
+        run: |
+          printf '%s\t%s\n' "$(date +%s.%N)" "5-isolation" >> "$SMOKE_DIR/legs.tsv"
+          grep -x 'ATLAS_RBAC=projects' deploy/oss/.env
+          python -m pytest -v -s -p no:cacheprovider tests/mcp_contract/test_isolation.py tests/mcp_contract/test_rbac_delete.py
+
+      # The gateway profile, started on the running stack. Its configuration is rendered four
+      # times: as shipped, with a restricted allow-list, trusting a file that is not the CA, and
+      # as shipped with ATLAS_GATEWAY_SESSION_KEY_FILE set (session-ID encryption on).
+      # The last start is the shipped one again, so leg 6 checks the gateway hop as shipped.
+      - name: "leg 5b: gateway (--profile gateway: attribution, un-doubled names, allow-list, verified upstream, session key)"
+        timeout-minutes: 14
+        working-directory: deploy/oss
+        env:
+          SMOKE_GATEWAY_URL: https://${{ env.SMOKE_HOST }}:8444/mcp
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "5b-gateway" >> "$SMOKE_DIR/legs.tsv"
+          grep -x 'ATLAS_GATEWAY_PORT=8444' .env
+          gw_up() {  # gw_up <server list>: render, (re)create the gateway, wait for its TLS door
+            python3 ../../scripts/render-gateway.py --servers "$1"
+            docker compose --profile gateway up -d --no-deps --force-recreate atlas-gateway
+            for _ in $(seq 1 60); do
+              if curl -sS --max-time 3 --cacert "$SMOKE_CA" -o /dev/null "https://$SMOKE_HOST:8444/mcp" 2>/dev/null; then
+                echo "gateway door up ($1)"; return 0
+              fi
+              sleep 1
+            done
+            docker compose --profile gateway logs --no-color atlas-gateway | tail -80
+            return 1
+          }
+          docker compose --profile gateway config --quiet
+          docker compose --profile gateway pull atlas-gateway
+          # Create the gateway's networks first and give each new bridge the same egress drop as
+          # leg 1b, before the container ever runs.
+          python3 ../../scripts/render-gateway.py
+          docker compose --profile gateway up --no-start --no-deps atlas-gateway
+          for id in $(docker network ls -q --filter label=com.docker.compose.project=atlas); do
+            br="br-$id"
+            grep -qx "$br" "$SMOKE_DIR/bridges" && continue
+            name=$(docker network inspect -f '{{.Name}}' "$id")
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j DROP
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j LOG --log-prefix "atlas-egress $name: "
+            echo "$br" >> "$SMOKE_DIR/bridges"
+            echo "network $name bridge=$br: egress dropped"
+          done
+
+          echo "=== as shipped (deploy/gateway/gateway.yaml)"
+          # The pinned release parses the rendered file (its own --validate-only) before it serves.
+          docker compose --profile gateway run --rm --no-deps atlas-gateway -f /etc/agentgateway/config.yaml --validate-only
+          gw_up ../gateway/gateway.yaml
+          gw_log=$(docker compose --profile gateway logs --no-color atlas-gateway 2>&1)
+          printf '%s\n' "$gw_log" | tail -20
+          # MCP session-ID encryption is explicitly off (config.session.key: disabled, decision
+          # 2026-10-31): the gateway must neither try to write a generated key into its read-only
+          # config nor warn that none is set. The --validate-only above proves v1.7.0 accepts it.
+          test -n "$gw_log"
+          for w in 'no session key configured' 'failed to write generated session key'; do
+            if printf '%s\n' "$gw_log" | grep -qF "$w"; then
+              echo "::error::gateway start log has \"$w\": config.session.key: disabled not honoured"; exit 1
+            fi
+          done
+          echo "gateway start log: no session-key warnings"
+          SMOKE_GATEWAY_MODE=default python -m pytest -v -s -p no:cacheprovider ../../tests/mcp_contract/test_gateway.py
+
+          echo "=== restricted allow-list: atlas_get and atlas_health only"
+          cat > gateway/restricted.yaml <<'YAML'
+          servers:
+            - name: atlas
+              url: https://atlas-mcp:9444/mcp/
+              forward_authorization: true
+              tools: [atlas_get, atlas_health]
+          YAML
+          gw_up gateway/restricted.yaml
+          SMOKE_GATEWAY_MODE=restricted python -m pytest -v -s -p no:cacheprovider ../../tests/mcp_contract/test_gateway.py
+
+          echo "=== upstream verified against a file that is not the install CA (the gateway's own leaf)"
+          sed 's#^    tools: \[atlas_get, atlas_health\]#    ca: /certs/tls.crt\n    tools: ["*"]#' gateway/restricted.yaml > gateway/wrong-ca.yaml
+          cat gateway/wrong-ca.yaml
+          gw_up gateway/wrong-ca.yaml
+          SMOKE_GATEWAY_MODE=wrong-ca python -m pytest -v -s -p no:cacheprovider ../../tests/mcp_contract/test_gateway.py
+          docker compose --profile gateway logs --no-color atlas-gateway | grep -iE 'certificate|tls|handshake' | tail -5 || true
+
+          echo "=== session-ID encryption on (ATLAS_GATEWAY_SESSION_KEY_FILE, TASK-1460)"
+          # A generated test key in a 0600 file, named in .env; the key is never printed (no
+          # `cat`, no echo, no set -x): only the file name and the rendered file's mode are.
+          key_file=secrets/gateway_session_key
+          ( umask 077; openssl rand -hex 32 > "$key_file" )
+          echo "::add-mask::$(<"$key_file")"
+          cp .env "$SMOKE_DIR/env.before-session-key"
+          echo "ATLAS_GATEWAY_SESSION_KEY_FILE=./$key_file" >> .env
+          gw_up ../gateway/gateway.yaml
+          mode=$(stat -c %a gateway/agentgateway.yaml)
+          test "$mode" = 600 || { echo "::error::rendered file with a session key is mode $mode, not 600"; exit 1; }
+          grep -qF -f "$key_file" gateway/agentgateway.yaml || { echo "::error::the key is not in the rendered file"; exit 1; }
+          grep -q '^    key: disabled$' gateway/agentgateway.yaml && { echo "::error::still key: disabled"; exit 1; }
+          echo "rendered gateway/agentgateway.yaml: mode $mode, config.session.key set from $key_file"
+          docker compose --profile gateway run --rm --no-deps atlas-gateway -f /etc/agentgateway/config.yaml --validate-only
+          gw_log=$(docker compose --profile gateway logs --no-color atlas-gateway 2>&1)
+          test -n "$gw_log"
+          for w in 'no session key configured' 'failed to write generated session key' 'invalid session persistence key'; do
+            if printf '%s\n' "$gw_log" | grep -qF "$w"; then
+              echo "::error::gateway start log has \"$w\" with ATLAS_GATEWAY_SESSION_KEY_FILE set"; exit 1
+            fi
+          done
+          if printf '%s\n' "$gw_log" | grep -qF -f "$key_file"; then
+            echo "::error::the session key appears in the gateway log"; exit 1
+          fi
+          echo "gateway start log: no session-key warnings, and the key is not in it"
+          SMOKE_GATEWAY_MODE=session-key python -m pytest -v -s -p no:cacheprovider ../../tests/mcp_contract/test_gateway.py
+          cp "$SMOKE_DIR/env.before-session-key" .env
+          rm -f "$key_file" "$SMOKE_DIR/env.before-session-key"
+
+          echo "=== as shipped again, for leg 6"
+          gw_up ../gateway/gateway.yaml
+          mode=$(stat -c %a gateway/agentgateway.yaml)
+          test "$mode" = 644 || { echo "::error::rendered file without a session key is mode $mode, not 644"; exit 1; }
+          grep -q '^    key: disabled$' gateway/agentgateway.yaml
+
+      - name: "leg 6: TLS on every hop (OSS-24 criterion 6; T5 the gateway hop; T6 the ingress legs, OSS-26 D)"
+        timeout-minutes: 8
+        working-directory: deploy/oss
+        env:
+          COMPOSE_PROFILES: gateway
+        run: |
+          printf '%s\t%s\n' "$(date +%s.%N)" "6-tls" >> "$SMOKE_DIR/legs.tsv"
+          bash ../../tools/ci/oss_install_tls.sh
+
+      - name: "leg 7: Playwright (login form, file a story, see it on the board)"
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "7-playwright" >> "$SMOKE_DIR/legs.tsv"
+          # Chromium trusts the install CA through the user's NSS database; nothing is ignored.
+          # Idempotent, because a self-hosted runner (vars.CI_RUNNER) keeps $HOME between runs:
+          # `certutil -N` on an EXISTING database asks for its old password and waited for input
+          # until the step's timeout; and each run's install CA is new, so the previous one is
+          # deleted before this one is added. </dev/null so certutil can never wait on a prompt.
+          mkdir -p "$HOME/.pki/nssdb"
+          [ -f "$HOME/.pki/nssdb/cert9.db" ] || certutil -d "sql:$HOME/.pki/nssdb" -N --empty-password </dev/null
+          while certutil -d "sql:$HOME/.pki/nssdb" -D -n atlas-install-ca </dev/null 2>/dev/null; do :; done
+          certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n atlas-install-ca -i "$SMOKE_CA" </dev/null
+          python -m pytest -v -s -p no:cacheprovider tests/e2e/test_board_smoke.py
+
+      # clients/claude-code/README.md, step by step, with this stack as "the install". The token
+      # goes container file -> pipe -> 0600 file; it is on no command line and in no environment
+      # variable, and the helper reads it from the file each time Claude Code connects.
+      - name: "leg 8: the Claude Code client pack, as its README says (token mint --out, helper, template, claude mcp list)"
+        timeout-minutes: 8
+        working-directory: deploy/oss
+        env:
+          DISABLE_TELEMETRY: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "8-client-pack" >> "$SMOKE_DIR/legs.tsv"
+          PACK="$GITHUB_WORKSPACE/clients/claude-code"
+          CH="$SMOKE_DIR/client-home"     # the HOME of "the machine you run Claude Code on"
+          mkdir -m 0700 "$CH"
+          echo "=== step 1: an operator mints alice's token, written only to the --out file"
+          docker compose exec -T atlas-api atlas-admin --actor install-smoke \
+            token mint --user alice --purpose claude-code --scopes read,write --out /tmp/claude-code.token
+          mkdir -p "$CH/.config/atlas" && chmod 700 "$CH/.config/atlas"
+          ( umask 077; docker compose exec -T atlas-api cat /tmp/claude-code.token > "$CH/.config/atlas/token" )
+          docker compose exec -T atlas-api rm /tmp/claude-code.token
+          echo "::add-mask::$(<"$CH/.config/atlas/token")"
+          if docker compose exec -T atlas-api test -e /tmp/claude-code.token; then
+            echo "the token file is still in the container" >&2; exit 1
+          fi
+          cp "$PACK/helpers/atlas-mcp-headers.sh" "$CH/.config/atlas/"
+          chmod 600 "$CH/.config/atlas/token"
+          ls -l "$CH/.config/atlas"
+          HOME="$CH" sh "$CH/.config/atlas/atlas-mcp-headers.sh" | sed -E 's/(Bearer )[^"]+/\1<redacted>/'
+          echo "=== step 2: the template, pointed at this install"
+          sed "s#https://atlas.example.com#$SMOKE_URL#" "$PACK/mcp.template.json" > "$SMOKE_DIR/atlas.mcp.json"
+          cat "$SMOKE_DIR/atlas.mcp.json"
+          echo "=== step 3: added to Claude Code at user scope; the install CA by NODE_EXTRA_CA_CERTS"
+          CC="$SMOKE_DIR/claude-config"; mkdir -m 0700 "$CC"
+          server_json=$(jq -c .mcpServers.atlas "$SMOKE_DIR/atlas.mcp.json")
+          # From the scratch HOME, so no project .mcp.json is picked up; CLAUDE_CONFIG_DIR keeps
+          # it apart from anything else on the runner.
+          ( cd "$CH" && HOME="$CH" CLAUDE_CONFIG_DIR="$CC" claude mcp add-json atlas "$server_json" --scope user )
+          ( cd "$CH" && HOME="$CH" CLAUDE_CONFIG_DIR="$CC" NODE_EXTRA_CA_CERTS="$SMOKE_CA" \
+              timeout 90 claude mcp list ) > "$SMOKE_DIR/mcp-list.out" 2>&1 || true
+          sed -E 's/(Bearer )[A-Za-z0-9._~+\/=-]+/\1<redacted>/g; s/^/claude mcp list: /' "$SMOKE_DIR/mcp-list.out"
+          if ! grep -E '^atlas:' "$SMOKE_DIR/mcp-list.out" | grep -qi 'connected' \
+              || grep -E '^atlas:' "$SMOKE_DIR/mcp-list.out" | grep -qi 'failed'; then
+            echo "Claude Code did not connect to the install" >&2; exit 1
+          fi
+          docker compose exec -T atlas-api atlas-admin token list --user alice
+          echo "=== the same helper's header, on the API and on an MCP session"
+          SMOKE_CLIENT_HOME="$CH" SMOKE_CLIENT_MCP_JSON="$SMOKE_DIR/atlas.mcp.json" \
+            python -m pytest -v -s -p no:cacheprovider ../../tests/mcp_contract/test_client_pack.py
+
+      # STORY-oss-17 criterion 7. The settings are .env.example's commented "Retrieval" block,
+      # filled in the way its comments say, started with the shipped overlay retrieval.yml (which
+      # also gives atlas-api the install CA, /run/secrets/atlas_ca); the stub alone is the test
+      # overlay tests/retrieval/docker-compose.stub.yml. The key is generated here into
+      # ./secrets/embed_key (the file retrieval.yml names) and reaches atlas-api only as
+      # /run/secrets/embed_key. .env is restored and atlas-api recreated on the shipped file
+      # alone at the end, so leg 9 starts from the install every earlier leg tested.
+      - name: "leg 8b: retrieval (overlay + stub embedder over TLS: index fills, stub down -> degraded, search still 200)"
+        timeout-minutes: 12
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "8b-retrieval" >> "$SMOKE_DIR/legs.tsv"
+          umask 077
+          DC=(docker compose -f docker-compose.yml -f retrieval.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/retrieval/docker-compose.stub.yml)
+          BASE=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml")
+          T=../../tests/retrieval/test_retrieval.py
+          drops() { sudo iptables -L DOCKER-USER -v -x -n | awk '$3=="DROP"{s+=$1} END{print s+0}'; }
+          dump() {
+            echo "--- atlas-embed-stub log:"; "${DC[@]}" logs --no-color atlas-embed-stub 2>&1 | tail -60 || true
+            echo "--- atlas-api log:"; "${DC[@]}" logs --no-color atlas-api 2>&1 | grep -iE 'retriev|embed' | tail -40 || true
+          }
+          trap 'rc=$?; [ "$rc" = 0 ] || dump' EXIT
+
+          echo "=== the embedding key, generated into the file retrieval.yml names (never printed)"
+          python3 -c "import secrets; print(secrets.token_urlsafe(32))" > secrets/embed_key
+          echo "::add-mask::$(<secrets/embed_key)"
+          # Read inside atlas-api under the arbitrary UID (init-secrets.sh's 0644-in-0700 rule).
+          chmod 0644 secrets/embed_key
+          ls -l secrets/embed_key
+
+          echo "=== .env: the Retrieval block of .env.example, filled in for the stub"
+          cp .env "$SMOKE_DIR/env.before-retrieval"
+          printf '\n' >> .env
+          cat >> .env <<'EOF'
+          ATLAS_RETRIEVAL=on
+          ATLAS_EMBED_URL=https://gateway:8443/v1
+          ATLAS_EMBED_MODEL=install-smoke-stub
+          ATLAS_EMBED_DIM=32
+          ATLAS_EMBED_KEY_FILE=/run/secrets/embed_key
+          ATLAS_EMBED_AUTH_HEADER=bearer
+          ATLAS_EMBED_CA_BUNDLE=/run/secrets/atlas_ca
+          ATLAS_RETRIEVAL_INTERVAL_S=5
+          EOF
+          grep -E '^ATLAS_(RETRIEVAL|EMBED_)' .env
+          if grep -qE '^ATLAS_EMBED_KEY=' .env; then echo "a key in a plain variable" >&2; exit 1; fi
+
+          echo "=== the stub's network first (egress), each new bridge given leg 1b's egress drop"
+          "${DC[@]}" config --quiet
+          # The install CA reaches atlas-api from the SHIPPED overlay alone (the stub overlay
+          # does not mention atlas-api).
+          docker compose -f docker-compose.yml -f retrieval.yml config --format json             | python3 -c "import json,sys; s=[x['source'] for x in json.load(sys.stdin)['services']['atlas-api']['secrets']]; print('docker-compose.yml + retrieval.yml: atlas-api secrets', s); sys.exit(0 if 'atlas_ca' in s and 'embed_key' in s else 1)"
+          if grep -q 'atlas-api' <(grep -v '^ *#' ../../tests/retrieval/docker-compose.stub.yml); then
+            echo "the stub overlay changes atlas-api" >&2; exit 1
+          fi
+          "${DC[@]}" build atlas-embed-stub
+          "${DC[@]}" up --no-start --no-deps atlas-embed-stub
+          for id in $(docker network ls -q --filter label=com.docker.compose.project=atlas); do
+            br="br-$id"
+            grep -qx "$br" "$SMOKE_DIR/bridges" && continue
+            name=$(docker network inspect -f '{{.Name}}' "$id")
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j DROP
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j LOG --log-prefix "atlas-egress $name: "
+            echo "$br" >> "$SMOKE_DIR/bridges"
+            echo "network $name bridge=$br: egress dropped"
+          done
+
+          echo "=== the stub up, atlas-api recreated with the overlay (still the arbitrary UID)"
+          "${DC[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-embed-stub atlas-api
+          docker inspect -f 'atlas-api runs as {{.Config.User}}; networks: {{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$("${DC[@]}" ps -q atlas-api)"
+          "${DC[@]}" exec -T atlas-api ls -l /run/secrets/embed_key /run/secrets/atlas_ca
+          "${DC[@]}" logs --no-color atlas-embed-stub | tail -5
+
+          echo "=== atlas-api's new route out reaches the stub and nothing else"
+          d0=$(drops)
+          if "${DC[@]}" exec -T atlas-api python -c "import socket; socket.create_connection(('1.1.1.1', 443), 5)" 2>/dev/null; then
+            echo "atlas-api reached 1.1.1.1 over egress" >&2; exit 1
+          fi
+          d1=$(drops)
+          echo "probe: atlas-api -> 1.1.1.1:443 refused, $((d1 - d0)) packet(s) dropped"
+          [ "$((d1 - d0))" -gt 0 ] || { echo "the probe was not dropped by the egress rule" >&2; exit 1; }
+          # The probe's own drops join the baseline; anything counted before it stays visible
+          # to the final egress step.
+          echo "$(( $(cat "$SMOKE_DIR/egress.baseline") + d1 - d0 ))" > "$SMOKE_DIR/egress.baseline"
+
+          echo "=== stub up: the index fills, health on, hybrid search has semantic hits"
+          python -m pytest -v -s -p no:cacheprovider "$T::test_indexes_through_the_stub"
+          "${DC[@]}" logs --no-color atlas-embed-stub | tail -8
+
+          echo "=== the stub's endpoint stopped (SIGUSR1: port closed, container and name kept)"
+          "${DC[@]}" kill -s SIGUSR1 atlas-embed-stub
+          for _ in $(seq 1 20); do
+            "${DC[@]}" logs --no-color atlas-embed-stub | grep -q 'endpoint stopped' && break
+            sleep 0.5
+          done
+          if "${DC[@]}" exec -T atlas-api python -c "import socket; socket.create_connection(('gateway', 8443), 3)" 2>/dev/null; then
+            echo "the stub still answers on gateway:8443" >&2; exit 1
+          fi
+          echo "atlas-api -> gateway:8443: connection refused"
+          python -m pytest -v -s -p no:cacheprovider "$T::test_stub_down_degrades_to_keyword"
+          "${DC[@]}" logs --no-color atlas-api | grep -iE 'retrieval' | tail -5 || true
+
+          echo "=== back to the install as shipped: .env restored, atlas-api on docker-compose.yml alone"
+          cp "$SMOKE_DIR/env.before-retrieval" .env
+          "${BASE[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-api
+          "${DC[@]}" rm -sf atlas-embed-stub
+          python -m pytest -v -s -p no:cacheprovider "$T::test_base_install_restored"
+
+      # --- OSS-26 A: leg 8c, retrieval in entra mode (workload identity, no embed_key file) ---
+      # deploy/oss/retrieval.yml used to require ./secrets/embed_key in every mode, though entra
+      # mode never reads it (and refuses ATLAS_EMBED_KEY_FILE). Here: no embed_key file at all,
+      # ATLAS_EMBED_KEY_SOURCE=/dev/null, and the token from the workload-identity flow, the
+      # federated token mounted by the shipped deploy/oss/retrieval-workload-identity.yml. The
+      # stub (tests/retrieval/embed_stub.py) plays the Entra authority (AZURE_AUTHORITY_HOST) and
+      # the endpoint; tests/retrieval/docker-compose.entra.yml is the test-only wiring (the stub
+      # reads the same token file; atlas-api trusts the install CA for the token call). A new
+      # model name re-embeds every chunk with the token. Ends on the shipped file alone, like 8b.
+      - name: "leg 8c: retrieval in entra mode (workload-identity overlay, no embed_key file)"
+        timeout-minutes: 12
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "8c-entra" >> "$SMOKE_DIR/legs.tsv"
+          umask 077
+          AZ="$SMOKE_DIR/azure-tokens"
+          DC=(docker compose -f docker-compose.yml -f retrieval.yml -f retrieval-workload-identity.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/retrieval/docker-compose.stub.yml -f ../../tests/retrieval/docker-compose.entra.yml)
+          BASE=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml")
+          dump() {
+            echo "--- atlas-embed-stub log:"; "${DC[@]}" logs --no-color atlas-embed-stub 2>&1 | tail -60 || true
+            echo "--- atlas-api log:"; "${DC[@]}" logs --no-color atlas-api 2>&1 | grep -iE 'retriev|embed|entra' | tail -40 || true
+          }
+          trap 'rc=$?; [ "$rc" = 0 ] || dump' EXIT
+
+          echo "=== no embed_key file anywhere; a federated token in a directory of its own"
+          rm -f secrets/embed_key
+          test ! -e secrets/embed_key
+          mkdir -m 0755 "$AZ"
+          python3 -c "import secrets; print('eyJ' + secrets.token_urlsafe(48))" > "$AZ/azure-identity-token"
+          echo "::add-mask::$(<"$AZ/azure-identity-token")"
+          # Read inside atlas-api under the arbitrary UID, and by the stub.
+          chmod 0644 "$AZ/azure-identity-token"
+          ls -l "$AZ"
+
+          echo "=== .env: the Retrieval block in entra mode (.env.example's comments), workload identity"
+          cp .env "$SMOKE_DIR/env.before-entra"
+          printf '\n' >> .env
+          cat >> .env <<EOF
+          ATLAS_RETRIEVAL=on
+          ATLAS_EMBED_URL=https://gateway:8443/v1
+          ATLAS_EMBED_MODEL=install-smoke-stub-entra
+          ATLAS_EMBED_DIM=32
+          ATLAS_EMBED_AUTH_HEADER=entra
+          ATLAS_EMBED_KEY_SOURCE=/dev/null
+          ATLAS_EMBED_CA_BUNDLE=/run/secrets/atlas_ca
+          ATLAS_RETRIEVAL_INTERVAL_S=5
+          AZURE_TENANT_ID=install-smoke-tenant
+          AZURE_CLIENT_ID=install-smoke-client
+          AZURE_AUTHORITY_HOST=https://gateway:8443/
+          AZURE_FEDERATED_TOKEN_DIR=$AZ
+          EOF
+          grep -E '^(ATLAS_(RETRIEVAL|EMBED_)|AZURE_)' .env
+          if grep -qE '^ATLAS_EMBED_KEY(_FILE)?=' .env; then echo "entra mode with a key setting" >&2; exit 1; fi
+
+          echo "=== what the SHIPPED overlays give atlas-api (compose's own merge)"
+          docker compose -f docker-compose.yml -f retrieval.yml -f retrieval-workload-identity.yml config --format json \
+            | python3 -c "
+          import json, sys
+          c = json.load(sys.stdin); a = c['services']['atlas-api']
+          src = c['secrets']['embed_key']['file']
+          fed = a['environment'].get('AZURE_FEDERATED_TOKEN_FILE')
+          vols = [(v.get('source'), v.get('target'), v.get('read_only')) for v in a.get('volumes', [])]
+          print('embed_key made from', src); print('AZURE_FEDERATED_TOKEN_FILE', fed); print('volumes', vols)
+          ok = src == '/dev/null' and fed == '/var/run/secrets/azure/tokens/azure-identity-token' \
+              and any(t == '/var/run/secrets/azure/tokens' and ro for _, t, ro in vols) and 'egress' in a['networks']
+          sys.exit(0 if ok else 1)"
+
+          echo "=== the stub and atlas-api up (no new network; each new bridge would get leg 1b's drop)"
+          "${DC[@]}" config --quiet
+          "${DC[@]}" build atlas-embed-stub
+          "${DC[@]}" up --no-start --no-deps atlas-embed-stub
+          for id in $(docker network ls -q --filter label=com.docker.compose.project=atlas); do
+            br="br-$id"
+            grep -qx "$br" "$SMOKE_DIR/bridges" && continue
+            name=$(docker network inspect -f '{{.Name}}' "$id")
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j DROP
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j LOG --log-prefix "atlas-egress $name: "
+            echo "$br" >> "$SMOKE_DIR/bridges"
+            echo "network $name bridge=$br: egress dropped"
+          done
+          "${DC[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-embed-stub atlas-api
+          "${DC[@]}" exec -T atlas-api python -c "
+          import os
+          p = os.environ['AZURE_FEDERATED_TOKEN_FILE']
+          print('federated token file', p, 'readable', os.access(p, os.R_OK))
+          print('/run/secrets/embed_key size', os.path.getsize('/run/secrets/embed_key'))
+          print('ATLAS_EMBED_KEY_FILE set:', bool(os.environ.get('ATLAS_EMBED_KEY_FILE')))
+          assert os.access(p, os.R_OK) and os.path.getsize('/run/secrets/embed_key') == 0
+          assert not os.environ.get('ATLAS_EMBED_KEY_FILE')"
+
+          echo "=== the index fills with Entra tokens"
+          python -m pytest -v -s -p no:cacheprovider ../../tests/retrieval/test_retrieval_entra.py
+          "${DC[@]}" logs --no-color atlas-embed-stub > "$SMOKE_DIR/stub-entra.log" 2>&1
+          grep -E 'stub: token|key=entra' "$SMOKE_DIR/stub-entra.log" | tail -6
+          grep -q "stub: token tenant=install-smoke-tenant client_id='install-smoke-client' .* assertion=ok -> 200" "$SMOKE_DIR/stub-entra.log" \
+            || { echo "no token exchange with the federated assertion" >&2; exit 1; }
+          grep -q 'key=entra -> 200' "$SMOKE_DIR/stub-entra.log" || { echo "no embeddings call with the Entra token" >&2; exit 1; }
+          if grep -q 'REFUSED' "$SMOKE_DIR/stub-entra.log"; then echo "the stub refused a call" >&2; exit 1; fi
+
+          echo "=== back to the install as shipped: .env restored, atlas-api on docker-compose.yml alone"
+          # The stub first: the overlays' ${AZURE_FEDERATED_TOKEN_DIR:?} needs the entra .env.
+          "${DC[@]}" rm -sf atlas-embed-stub
+          cp "$SMOKE_DIR/env.before-entra" .env
+          "${BASE[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-api
+          python -m pytest -v -s -p no:cacheprovider "../../tests/retrieval/test_retrieval.py::test_base_install_restored"
+      # --- end OSS-26 A: leg 8c ---
+
+      # --- OSS-26 C: backup -> change -> restore -> identical counts (TASK-1416) ---------------
+      # docs/oss/guides/operations.md's procedure, on this stack: the `backup` image (backend/
+      # Dockerfile's `backup` stage, hardened plus the Postgres client) run with `docker compose
+      # run`, atlas-api stopped first because a restore refuses a database anything is connected
+      # to. "Identical counts" is every table in the database, not only the three the manifest
+      # carries. Before leg 9 because leg 9's sign-in settings reach every container that reads
+      # .env, atlas-backup included, and its IdP secrets are mounted into atlas-api only.
+      - name: "leg 8d: backup and restore (backup run, data changed, dry run, in-use refusal, restore, identical counts)"
+        timeout-minutes: 12
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "8d-backup-restore" >> "$SMOKE_DIR/legs.tsv"
+          q() { docker compose exec -T atlas-postgres psql -U atlas -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          bk() { docker compose run --rm --no-deps -T atlas-backup atlas-admin --actor install-smoke "$@"; }
+          # One line per table of the public schema, `<table>=<rows>`, sorted (shared with the
+          # upgrade job below).
+          counts() { bash ../../tools/ci/oss_db_counts.sh; }
+          sleeper() { q "SELECT count(*) FROM pg_stat_activity WHERE query LIKE 'SELECT pg_sleep(300)%'"; }
+
+          echo "=== the backup image"
+          docker compose --profile backup build atlas-backup
+
+          echo "=== atlas-api stopped: nothing may be connected to the database a restore replaces"
+          docker compose stop atlas-api
+          counts > "$SMOKE_DIR/counts.before"
+          echo "every table before the backup ($(grep -c . "$SMOKE_DIR/counts.before") tables):"
+          sed 's/^/  /' "$SMOKE_DIR/counts.before"
+          grep -qE '^node=[1-9]' "$SMOKE_DIR/counts.before"
+          grep -qE '^auth_user=[1-9]' "$SMOKE_DIR/counts.before"
+
+          echo "=== backup run (manual)"
+          bk backup run | tee "$SMOKE_DIR/backup.out"
+          dump=$(grep -oE 'atlas-[0-9]{8}T[0-9]{6}Z-manual\.dump' "$SMOKE_DIR/backup.out" | head -n 1)
+          test -n "$dump"
+          echo "the backup: $dump"
+
+          echo "=== data changed and deleted after the backup"
+          q "DELETE FROM edge WHERE ctid IN (SELECT ctid FROM edge LIMIT 5)"
+          q "DELETE FROM graph_event WHERE id IN (SELECT id FROM graph_event ORDER BY id DESC LIMIT 10)"
+          q "UPDATE node SET name = name || ' (changed after the backup)' WHERE id IN (SELECT id FROM node ORDER BY id LIMIT 3)"
+          counts > "$SMOKE_DIR/counts.changed"
+          if diff -q "$SMOKE_DIR/counts.before" "$SMOKE_DIR/counts.changed" >/dev/null; then
+            echo "the counts did not change" >&2; exit 1
+          fi
+          diff "$SMOKE_DIR/counts.before" "$SMOKE_DIR/counts.changed" || true
+
+          echo "=== restore --dry-run: checksum, staging restore and count; nothing changed"
+          bk backup restore "$dump" --dry-run
+          counts | diff "$SMOKE_DIR/counts.changed" -
+          echo "dry run: every table as it was"
+
+          echo "=== in use: a session held open on the database is refused"
+          docker compose exec -d atlas-postgres psql -U atlas -d atlas -c "SELECT pg_sleep(300)"
+          for _ in $(seq 1 40); do [ "$(sleeper)" -ge 1 ] && break; sleep 0.5; done
+          [ "$(sleeper)" -ge 1 ]
+          if bk backup restore "$dump" > "$SMOKE_DIR/inuse.out" 2>&1; then
+            cat "$SMOKE_DIR/inuse.out"; echo "restore ran with a session connected" >&2; exit 1
+          fi
+          cat "$SMOKE_DIR/inuse.out"
+          grep -q 'is in use' "$SMOKE_DIR/inuse.out"
+          q "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query LIKE 'SELECT pg_sleep(300)%'" >/dev/null
+          for _ in $(seq 1 40); do [ "$(sleeper)" = 0 ] && break; sleep 0.5; done
+          [ "$(sleeper)" = 0 ]
+          counts | diff "$SMOKE_DIR/counts.changed" -
+          echo "refused, and every table as it was"
+
+          echo "=== restore"
+          bk backup restore "$dump" | tee "$SMOKE_DIR/restore.out"
+          safety=$(grep -oE 'atlas_prerestore_[0-9]{8}t[0-9]{6}z' "$SMOKE_DIR/restore.out" | head -n 1)
+          test -n "$safety"
+          counts > "$SMOKE_DIR/counts.after"
+          diff "$SMOKE_DIR/counts.before" "$SMOKE_DIR/counts.after"
+          echo "every table's row count after the restore is identical to before the backup"
+          [ "$(q "SELECT count(*) FROM pg_database WHERE datname = '$safety'")" = 1 ]
+          bk backup rollback | tee "$SMOKE_DIR/rollback.out"
+          grep -q "$safety" "$SMOKE_DIR/rollback.out"
+
+          echo "=== atlas-api started again, on the restored database"
+          docker compose start atlas-api
+          st=none
+          for _ in $(seq 1 60); do
+            st=$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q atlas-api)")
+            [ "$st" = healthy ] && break
+            sleep 2
+          done
+          echo "atlas-api: $st"; [ "$st" = healthy ]
+          curl -fsS --cacert "$SMOKE_CA" -o /dev/null -w 'GET /healthz through the ingress: %{http_code}\n' "$SMOKE_URL/healthz"
+          docker compose exec -T atlas-api atlas-admin user list | grep alice >/dev/null
+          echo "=== the safety copy dropped, as the operator does once satisfied"
+          q "DROP DATABASE \"$safety\""
+      # --- end OSS-26 C -------------------------------------------------------------------------
+
+      # Last: it changes how people sign in. The settings are .env.example's commented "Sign-in"
+      # block, filled in the way its comments say; the IdP and atlas-api's extra wiring (the
+      # IdP's network, the client secret, the group map and the IdP's CA as compose secrets) are
+      # the overlay tests/sso/docker-compose.idp.yml. Every value is generated here.
+      - name: "leg 9: SSO (OIDC code flow + PKCE, required group at every login, link-idp, break-glass)"
+        timeout-minutes: 12
+        working-directory: deploy/oss
+        env:
+          SMOKE_IDP_ISSUER: https://idp.test:8446/atlas
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "9-sso" >> "$SMOKE_DIR/legs.tsv"
+          umask 077
+          SSO="$SMOKE_DIR/sso"
+          mkdir -m 0700 "$SSO" "$SSO/pki"
+          mkdir -m 0755 "$SSO/idp"            # mounted into the IdP, which runs as its own UID
+          export SMOKE_SSO_DIR="$SSO"
+          echo "SMOKE_SSO_DIR=$SSO" >> "$GITHUB_ENV"
+          DC=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/sso/docker-compose.idp.yml)
+
+          echo "=== the IdP's own throwaway CA and server certificate (idp.test); the CA key is deleted after signing"
+          W="$SSO/pki"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=install-smoke IdP CA" \
+            -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+            -keyout "$W/ca.key" -out "$SSO/idp-ca.crt" 2>/dev/null
+          openssl req -newkey rsa:2048 -nodes -subj "/CN=idp.test" -keyout "$W/idp.key" -out "$W/idp.csr" 2>/dev/null
+          printf '%s\n' "basicConstraints=critical,CA:FALSE" "keyUsage=critical,digitalSignature,keyEncipherment" \
+            "extendedKeyUsage=serverAuth" "subjectAltName=DNS:idp.test" "subjectKeyIdentifier=hash" \
+            "authorityKeyIdentifier=keyid" > "$W/idp.ext"
+          openssl x509 -req -in "$W/idp.csr" -CA "$SSO/idp-ca.crt" -CAkey "$W/ca.key" -CAcreateserial \
+            -days 1 -sha256 -extfile "$W/idp.ext" -out "$W/idp.crt" 2>/dev/null
+          rm -f "$W/ca.key"
+          # The keystore password and the IdP's config (which must hold it) are written by Python
+          # straight to files: on no command line, in no environment variable.
+          python3 - "$W/keystore.pass" "$SSO/idp/config.json" <<'PY'
+          import json, os, secrets, sys
+          pw = secrets.token_urlsafe(24)
+          os.write(1, ("::add-mask::" + pw + "\n").encode())
+          with open(sys.argv[1], "w") as fh:
+              fh.write(pw)
+          cfg = {"interactiveLogin": True,
+                 "httpServer": {"type": "NettyWrapper", "ssl": {
+                     "keyPassword": pw, "keystorePassword": pw,
+                     "keystoreFile": "/idp/keystore.p12", "keystoreType": "PKCS12"}}}
+          with open(sys.argv[2], "w") as fh:
+              json.dump(cfg, fh)
+          PY
+          openssl pkcs12 -export -in "$W/idp.crt" -inkey "$W/idp.key" -certfile "$SSO/idp-ca.crt" \
+            -name idp.test -out "$SSO/idp/keystore.p12" -passout "file:$W/keystore.pass"
+          # Atlas's client secret (the mock IdP accepts any; it is still sent, from a file) and
+          # the group allowlist.
+          python3 -c "import secrets; print(secrets.token_urlsafe(32))" > "$SSO/oidc_client_secret"
+          echo "::add-mask::$(<"$SSO/oidc_client_secret")"
+          printf '%s\n' "groups:" "  atlas-users: sso-users" "  atlas-maintainers: sso-maintainers" > "$SSO/oidc_group_map.yml"
+          # Read inside containers whose UID is not this runner's (the same reason
+          # init-secrets.sh writes 0644 files inside a 0700 directory).
+          chmod 0644 "$SSO/idp/config.json" "$SSO/idp/keystore.p12" "$SSO/idp-ca.crt" \
+            "$SSO/oidc_client_secret" "$SSO/oidc_group_map.yml"
+          openssl x509 -in "$W/idp.crt" -noout -subject -issuer -ext subjectAltName
+
+          echo "=== accounts, before the switch: a break-glass owner, and bob linked to the IdP"
+          admin() { docker compose exec -T atlas-api atlas-admin --actor install-smoke "$@"; }
+          admin user add breakglass --role owner --break-glass > "$SMOKE_DIR/breakglass.add"
+          grep '^created' "$SMOKE_DIR/breakglass.add"
+          q() { docker compose exec -T atlas-postgres psql -U atlas -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          q "SELECT id FROM auth_user WHERE idp = 'local' AND subject = 'bob'" > "$SMOKE_DIR/bob.id"
+          test -s "$SMOKE_DIR/bob.id"
+          admin user link-idp bob --subject sso-bob
+
+          echo "=== .env: the sign-in block of .env.example, filled in"
+          printf '\n' >> .env
+          cat >> .env <<EOF
+          ATLAS_AUTH_PROVIDERS=oidc
+          ATLAS_LOCAL_LOGIN=break-glass
+          ATLAS_OIDC_ISSUER=$SMOKE_IDP_ISSUER
+          ATLAS_OIDC_PRESET=generic
+          ATLAS_OIDC_CLIENT_ID=atlas-install-smoke
+          ATLAS_OIDC_TOKEN_AUTH=client_secret_basic
+          ATLAS_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
+          ATLAS_OIDC_GROUP_MAP_FILE=/run/secrets/oidc_group_map
+          ATLAS_OIDC_REQUIRED_GROUPS=atlas-users
+          ATLAS_OIDC_MAX_SESSION_HOURS=12
+          EOF
+          grep -E '^ATLAS_(AUTH_PROVIDERS|LOCAL_LOGIN|OIDC_)' .env
+
+          echo "=== the IdP's networks first, each new bridge given leg 1b's egress drop"
+          "${DC[@]}" config --quiet
+          # Fresh networks every run. `idp` and `idp-edge` are declared only in the IdP overlay,
+          # which no teardown named, so they used to outlive the job: the same two bridges served
+          # every run on the stack runner, and one that went bad on the host (2026-11-02:
+          # atlas-api's discovery fetch timed out at 10 s on every /auth/oidc/start, while the
+          # runner reached the IdP through its published port) failed this leg for every branch.
+          # Nothing of this run is on them yet; any endpoint still on one is a leftover.
+          for net in atlas_idp atlas_idp-edge; do
+            docker network inspect "$net" >/dev/null 2>&1 || continue
+            for ep in $(docker network inspect -f '{{range .Containers}}{{.Name}} {{end}}' "$net"); do
+              docker network disconnect -f "$net" "$ep" || true
+            done
+            docker network rm "$net" >/dev/null
+            echo "removed $net, left by an earlier run"
+          done
+          "${DC[@]}" pull atlas-idp
+          "${DC[@]}" up --no-start --no-deps atlas-idp
+          for id in $(docker network ls -q --filter label=com.docker.compose.project=atlas); do
+            br="br-$id"
+            grep -qx "$br" "$SMOKE_DIR/bridges" && continue
+            name=$(docker network inspect -f '{{.Name}}' "$id")
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j DROP
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j LOG --log-prefix "atlas-egress $name: "
+            echo "$br" >> "$SMOKE_DIR/bridges"
+            echo "network $name bridge=$br: egress dropped"
+          done
+
+          echo "=== the IdP up, atlas-api recreated on the new settings (still the arbitrary UID)"
+          "${DC[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-idp atlas-api
+          for _ in $(seq 1 90); do
+            if curl -fsS --max-time 3 --cacert "$SSO/idp-ca.crt" -o /dev/null "$SMOKE_IDP_ISSUER/.well-known/openid-configuration" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS --cacert "$SSO/idp-ca.crt" "$SMOKE_IDP_ISSUER/.well-known/openid-configuration" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); [print(f'discovery {k}: {d.get(k)}') for k in ('issuer','authorization_endpoint','token_endpoint','jwks_uri','code_challenge_methods_supported','id_token_signing_alg_values_supported')]"
+          docker inspect -f 'atlas-api runs as {{.Config.User}}' "$(docker compose ps -q atlas-api)"
+
+          echo "=== the code flow, through the ingress, with the install CA (Atlas) and the IdP's CA (IdP)"
+          SMOKE_IDP_CA="$SSO/idp-ca.crt" python -m pytest -v -s -p no:cacheprovider ../../tests/sso/test_oidc_login.py
+
+          echo "=== what the database recorded"
+          fail=0
+          check() {  # check <what> <expected> <sql>
+            got=$(q "$3")
+            echo "$1: $got"
+            [ "$got" = "$2" ] || { echo "  expected: $2" >&2; fail=1; }
+          }
+          check "auth_login_flow exists (made at the first SSO start)" t \
+            "SELECT to_regclass('public.auth_login_flow') IS NOT NULL"
+          # bob keeps his (now unused) local verifier after link-idp; carol, made by JIT, has none.
+          check "SSO accounts" "oidc:sso-bob member verifier:kept|oidc:sso-carol member verifier:none" \
+            "SELECT string_agg(idp || ':' || subject || ' ' || role || ' verifier:' || CASE WHEN password_hash IS NULL THEN 'none' ELSE 'kept' END, '|' ORDER BY subject) FROM auth_user WHERE idp = 'oidc'"
+          check "an account for the refused person" 0 "SELECT count(*) FROM auth_user WHERE subject = 'sso-mallory'"
+          check "sso-carol's SSO session lifetime, hours" 12.0 \
+            "SELECT round((max(extract(epoch FROM s.absolute_expires_at - s.created_at)) / 3600.0)::numeric, 1) FROM auth_session s JOIN auth_user u ON u.id = s.user_id WHERE u.subject = 'sso-carol' AND s.kind = 'full'"
+          check "sso-carol's IdP groups (contractors is not in the map)" "sso-maintainers|sso-users" \
+            "SELECT string_agg(g.name, '|' ORDER BY g.name) FROM auth_group_member m JOIN auth_group g ON g.id = m.group_id JOIN auth_user u ON u.id = m.user_id WHERE u.subject = 'sso-carol' AND m.source = 'idp'"
+          check "bob kept his account id" "$(<"$SMOKE_DIR/bob.id")" "SELECT id FROM auth_user WHERE idp = 'oidc' AND subject = 'sso-bob'"
+          check "login_ok by SSO" 2 "SELECT count(*) FROM auth_event WHERE event = 'login_ok' AND reason = 'provider=oidc'"
+          check "login_fail oidc:not_in_required_group (mallory; carol after leaving)" 2 \
+            "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason = 'oidc:not_in_required_group'"
+          check "login_fail oidc:state_unknown (the replayed callback)" 1 \
+            "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason = 'oidc:state_unknown'"
+          check "login_fail not_break_glass (alice's password)" 1 \
+            "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason = 'not_break_glass'"
+          check "login_break_glass" 1 "SELECT count(*) FROM auth_event WHERE event = 'login_break_glass'"
+          check "any login_fail with another oidc: reason" 0 \
+            "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason LIKE 'oidc:%' AND reason NOT IN ('oidc:not_in_required_group', 'oidc:state_unknown')"
+          [ "$fail" = 0 ]
+
+      # --- OSS-26 A: leg 9b, SSO with the IdP reachable only through `egress` (deploy/oss/oidc.yml) ---
+      # Leg 9's IdP shares a network with atlas-api, so it could not show that atlas-api, on
+      # internal networks only, has no route to a real IdP. Here the same IdP (config, keystore,
+      # issuer) runs on `egress` ONLY (tests/sso/docker-compose.idp-egress.yml). First atlas-api
+      # gets the OIDC settings and secrets but not oidc.yml (the override INSTALL.md used to leave
+      # to the operator, without a network): "Sign in with SSO" is a 503 and auth_event records
+      # oidc:discovery_unavailable. Then atlas-api is recreated with the SHIPPED oidc.yml (egress
+      # plus the secrets from ./secrets/, its defaults) and a new person signs in through the full
+      # code flow. Last, leg 9's layout is restored, so what follows sees the stack leg 9 left.
+      - name: "leg 9b: SSO with the IdP reachable only through egress (fails without oidc.yml, works with it)"
+        timeout-minutes: 10
+        working-directory: deploy/oss
+        env:
+          SMOKE_IDP_ISSUER: https://idp.test:8446/atlas
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "9b-sso-egress" >> "$SMOKE_DIR/legs.tsv"
+          umask 077
+          SSO="$SMOKE_SSO_DIR"
+          LEG9=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/sso/docker-compose.idp.yml)
+          WITHOUT=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f "$SMOKE_DIR/oidc-secrets-only.yml" -f ../../tests/sso/docker-compose.idp-egress.yml)
+          WITH=(docker compose -f docker-compose.yml -f oidc.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/sso/docker-compose.idp-egress.yml)
+          q() { docker compose exec -T atlas-postgres psql -U atlas -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          nets() { docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$1"; }
+          dump() {
+            echo "--- atlas-idp-egress log:"; "${WITH[@]}" logs --no-color atlas-idp-egress 2>&1 | tail -40 || true
+            echo "--- atlas-api log:"; "${WITH[@]}" logs --no-color atlas-api 2>&1 | grep -iE 'oidc|sso|sign-on' | tail -40 || true
+          }
+          trap 'rc=$?; [ "$rc" = 0 ] || dump' EXIT
+
+          echo "=== the group-map path: .env.example, leg 9's .env and the secret mount agree"
+          grep -x '# ATLAS_OIDC_GROUP_MAP_FILE=/run/secrets/oidc_group_map' .env.example
+          grep -x 'ATLAS_OIDC_GROUP_MAP_FILE=/run/secrets/oidc_group_map' .env
+          grep -x '# ATLAS_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret' .env.example
+
+          echo "=== the OIDC secrets where oidc.yml reads them by default (./secrets/)"
+          cp "$SSO/oidc_client_secret" secrets/oidc_client_secret
+          cp "$SSO/oidc_group_map.yml" secrets/oidc_group_map.yml
+          chmod 0644 secrets/oidc_client_secret secrets/oidc_group_map.yml
+
+          echo "=== what the SHIPPED oidc.yml gives atlas-api, and what the base file alone does not"
+          docker compose -f docker-compose.yml -f oidc.yml config --format json | python3 -c "
+          import json, sys
+          a = json.load(sys.stdin)['services']['atlas-api']
+          s = sorted(x['source'] for x in a['secrets']); n = sorted(a['networks'])
+          print('docker-compose.yml + oidc.yml: atlas-api secrets', s, 'networks', n)
+          want = {'db_url', 'password_pepper', 'token_pepper', 'oidc_client_secret', 'oidc_client_key', 'oidc_group_map'}
+          sys.exit(0 if want <= set(s) and 'egress' in n else 1)"
+          docker compose -f docker-compose.yml config --format json | python3 -c "
+          import json, sys
+          n = sorted(json.load(sys.stdin)['services']['atlas-api']['networks'])
+          print('docker-compose.yml alone: atlas-api networks', n)
+          sys.exit(1 if 'egress' in n else 0)"
+
+          # The pre-OSS-26 operator override, minus the network INSTALL.md told people to add:
+          # what an install had when the overlay was not shipped. Absolute paths (see the stub overlay).
+          cat > "$SMOKE_DIR/oidc-secrets-only.yml" <<YML
+          services:
+            atlas-api:
+              secrets: [db_url, password_pepper, token_pepper, oidc_client_secret, oidc_group_map]
+          secrets:
+            oidc_client_secret: {file: $PWD/secrets/oidc_client_secret}
+            oidc_group_map: {file: $PWD/secrets/oidc_group_map.yml}
+          YML
+
+          echo "=== leg 9's IdP down; the same IdP up on egress only"
+          "${LEG9[@]}" rm -sf atlas-idp
+          "${WITHOUT[@]}" config --quiet
+          "${WITH[@]}" config --quiet
+          "${WITHOUT[@]}" up --no-start --no-deps atlas-idp-egress
+          for id in $(docker network ls -q --filter label=com.docker.compose.project=atlas); do
+            br="br-$id"
+            grep -qx "$br" "$SMOKE_DIR/bridges" && continue
+            name=$(docker network inspect -f '{{.Name}}' "$id")
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j DROP
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j LOG --log-prefix "atlas-egress $name: "
+            echo "$br" >> "$SMOKE_DIR/bridges"
+            echo "network $name bridge=$br: egress dropped"
+          done
+
+          echo "=== WITHOUT oidc.yml: atlas-api has the settings and the secrets, but no route to the IdP"
+          "${WITHOUT[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-idp-egress atlas-api
+          for _ in $(seq 1 90); do
+            curl -fsS --max-time 3 --cacert "$SSO/idp-ca.crt" -o /dev/null "$SMOKE_IDP_ISSUER/.well-known/openid-configuration" 2>/dev/null && break
+            sleep 1
+          done
+          idp_nets=$(nets "$("${WITHOUT[@]}" ps -q atlas-idp-egress)")
+          api_nets=$(nets "$("${WITHOUT[@]}" ps -q atlas-api)")
+          echo "atlas-idp-egress networks: $idp_nets"
+          echo "atlas-api networks: $api_nets"
+          [ "$(echo $idp_nets)" = "atlas_egress" ] || { echo "the IdP is on more than egress" >&2; exit 1; }
+          case " $api_nets " in *" atlas_egress "*) echo "atlas-api is on egress without oidc.yml" >&2; exit 1 ;; esac
+          before=$(q "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason = 'oidc:discovery_unavailable'")
+          SMOKE_IDP_CA="$SSO/idp-ca.crt" python -m pytest -v -s -p no:cacheprovider \
+            "../../tests/sso/test_oidc_egress.py::test_without_oidc_overlay_the_idp_is_unreachable"
+          after=$(q "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason = 'oidc:discovery_unavailable'")
+          echo "auth_event login_fail oidc:discovery_unavailable: $before -> $after"
+          [ "$after" -gt "$before" ]
+
+          echo "=== WITH the shipped oidc.yml: atlas-api joins egress and the same login works"
+          "${WITH[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-api
+          api_nets=$(nets "$("${WITH[@]}" ps -q atlas-api)")
+          echo "atlas-api networks: $api_nets"
+          case " $api_nets " in *" atlas_egress "*) ;; *) echo "oidc.yml did not put atlas-api on egress" >&2; exit 1 ;; esac
+          "${WITH[@]}" exec -T atlas-api python -c "import os; [print(p, os.path.getsize(p)) for p in ('/run/secrets/oidc_client_secret', '/run/secrets/oidc_group_map', '/run/secrets/oidc_client_key')]"
+          SMOKE_IDP_CA="$SSO/idp-ca.crt" python -m pytest -v -s -p no:cacheprovider \
+            "../../tests/sso/test_oidc_egress.py::test_with_oidc_overlay_a_person_signs_in"
+          got=$(q "SELECT role FROM auth_user WHERE idp = 'oidc' AND subject = 'sso-erin'")
+          echo "auth_user oidc:sso-erin: $got"
+          [ "$got" = member ]
+
+          echo "=== leg 9's layout restored (its IdP on its own network, atlas-api on it)"
+          "${WITH[@]}" rm -sf atlas-idp-egress
+          "${LEG9[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-idp atlas-api
+      # --- end OSS-26 A: leg 9b ---
+
+      # --- OSS-26 B: agent tokens for SSO-only people (TASK-1415) ---------------------------------
+      # After legs 9 and 9b, on leg 9's stack and IdP (9b restores that layout): .env gains
+      # .env.example's commented ATLAS_OIDC_STEP_UP=on and atlas-api is recreated on it, with leg
+      # 9's overlay (which mounts the OIDC secrets). A person made by SSO (no Atlas
+      # password) is refused a mint without a step-up and after a step-up whose auth_time is
+      # stale, then mints an agent token after a fresh IdP sign-in (prompt=login, max_age) and
+      # makes an authenticated MCP call with it (tests/sso/test_step_up_mint.py). Then the
+      # database: the step-up events. Self-contained: it reads leg 9's SMOKE_SSO_DIR and changes
+      # nothing leg 9 checks.
+      - name: "leg 9c: SSO agent token (OIDC step-up: stale auth_time refused, fresh one mints, MCP call)"
+        timeout-minutes: 8
+        working-directory: deploy/oss
+        env:
+          SMOKE_IDP_ISSUER: https://idp.test:8446/atlas
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "9c-sso-agent-token" >> "$SMOKE_DIR/legs.tsv"
+          SSO="$SMOKE_SSO_DIR"
+          DC=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/sso/docker-compose.idp.yml)
+
+          echo "=== .env: step-up on, as .env.example's comment shows it"
+          grep -q '^# ATLAS_OIDC_STEP_UP=on$' .env.example
+          printf '%s\n' "ATLAS_OIDC_STEP_UP=on" >> .env
+          grep -E '^ATLAS_OIDC_STEP_UP' .env
+          "${DC[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-api
+
+          echo "=== the SSO person mints their own agent token through the step-up"
+          SMOKE_IDP_CA="$SSO/idp-ca.crt" python -m pytest -v -s -p no:cacheprovider ../../tests/sso/test_step_up_mint.py
+
+          echo "=== what the database recorded"
+          q() { docker compose exec -T atlas-postgres psql -U atlas -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          fail=0
+          check() {  # check <what> <expected> <sql>
+            got=$(q "$3")
+            echo "$1: $got"
+            [ "$got" = "$2" ] || { echo "  expected: $2" >&2; fail=1; }
+          }
+          check "step_up_ok (the fresh step-up)" 1 \
+            "SELECT count(*) FROM auth_event WHERE event = 'step_up_ok' AND reason = 'provider=oidc'"
+          check "login_fail oidc+step-up:auth_time_* (the stale step-up)" 1 \
+            "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason LIKE 'oidc+step-up:auth_time%'"
+          check "any other step-up refusal" 0 \
+            "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason LIKE 'oidc+step-up:%' AND reason NOT LIKE 'oidc+step-up:auth_time%'"
+          check "mints refused for want of a step-up (before, after the stale one, the second mint)" 3 \
+            "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason = 'agent_credential:step_up_required'"
+          check "sso-dave's agent, linked to him" "sso-dave-claude-code" \
+            "SELECT b.subject FROM auth_user b JOIN auth_user p ON p.id = b.person_user_id WHERE p.idp = 'oidc' AND p.subject = 'sso-dave' AND b.is_service"
+          check "no step-up grant left (spent by the mint)" 0 "SELECT count(*) FROM auth_step_up"
+          [ "$fail" = 0 ]
+      # --- end OSS-26 B -------------------------------------------------------------------------
+
+      # --- OSS-26 K: configuration writes by SSO-only owners (TASK-1436) --------------------------
+      # After leg 9c, on its stack (step-up on): .env gains ATLAS_CONFIG_WRITES=1 and atlas-api is
+      # recreated. An owner is made the operator's way on an SSO-only install (user add --role
+      # owner, then link-idp), so she has no usable password. A change without a step-up and after
+      # a stale one is refused; after a fresh IdP sign-in naming the setting it is made, once
+      # (tests/sso/test_step_up_config.py). Then the database: the board value and the events.
+      - name: "leg 9d: SSO owner config write (OIDC step-up: refused without, stale refused, fresh one changes once)"
+        timeout-minutes: 6
+        working-directory: deploy/oss
+        env:
+          SMOKE_IDP_ISSUER: https://idp.test:8446/atlas
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "9d-sso-config-write" >> "$SMOKE_DIR/legs.tsv"
+          SSO="$SMOKE_SSO_DIR"
+          DC=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/sso/docker-compose.idp.yml)
+
+          echo "=== .env: configuration writes on (.env.example shows ATLAS_CONFIG_WRITES commented)"
+          grep -q '^# ATLAS_CONFIG_WRITES=0$' .env.example
+          printf '%s\n' "ATLAS_CONFIG_WRITES=1" >> .env
+          grep -E '^ATLAS_(CONFIG_WRITES|OIDC_STEP_UP)=' .env
+          "${DC[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-api
+
+          echo "=== an owner moved to SSO: user add --role owner, then link-idp"
+          admin() { docker compose exec -T atlas-api atlas-admin --actor install-smoke "$@"; }
+          admin user add olive --role owner --no-password > "$SMOKE_DIR/olive.add"  # SSO-only: no temp password to change
+          admin user link-idp olive --subject sso-olive
+
+          echo "=== the SSO owner changes a setting through the step-up"
+          SMOKE_IDP_CA="$SSO/idp-ca.crt" python -m pytest -v -s -p no:cacheprovider ../../tests/sso/test_step_up_config.py
+
+          echo "=== what the database recorded"
+          q() { docker compose exec -T atlas-postgres psql -U atlas -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          fail=0
+          check() {  # check <what> <expected> <sql>
+            got=$(q "$3")
+            echo "$1: $got"
+            [ "$got" = "$2" ] || { echo "  expected: $2" >&2; fail=1; }
+          }
+          check "the board value" 17 "SELECT value FROM config_value WHERE name = 'ATLAS_RETRIEVAL_TOP_K'"
+          check "one node.config.set" 1 "SELECT count(*) FROM graph_event WHERE action = 'node.config.set'"
+          check "step_up_ok naming the setting" 1 \
+            "SELECT count(*) FROM auth_event WHERE event = 'step_up_ok' AND detail = 'config=ATLAS_RETRIEVAL_TOP_K'"
+          check "changes refused for want of a step-up (before, after the stale one, the second)" 3 \
+            "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason = 'config_write:step_up_required'"
+          check "no step-up grant left (spent by the change)" 0 "SELECT count(*) FROM auth_step_up"
+          [ "$fail" = 0 ]
+      # --- end OSS-26 K -------------------------------------------------------------------------
+
+      # --- OSS-26 M: an SSO sign-in is not held by a pending password change (TASK-1442) ---------
+      # After leg 9d, on its stack (step-up on). A person is made the operator's usual way, WITH a
+      # temporary password (user add, so must_change_password is set), then moved to SSO
+      # (link-idp). The SSO login reaches the board; a personal password is refused without a
+      # step-up and after a stale one, and set after a fresh IdP sign-in approving it, once
+      # (tests/sso/test_sso_password_set.py). Then the database: the flag cleared, the events.
+      - name: "leg 9e: SSO sign-in with a pending password change (reaches the board; password set after a fresh step-up)"
+        timeout-minutes: 6
+        working-directory: deploy/oss
+        env:
+          SMOKE_IDP_ISSUER: https://idp.test:8446/atlas
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "9e-sso-password-gate" >> "$SMOKE_DIR/legs.tsv"
+          SSO="$SMOKE_SSO_DIR"
+          grep -E '^ATLAS_OIDC_STEP_UP=on$' .env
+
+          echo "=== a person made with a temporary password, then moved to SSO: user add, link-idp"
+          admin() { docker compose exec -T atlas-api atlas-admin --actor install-smoke "$@"; }
+          admin user add pella --role member > "$SMOKE_DIR/pella.add"   # prints the temporary password once
+          grep -q 'SHOWN ONCE' "$SMOKE_DIR/pella.add"
+          admin user link-idp pella --subject sso-pella
+
+          q() { docker compose exec -T atlas-postgres psql -U atlas -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          fail=0
+          check() {  # check <what> <expected> <sql>
+            got=$(q "$3")
+            echo "$1: $got"
+            [ "$got" = "$2" ] || { echo "  expected: $2" >&2; fail=1; }
+          }
+          check "linked, and must_change_password kept" "oidc|true|true" \
+            "SELECT idp || '|' || must_change_password::text || '|' || (password_hash IS NOT NULL)::text FROM auth_user WHERE subject = 'sso-pella'"
+          [ "$fail" = 0 ]
+
+          echo "=== the SSO sign-in reaches the board; the password is set through the step-up"
+          SMOKE_IDP_CA="$SSO/idp-ca.crt" python -m pytest -v -s -p no:cacheprovider ../../tests/sso/test_sso_password_set.py
+
+          echo "=== what the database recorded"
+          check "must_change_password cleared, a verifier stored" "false|true" \
+            "SELECT must_change_password::text || '|' || (password_hash IS NOT NULL)::text FROM auth_user WHERE subject = 'sso-pella'"
+          check "step_up_ok for the password" 1 \
+            "SELECT count(*) FROM auth_event e JOIN auth_user u ON u.id = e.user_id WHERE u.subject = 'sso-pella' AND e.event = 'step_up_ok' AND e.detail = 'password=set'"
+          check "sets refused for want of a step-up (before, after the stale one)" 2 \
+            "SELECT count(*) FROM auth_event WHERE event = 'login_fail' AND reason = 'password_set:step_up_required'"
+          check "one password_changed, reason sso_step_up" 1 \
+            "SELECT count(*) FROM auth_event e JOIN auth_user u ON u.id = e.user_id WHERE u.subject = 'sso-pella' AND e.event = 'password_changed' AND e.reason = 'sso_step_up'"
+          check "no step-up grant left (spent by the set)" 0 "SELECT count(*) FROM auth_step_up"
+          [ "$fail" = 0 ]
+      # --- end OSS-26 M -------------------------------------------------------------------------
+
+      # --- OSS-26 L: backup and restore on an install with SSO on (TASK-1437) -------------------
+      # Leg 8d runs before leg 9 because leg 9's sign-in block reaches every container that reads
+      # .env, atlas-backup included, while the files it names (group map, client secret) are
+      # mounted into atlas-api only. Here, after every sign-in leg, on 9e's stack: the gap first
+      # (any other atlas-admin verb in atlas-backup is still refused at import, naming the group
+      # map, which is what `backup` was before admin.py dropped the identity settings for it), then
+      # 8d's procedure on this stack: atlas-api stopped, every table counted, `backup run`, data
+      # changed (SSO data among it), `restore --dry-run`, `restore`, identical counts and the same
+      # SSO accounts and IdP group memberships; atlas-api started again, still offering SSO.
+      - name: "leg 9f: backup and restore with SSO on (atlas-backup has the OIDC settings, not their files)"
+        timeout-minutes: 10
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "9f-backup-sso" >> "$SMOKE_DIR/legs.tsv"
+          DC=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/sso/docker-compose.idp.yml)
+          q() { docker compose exec -T atlas-postgres psql -U atlas -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          # As leg 8d: the backup image, the plain compose file, `run --no-deps`.
+          bk() { docker compose run --rm --no-deps -T atlas-backup atlas-admin --actor install-smoke "$@"; }
+          counts() { bash ../../tools/ci/oss_db_counts.sh; }
+          # Every SSO account row and every IdP-sourced group membership: a count and a digest each.
+          sso() {
+            q "SELECT count(*) || ' ' || md5(coalesce(string_agg(to_jsonb(u)::text, '|' ORDER BY u.id), '')) FROM auth_user u WHERE idp = 'oidc'"
+            q "SELECT count(*) || ' ' || md5(coalesce(string_agg(to_jsonb(m)::text, '|' ORDER BY m.user_id, m.group_id), '')) FROM auth_group_member m WHERE source = 'idp'"
+          }
+
+          echo "=== SSO is on in .env; atlas-backup gets the settings and none of the files"
+          grep -x 'ATLAS_AUTH_PROVIDERS=oidc' .env
+          grep -E '^ATLAS_(LOCAL_LOGIN|OIDC_[A-Z_]*FILE|OIDC_STEP_UP)=' .env
+          docker compose --profile backup config --format json | python3 -c "
+          import json, sys
+          b = json.load(sys.stdin)['services']['atlas-backup']
+          s = sorted(x['source'] for x in b.get('secrets', []))
+          print('atlas-backup secrets:', s)
+          sys.exit(1 if any(n.startswith('oidc') for n in s) else 0)"
+          docker compose run --rm --no-deps -T atlas-backup python -c "
+          import os
+          print('atlas-backup identity settings (names only):', sorted(k for k in os.environ if k.startswith(('ATLAS_AUTH_', 'ATLAS_LOCAL_LOGIN', 'ATLAS_OIDC_'))))
+          print('atlas-backup /run/secrets:', sorted(os.listdir('/run/secrets')))"
+
+          echo "=== the gap: another atlas-admin verb in atlas-backup is refused at import"
+          if docker compose run --rm --no-deps -T atlas-backup atlas-admin --actor install-smoke user list > "$SMOKE_DIR/9f-user-list.out" 2>&1; then
+            cat "$SMOKE_DIR/9f-user-list.out"; echo "user list ran in atlas-backup: the OIDC files reached it?" >&2; exit 1
+          fi
+          cat "$SMOKE_DIR/9f-user-list.out"
+          grep -q 'ATLAS_OIDC_GROUP_MAP_FILE' "$SMOKE_DIR/9f-user-list.out"
+
+          echo "=== atlas-api stopped (on leg 9's overlay; started again below)"
+          "${DC[@]}" stop atlas-api
+          counts > "$SMOKE_DIR/9f-counts.before"
+          sso > "$SMOKE_DIR/9f-sso.before"
+          echo "every table before the backup: $(grep -c . "$SMOKE_DIR/9f-counts.before") tables"
+          echo "SSO accounts, IdP memberships (count digest):"; sed 's/^/  /' "$SMOKE_DIR/9f-sso.before"
+          q "SELECT count(*) FROM auth_user WHERE idp = 'oidc' AND subject IN ('sso-bob', 'sso-carol', 'sso-pella')" | grep -qx 3
+
+          echo "=== backup run, with SSO on"
+          bk backup run | tee "$SMOKE_DIR/9f-backup.out"
+          dump=$(grep -oE 'atlas-[0-9]{8}T[0-9]{6}Z-manual\.dump' "$SMOKE_DIR/9f-backup.out" | head -n 1)
+          test -n "$dump"
+          echo "the backup: $dump"
+
+          echo "=== data changed and deleted after the backup, SSO data among it"
+          q "DELETE FROM auth_group_member WHERE source = 'idp'"
+          q "UPDATE auth_user SET name = left('changed after the backup: ' || coalesce(name, subject), 120) WHERE idp = 'oidc'"
+          q "DELETE FROM graph_event WHERE id IN (SELECT id FROM graph_event ORDER BY id DESC LIMIT 10)"
+          counts > "$SMOKE_DIR/9f-counts.changed"
+          sso > "$SMOKE_DIR/9f-sso.changed"
+          if diff -q "$SMOKE_DIR/9f-counts.before" "$SMOKE_DIR/9f-counts.changed" >/dev/null \
+             || diff -q "$SMOKE_DIR/9f-sso.before" "$SMOKE_DIR/9f-sso.changed" >/dev/null; then
+            echo "the change did not change the counts or the SSO data" >&2; exit 1
+          fi
+
+          echo "=== restore --dry-run, with SSO on: nothing changed"
+          bk backup restore "$dump" --dry-run
+          counts | diff "$SMOKE_DIR/9f-counts.changed" -
+
+          echo "=== restore, with SSO on"
+          bk backup restore "$dump" | tee "$SMOKE_DIR/9f-restore.out"
+          safety=$(grep -oE 'atlas_prerestore_[0-9]{8}t[0-9]{6}z' "$SMOKE_DIR/9f-restore.out" | head -n 1)
+          test -n "$safety"
+          counts | diff "$SMOKE_DIR/9f-counts.before" -
+          sso | diff "$SMOKE_DIR/9f-sso.before" -
+          echo "every table's row count, the SSO accounts and the IdP memberships are as at the backup"
+          bk backup rollback | grep "$safety"
+          q "DROP DATABASE \"$safety\""
+
+          echo "=== atlas-api started again, on the restored database, still offering SSO"
+          "${DC[@]}" start atlas-api
+          st=none
+          for _ in $(seq 1 60); do
+            st=$(docker inspect -f '{{.State.Health.Status}}' "$("${DC[@]}" ps -q atlas-api)")
+            [ "$st" = healthy ] && break
+            sleep 2
+          done
+          echo "atlas-api: $st"; [ "$st" = healthy ]
+          curl -fsS --cacert "$SMOKE_CA" "$SMOKE_URL/auth/login" | grep -q 'href="/auth/oidc/start"'
+          echo "GET /auth/login: offers Sign in with SSO"
+      # --- end OSS-26 L -------------------------------------------------------------------------
+
+      # --- OSS-26 N: a linked account's personal password as a fallback (TASK-1454) -------------
+      # Last of the sign-in legs, on 9f's stack, because it changes how people sign in: .env goes
+      # to ATLAS_AUTH_PROVIDERS=local,oidc with ATLAS_LOCAL_LOGIN=all, then break-glass, and is
+      # left there (nothing after this leg signs in). Every password goes through a 0700 file
+      # (`--data-urlencode name@file`), never argv. sso-pella set her personal password in leg
+      # 9e (tests/sso/test_sso_password_set.py NEW_PW) and keeps `pella` as her local name.
+      - name: "leg 9g: a linked account's personal password signs in under its local name (all, then break-glass)"
+        timeout-minutes: 8
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "9g-linked-password" >> "$SMOKE_DIR/legs.tsv"
+          DC=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/sso/docker-compose.idp.yml)
+          admin() { docker compose exec -T atlas-api atlas-admin --actor install-smoke "$@"; }
+          q() { docker compose exec -T atlas-postgres psql -U atlas -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          P="$SMOKE_DIR/9g"
+          mkdir -m 0700 "$P"
+          fail=0
+          check() {  # check <what> <expected> <got>
+            echo "$1: $3"
+            [ "$3" = "$2" ] || { echo "  expected: $2" >&2; fail=1; }
+          }
+          login() {  # login <name> <password file> [query]: prints "<status> <Location>"; jar $P/<name>.jar
+            local jar="$P/$1.jar"
+            rm -f "$jar"
+            curl -fsS --cacert "$SMOKE_CA" -c "$jar" -b "$jar" "$SMOKE_URL/auth/login${3:-}" > "$jar.page"
+            grep -o 'name="csrf_token" value="[^"]*"' "$jar.page" | head -n 1 | sed 's/.*value="//; s/"$//' | tr -d '\n' > "$jar.tok"
+            curl -sS --cacert "$SMOKE_CA" -c "$jar" -b "$jar" -o /dev/null -w '%{http_code} %header{location}' \
+              -H "Origin: $SMOKE_URL" --data-urlencode "username=$1" --data-urlencode "password@$2" \
+              --data-urlencode "csrf_token@$jar.tok" "$SMOKE_URL/auth/login"
+          }
+          me() { curl -sS --cacert "$SMOKE_CA" -b "$P/$1.jar" -o "$P/$1.me" -w '%{http_code}' "$SMOKE_URL/api/me"; }
+          method() {  # how <subject>'s newest full session began
+            q "SELECT coalesce(s.auth_method, 'null') FROM auth_session s JOIN auth_user u ON u.id = s.user_id WHERE u.subject = '$1' AND s.kind = 'full' ORDER BY s.created_at DESC LIMIT 1"
+          }
+
+          echo "=== accounts: pax linked (local name kept), pom linked --no-local-name, pbg a break-glass owner linked"
+          admin user add pax --role member > "$P/pax.add"
+          admin user link-idp pax --subject sso-pax | tee "$P/pax.link"
+          grep -q 'Local sign-in name kept: pax' "$P/pax.link"
+          admin user add pom --role member > "$P/pom.add"
+          admin user link-idp pom --subject sso-pom --no-local-name
+          admin user add pbg --role owner --break-glass > "$P/pbg.add"
+          admin user link-idp pbg --subject sso-pbg
+          # The temporary passwords `user add` printed once, and pella's and pax's next one, to files.
+          python3 - "$P" <<'PY'
+          import os, secrets, sys
+          d = sys.argv[1]
+          def put(name, pw):
+              os.write(1, ("::add-mask::" + pw + "\n").encode())
+              with open(os.path.join(d, name), "w") as fh:
+                  fh.write(pw)
+          for n in ("pax", "pom", "pbg"):
+              lines = open(os.path.join(d, n + ".add")).read().splitlines()
+              put(n + ".pw", next(l.strip() for l in lines
+                                  if l.startswith("      ") and l.strip() and " " not in l.strip()))
+          put("pella.pw", "Copper-Kettle-Morning-Fjord-93!")
+          put("pax.new", "Harbour-" + secrets.token_urlsafe(18) + "-9!")
+          PY
+          check "local names recorded (pax, pella, pbg; pom none)" "pax|pbg|pella" \
+            "$(q "SELECT string_agg(st.local_name, '|' ORDER BY st.local_name) FROM auth_user_idp_state st JOIN auth_user u ON u.id = st.user_id WHERE u.subject IN ('sso-pax', 'sso-pom', 'sso-pbg', 'sso-pella')")"
+          [ "$fail" = 0 ]
+
+          echo "=== .env: ATLAS_AUTH_PROVIDERS=local,oidc, ATLAS_LOCAL_LOGIN=all; atlas-api recreated"
+          sed -i -e 's/^ATLAS_AUTH_PROVIDERS=oidc$/ATLAS_AUTH_PROVIDERS=local,oidc/' \
+                 -e 's/^ATLAS_LOCAL_LOGIN=break-glass$/ATLAS_LOCAL_LOGIN=all/' .env
+          grep -x 'ATLAS_AUTH_PROVIDERS=local,oidc' .env
+          grep -x 'ATLAS_LOCAL_LOGIN=all' .env
+          "${DC[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-api
+
+          echo "=== all: pella's personal password signs her in under her local name"
+          check "pella, personal password" "303 /" "$(login pella "$P/pella.pw")"
+          check "pella's /api/me" 200 "$(me pella)"
+          grep -q '"username":"sso-pella"' "$P/pella.me"
+          grep -q '"must_change_password":false' "$P/pella.me"
+          check "pella's session began with a password" password "$(method sso-pella)"
+          check "login_ok with detail local_name=pella" 1 \
+            "$(q "SELECT count(*) FROM auth_event e JOIN auth_user u ON u.id = e.user_id WHERE u.subject = 'sso-pella' AND e.event = 'login_ok' AND e.detail = 'local_name=pella'")"
+
+          echo "=== all: pax's temporary password signs in and is forced to change; the change; the new one"
+          check "pax, temporary password" "303 /auth/password/change" "$(login pax "$P/pax.pw")"
+          check "pax's /api/me while held" 403 "$(me pax)"
+          grep -q password_change_required "$P/pax.me"
+          curl -fsS --cacert "$SMOKE_CA" -b "$P/pax.jar" -H 'Accept: text/html' "$SMOKE_URL/auth/password/change" \
+            | grep -o 'name="csrf_token" value="[^"]*"' | head -n 1 | sed 's/.*value="//; s/"$//' | tr -d '\n' > "$P/pax.chg"
+          check "the change, with the temporary password" "303 /" "$(curl -sS --cacert "$SMOKE_CA" \
+            -c "$P/pax.jar" -b "$P/pax.jar" -o /dev/null -w '%{http_code} %header{location}' -H "Origin: $SMOKE_URL" \
+            --data-urlencode "current_password@$P/pax.pw" --data-urlencode "new_password@$P/pax.new" \
+            --data-urlencode "confirm_password@$P/pax.new" --data-urlencode "csrf_token@$P/pax.chg" \
+            "$SMOKE_URL/auth/password/change")"
+          check "pax's /api/me after the change" 200 "$(me pax)"
+          check "pax, the new password" "303 /" "$(login pax "$P/pax.new")"
+          check "pax's session began with a password" password "$(method sso-pax)"
+
+          echo "=== all: pom has no local name until set-local-name gives it one"
+          check "pom (linked --no-local-name), temporary password" "303 /auth/login?error=1" "$(login pom "$P/pom.pw")"
+          if admin user set-local-name oidc:sso-pom breakglass > "$P/pom.taken" 2>&1; then
+            cat "$P/pom.taken"; echo "a local account's name was accepted as a local name" >&2; exit 1
+          fi
+          grep -q 'is a local account' "$P/pom.taken"
+          admin user set-local-name oidc:sso-pom pom
+          check "pom, temporary password, after set-local-name" "303 /auth/password/change" "$(login pom "$P/pom.pw")"
+          check "user_local_name events for pom" 1 \
+            "$(q "SELECT count(*) FROM auth_event e JOIN auth_user u ON u.id = e.user_id WHERE u.subject = 'sso-pom' AND e.event = 'user_local_name' AND e.reason = 'set'")"
+          admin user list > "$P/user-list.out"
+          sed -n 1p "$P/user-list.out" | grep -q local_name
+          grep -E '^oidc:sso-pom +pom ' "$P/user-list.out"
+          [ "$fail" = 0 ]
+
+          echo "=== .env: ATLAS_LOCAL_LOGIN=break-glass (local,oidc kept); atlas-api recreated"
+          sed -i 's/^ATLAS_LOCAL_LOGIN=all$/ATLAS_LOCAL_LOGIN=break-glass/' .env
+          grep -x 'ATLAS_LOCAL_LOGIN=break-glass' .env
+          "${DC[@]}" up -d --no-deps --wait --wait-timeout 300 atlas-api
+          check "pella (not flagged), personal password" "303 /auth/login?error=1" "$(login pella "$P/pella.pw" '?break_glass=1')"
+          check "login_fail not_break_glass for pella" 1 \
+            "$(q "SELECT count(*) FROM auth_event e JOIN auth_user u ON u.id = e.user_id WHERE u.subject = 'sso-pella' AND e.event = 'login_fail' AND e.reason = 'not_break_glass'")"
+          check "pbg (flagged), temporary password, first use" "303 /auth/password/change" "$(login pbg "$P/pbg.pw" '?break_glass=1')"
+          check "pbg, second use" "303 /auth/password/change" "$(login pbg "$P/pbg.pw" '?break_glass=1')"
+          check "login_break_glass rows for pbg, one per use" 2 \
+            "$(q "SELECT count(*) FROM auth_event e JOIN auth_user u ON u.id = e.user_id WHERE u.subject = 'sso-pbg' AND e.event = 'login_break_glass'")"
+          [ "$fail" = 0 ]
+      # --- end OSS-26 N -------------------------------------------------------------------------
+
+      # --- TASK-1457: atlas-migrate again, on the install with SSO set up ----------------------
+      # Every SSO leg above recreates atlas-api with --no-deps, so the atlas-migrate one-shot has
+      # not run since leg 1, before .env had a sign-in block. An operator's upgrade or plain
+      # `docker compose up -d` runs it again: it reads .env (ATLAS_OIDC_GROUP_MAP_FILE and the
+      # rest) but the OIDC files are mounted into atlas-api only, and atlas-api waits for it to
+      # exit 0. Leaves the stack as 9g left it (same overlays, same .env).
+      - name: "leg 9h: atlas-migrate re-runs on the SSO install (exit 0, then atlas-api healthy)"
+        timeout-minutes: 8
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "9h-migrate-sso" >> "$SMOKE_DIR/legs.tsv"
+          DC=(docker compose -f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/sso/docker-compose.idp.yml)
+
+          echo "=== the case: .env names the OIDC files, atlas-migrate mounts none of them"
+          grep -E '^ATLAS_AUTH_PROVIDERS=.*oidc' .env
+          grep -x 'ATLAS_OIDC_GROUP_MAP_FILE=/run/secrets/oidc_group_map' .env
+          "${DC[@]}" config --format json | python3 -c "
+          import json, sys
+          s = [x if isinstance(x, str) else x['source'] for x in json.load(sys.stdin)['services']['atlas-migrate'].get('secrets', [])]
+          print('atlas-migrate secrets:', s)
+          sys.exit(1 if any(n.startswith('oidc') for n in s) else 0)"
+
+          t0=$(date -u +%Y-%m-%dT%H:%M:%S)
+          echo "=== atlas-migrate and atlas-api recreated, as an upgrade's \`up -d\` does (atlas-api waits for the one-shot)"
+          if ! "${DC[@]}" up -d --force-recreate --wait --wait-timeout 300 atlas-migrate atlas-api; then
+            "${DC[@]}" logs --no-color atlas-migrate | tail -20
+            exit 1
+          fi
+          "${DC[@]}" logs --no-color atlas-migrate > "$SMOKE_DIR/9h-migrate.log"
+          tail -n 5 "$SMOKE_DIR/9h-migrate.log"
+          cid=$("${DC[@]}" ps -aq atlas-migrate)
+          state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} created={{.Created}}' "$cid")
+          echo "atlas-migrate: $state"
+          case "$state" in "exited exit=0 "*) ;; *) echo "atlas-migrate did not exit 0" >&2; exit 1 ;; esac
+          created=$(docker inspect -f '{{.Created}}' "$cid")
+          [[ "$created" > "$t0" ]] || { echo "atlas-migrate was not run again (created $created, leg began $t0)" >&2; exit 1; }
+          grep -q '\[atlas-migrate\] upgrade: schema is up to date' "$SMOKE_DIR/9h-migrate.log"
+          api=$("${DC[@]}" ps -q atlas-api)
+          echo "atlas-api: $(docker inspect -f '{{.State.Status}} health={{.State.Health.Status}} created={{.Created}}' "$api")"
+          [ "$(docker inspect -f '{{.State.Health.Status}}' "$api")" = healthy ]
+          [[ "$(docker inspect -f '{{.Created}}' "$api")" > "$t0" ]]
+          curl -fsS --cacert "$SMOKE_CA" "$SMOKE_URL/auth/login" | grep -q 'href="/auth/oidc/start"'
+          echo "atlas-migrate ran again on the SSO install, exit 0; atlas-api healthy after it, offering SSO"
+      # --- end TASK-1457 -----------------------------------------------------------------------
+
+      # --- OSS-26 J: database password rotation (TASK-1423) ------------------------------------
+      # operations.md section 4's procedure on this stack as leg 9g left it: the IdP overlay and
+      # the arbitrary UID are overlays like any other, so they are passed as -f, exactly as an
+      # operator passes theirs. Last, because it replaces a secret every other leg relies on.
+      # Both passwords stay in 0600 files; each check reads them with shell builtins, and psql
+      # gets one from a passfile inside atlas-postgres, never from a command line.
+      - name: "leg 10: database password rotation (failure rolls back; rotate: data kept, old password refused)"
+        timeout-minutes: 12
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "10-db-rotation" >> "$SMOKE_DIR/legs.tsv"
+          umask 077
+          F=(-f docker-compose.yml -f "$SMOKE_DIR/arbitrary-uid.yml" -f ../../tests/sso/docker-compose.idp.yml)
+          DC=(docker compose "${F[@]}")
+          q() { docker compose exec -T atlas-postgres psql -U atlas -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          counts() { bash ../../tools/ci/oss_db_counts.sh; }
+          rotate() { bash ../../scripts/rotate-db-password.sh "${F[@]}"; }
+          R="$SMOKE_DIR/rotate"
+          mkdir -m 0700 "$R"
+          fail=0
+          check() {  # check <what> <expected> <got>
+            echo "$1: $3"
+            [ "$3" = "$2" ] || { echo "  expected: $2" >&2; fail=1; }
+          }
+          # signin <password file>: "ok", or psql's refusal. Over TCP with a password to the service
+          # name, as atlas-api connects (never 127.0.0.1: the image's pg_hba.conf trusts loopback);
+          # the password reaches psql in a passfile inside the container.
+          signin() {
+            if printf '*:*:*:atlas:%s\n' "$(<"$1")" | docker compose exec -T atlas-postgres sh -c \
+                'umask 077; f=$(mktemp); cat > "$f"; out=$(PGPASSFILE="$f" psql -X -w -h atlas-postgres -U atlas -d atlas -Atqc "SELECT 1" 2>&1); rc=$?; rm -f "$f"; [ "$rc" = 0 ] || printf "%s\n" "$out" | head -n 1; exit "$rc"'; then
+              echo ok
+            fi
+          }
+          # GET /api/me with alice's agent token (leg 3): a request atlas-api serves from the database.
+          api() {
+            printf 'header = "Authorization: Bearer %s"\n' "$(<"$SMOKE_DIR/alice.token")" \
+              | curl -sS -K - --cacert "$SMOKE_CA" -o /dev/null -w '%{http_code}' "$SMOKE_URL/api/me"
+          }
+          healthy() {  # every service of this stack: running and healthy, atlas-migrate exited 0
+            local bad=0 svc cid state
+            for svc in $("${DC[@]}" config --services); do
+              cid=$("${DC[@]}" ps -aq "$svc")
+              [ -n "$cid" ] || { echo "  $svc: no container"; bad=1; continue; }
+              state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid")
+              echo "  $svc: $state"
+              case "$svc:$state" in
+                atlas-migrate:"exited exit=0 health=none") ;;
+                *:"running exit=0 health=healthy") ;;
+                atlas-idp:"running exit=0 health=none") ;;   # the test IdP has no healthcheck
+                *) bad=1 ;;
+              esac
+            done
+            return "$bad"
+          }
+          leaks() {  # leaks <password file> <file...>: is the password in any of the files?
+            local pw f
+            IFS= read -r pw < "$1"
+            shift
+            for f in "$@"; do
+              if grep -qF -- "$pw" "$f"; then echo "  a password is in $f" >&2; return 0; fi
+            done
+            return 1
+          }
+          no_work_left() { ! ls -A secrets | grep -q '^\.rotate-db-password'; }
+
+          echo "=== before: a marker row; the old password's files kept for the checks"
+          marker="rotation-$(openssl rand -hex 8)"
+          q "CREATE TABLE install_smoke_rotation (marker text NOT NULL)"
+          q "INSERT INTO install_smoke_rotation VALUES ('$marker')"
+          cp -p secrets/db_password "$R/old.password"
+          cp -p secrets/db_url "$R/old.url"
+          echo "::add-mask::$(<"$R/old.password")"
+          check "the old password signs in" ok "$(signin "$R/old.password")"
+          # The check itself bites: a wrong password is refused (so loopback trust is not in play).
+          openssl rand -hex 24 > "$R/wrong.password"
+          wrong=$(signin "$R/wrong.password")
+          echo "a wrong password: $wrong"
+          case "$wrong" in *"password authentication failed"*) ;; *) echo "  expected a refused password" >&2; fail=1 ;; esac
+          check "GET /api/me with alice's token" 200 "$(api)"
+          [ "$fail" = 0 ]
+
+          echo "=== a rotation made to fail after the services were recreated on the new password"
+          if ATLAS_ROTATE_TEST_FAIL=after-recreate rotate > "$R/drill.out" 2>&1; then
+            cat "$R/drill.out"; echo "the injected failure exited 0" >&2; exit 1
+          fi
+          cat "$R/drill.out"
+          grep -q 'test failure injected after-recreate' "$R/drill.out"
+          grep -q 'rolled back; the install runs on the old password' "$R/drill.out"
+          cmp secrets/db_password "$R/old.password"
+          cmp secrets/db_url "$R/old.url"
+          echo "both files are the old ones again"
+          check "after the rollback, the old password signs in" ok "$(signin "$R/old.password")"
+          healthy || fail=1
+          check "GET /api/me with alice's token, after the rollback" 200 "$(api)"
+          no_work_left || { echo "the rollback left work files in secrets/" >&2; fail=1; }
+          [ "$fail" = 0 ]
+
+          echo "=== the rotation"
+          counts > "$R/counts.before"
+          echo "every table counted before the rotation ($(grep -c . "$R/counts.before") tables)"
+          t0=$(date -u +%Y-%m-%dT%H:%M:%S)
+          rotate > "$R/rotate.out" 2>&1 || { cat "$R/rotate.out"; echo "the rotation failed" >&2; exit 1; }
+          cat "$R/rotate.out"
+          cp -p secrets/db_password "$R/new.password"
+          echo "::add-mask::$(<"$R/new.password")"
+          if cmp -s secrets/db_password "$R/old.password"; then echo "db_password did not change" >&2; exit 1; fi
+          leaks "$R/new.password" secrets/db_url 2>/dev/null || { echo "db_url does not carry the new password" >&2; exit 1; }
+          if leaks "$R/old.password" secrets/db_url 2>/dev/null; then echo "db_url still carries the old password" >&2; exit 1; fi
+          check "the files' modes" "644 644" "$(stat -c %a secrets/db_password secrets/db_url | tr '\n' ' ' | sed 's/ $//')"
+          for svc in atlas-api; do
+            created=$(docker inspect -f '{{.Created}}' "$("${DC[@]}" ps -aq "$svc")")
+            echo "$svc created $created (rotation started $t0)"
+            [[ "$created" > "$t0" ]] || { echo "  $svc was not recreated" >&2; fail=1; }
+          done
+          healthy || fail=1
+          counts > "$R/counts.after"
+          if diff "$R/counts.before" "$R/counts.after"; then echo "every table's row count is identical after the rotation"; else fail=1; fi
+          check "the marker row" "$marker" "$(q "SELECT marker FROM install_smoke_rotation")"
+          check "GET /api/me with alice's token, on the new password" 200 "$(api)"
+          check "the new password signs in" ok "$(signin "$R/new.password")"
+          old=$(signin "$R/old.password")
+          echo "the old password: $old"
+          case "$old" in *"password authentication failed"*) ;; *) echo "  expected a refused password" >&2; fail=1 ;; esac
+          docker compose logs --no-color atlas-postgres > "$R/postgres.log" 2>&1
+          for pw in "$R/old.password" "$R/new.password"; do
+            if leaks "$pw" "$R/drill.out" "$R/rotate.out" "$R/postgres.log"; then fail=1; fi
+          done
+          no_work_left || { echo "the rotation left work files in secrets/" >&2; fail=1; }
+          [ "$fail" = 0 ]
+          q "DROP TABLE install_smoke_rotation"
+          echo "rotated: data kept, every service on the new password, the old one refused, no password printed"
+      # --- end OSS-26 J -------------------------------------------------------------------------
+
+      - name: "no egress was attempted during the legs"
+        if: always()
+        run: |
+          set -uo pipefail
+          [ -f "$SMOKE_DIR/egress.baseline" ] || { echo "the egress leg did not run"; exit 1; }
+          now=$(sudo iptables -L DOCKER-USER -v -x -n | awk '$3=="DROP"{s+=$1} END{print s+0}')
+          base=$(cat "$SMOKE_DIR/egress.baseline")
+          sudo iptables -L DOCKER-USER -v -x -n
+          sudo dmesg 2>/dev/null | grep 'atlas-egress' | tail -20 || true
+          echo "dropped egress packets: $base during the probe, $((now - base)) during the legs"
+          [ "$now" = "$base" ]
+
+      - name: "sizing: peak memory and CPU per service, per leg"
+        if: always()
+        run: |
+          set -uo pipefail
+          printf '%s\t%s\n' "$(date +%s.%N)" "teardown" >> "$SMOKE_DIR/legs.tsv"
+          : > "$SMOKE_DIR/cgroup.tsv"
+          for cid in $(docker ps -aq --filter label=com.docker.compose.project=atlas); do
+            svc=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$cid")
+            full=$(docker inspect -f '{{.Id}}' "$cid")
+            # any slice: system.slice on GitHub's runners, ci.slice on the self-hosted one. An
+            # exited container (atlas-migrate) has no scope left, and ls's non-zero exit would
+            # end the step under -e/pipefail: the `|| true` keeps it an "n/a" row.
+            cg=$(ls -d /sys/fs/cgroup/*.slice/docker-$full.scope 2>/dev/null | head -n 1 || true)
+            peak=$(cat "$cg/memory.peak" 2>/dev/null || echo n/a)
+            cpu=$(awk '$1=="usage_usec"{print $2}' "$cg/cpu.stat" 2>/dev/null || echo n/a)
+            printf '%s\t%s\t%s\n' "$svc" "${peak:-n/a}" "${cpu:-n/a}" >> "$SMOKE_DIR/cgroup.tsv"
+          done
+          python tools/ci/install_smoke_sizing.py --dir "$SMOKE_DIR" --json "$SMOKE_ARTIFACTS/sizing.json" \
+            | tee "$SMOKE_ARTIFACTS/sizing.md"
+          cp "$SMOKE_DIR/stats.tsv" "$SMOKE_DIR/legs.tsv" "$SMOKE_DIR/cgroup.tsv" "$SMOKE_ARTIFACTS/" 2>/dev/null || true
+
+      - name: collect compose logs (on failure)
+        if: failure()
+        working-directory: deploy/oss
+        run: |
+          docker compose --profile gateway ps -a > "$SMOKE_ARTIFACTS/compose-ps.txt" 2>&1 || true
+          docker compose --profile gateway logs --no-color --timestamps > "$SMOKE_ARTIFACTS/compose-logs.txt" 2>&1 || true
+          tail -100 "$SMOKE_ARTIFACTS/compose-logs.txt" || true
+          # Leg 9's IdP is not in the shipped compose file: its log by container.
+          for cid in $(docker ps -aq --filter label=com.docker.compose.service=atlas-idp); do
+            docker logs --timestamps "$cid" > "$SMOKE_ARTIFACTS/idp-logs.txt" 2>&1 || true
+            tail -60 "$SMOKE_ARTIFACTS/idp-logs.txt" || true
+          done
+
+      # Credentials never go into the artifact: it holds the sizing data, screenshots, the
+      # Playwright trace (started after the password was typed) and, on failure, the logs.
+      - name: upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: install-smoke
+          path: ${{ runner.temp }}/smoke-artifacts
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: tear down
+        if: always()
+        working-directory: deploy/oss
+        run: |
+          docker compose --profile gateway down -v --remove-orphans || true
+          # Leg 9's networks are declared only in the IdP overlay, so `down` above leaves them.
+          docker network rm atlas_idp atlas_idp-edge >/dev/null 2>&1 || true
+          rm -rf secrets "$SMOKE_DIR"
+
+  # --- TASK-1471: the install on an EXTERNAL PostgreSQL 16 (deploy/oss/external-db.yml) --------
+  # Its own job, because it is a different install from the start: atlas-postgres never runs.
+  # A PostgreSQL 16 of its own (tests/external_db/docker-compose.extdb.yml: own compose project,
+  # own network, TLS with a throwaway CA, plain TCP rejected by pg_hba.conf), then a stranger's
+  # install with the overlay and the URL as docs/oss/guides/external-postgres.md says
+  # (sslmode=verify-full, sslrootcert=/run/secrets/db_ca). The server is also attached to the
+  # stack's `egress` network as `db.test` (external 2 says why), and the stack's bridges drop
+  # every new connection out, as in leg 1b, with no exception.
+  # Then: the one-shot migrate and its idempotence, /healthz, a write then a read through
+  # the API and through MCP, the write found IN the external server, every atlas_app connection
+  # TLS; verify-full refusing the wrong CA; and `atlas-admin backup run` / `restore` against the
+  # external server (the role owns the database and has CREATEDB, as the guide asks).
+  external-db:
+    name: install smoke, on an external PostgreSQL 16 (external-db.yml, verify-full)
+    # The same single stack runner as `smoke` (compose project `atlas`, fixed ports): the jobs
+    # queue behind each other and never share a stack.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            mcp/requirements.txt
+            tests/requirements.txt
+
+      - name: prepare the runner (client deps, the test names)
+        run: |
+          set -euo pipefail
+          SMOKE_DIR="$RUNNER_TEMP/extdb-smoke"; rm -rf "$SMOKE_DIR"; mkdir -m 0700 "$SMOKE_DIR"
+          mkdir -m 0700 "$SMOKE_DIR/extdb"
+          {
+            echo "SMOKE_DIR=$SMOKE_DIR"
+            echo "SMOKE_EXTDB_DIR=$SMOKE_DIR/extdb"
+            echo "SMOKE_ARTIFACTS=$RUNNER_TEMP/extdb-artifacts"
+            echo "SMOKE_CA=$GITHUB_WORKSPACE/deploy/oss/secrets/tls/ca.crt"
+            echo "EXTDB_COMPOSE=$GITHUB_WORKSPACE/tests/external_db/docker-compose.extdb.yml"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/extdb-artifacts"
+          pip install -r mcp/requirements.txt -r tests/requirements.txt
+          grep -qE "^127\.0\.0\.1[[:space:]]+$SMOKE_HOST\$" /etc/hosts || echo "127.0.0.1 $SMOKE_HOST" | sudo tee -a /etc/hosts
+          # external-db.yml's `!reset` needs Docker Compose 2.24.4 or later (as release.yml's).
+          v=$(docker compose version --short); v=${v#v}
+          echo "docker compose $v"
+          [ "$(printf '%s\n' 2.24.4 "$v" | sort -V | head -n 1)" = 2.24.4 ] || { echo "external-db.yml needs Docker Compose >= 2.24.4" >&2; exit 1; }
+
+      - name: "external 1: a PostgreSQL 16 of its own, TLS only (db.test, a throwaway CA)"
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          umask 077
+          X="$SMOKE_EXTDB_DIR"
+          EXT=(docker compose -f "$EXTDB_COMPOSE")
+          echo "=== a CA and a server certificate for db.test"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=install smoke external database CA" \
+            -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+            -keyout "$X/ca.key" -out "$X/ca.crt" 2>/dev/null
+          openssl req -newkey rsa:2048 -nodes -subj "/CN=db.test" -keyout "$X/server.key" -out "$X/server.csr" 2>/dev/null
+          printf '%s\n' "subjectAltName=DNS:db.test" "basicConstraints=CA:FALSE" \
+            "keyUsage=critical,digitalSignature,keyEncipherment" "extendedKeyUsage=serverAuth" > "$X/server.ext"
+          openssl x509 -req -in "$X/server.csr" -CA "$X/ca.crt" -CAkey "$X/ca.key" -CAcreateserial \
+            -days 2 -extfile "$X/server.ext" -out "$X/server.crt" 2>/dev/null
+          openssl verify -CAfile "$X/ca.crt" "$X/server.crt"
+          echo "=== the passwords: the server's superuser, and the Atlas role"
+          openssl rand -hex 24 > "$X/superuser_password"
+          openssl rand -hex 24 > "$X/app_password"
+          echo "::add-mask::$(<"$X/superuser_password")"
+          echo "::add-mask::$(<"$X/app_password")"
+          # The image's entrypoint reads it after dropping to the `postgres` UID (0700 directory).
+          chmod 0644 "$X/superuser_password"
+          "${EXT[@]}" up -d --wait --wait-timeout 180
+          echo "external server: up on its own network $(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$("${EXT[@]}" ps -q extdb)"), nothing published"
+          docker port "$("${EXT[@]}" ps -q extdb)" | grep . && { echo "the external server publishes a port" >&2; exit 1; }
+          echo "=== the Atlas database and role, as the guide asks: the role OWNS the database, has CREATEDB, no superuser"
+          # The password reaches psql on stdin (printf is a shell builtin): on no command line.
+          printf "CREATE ROLE atlas_app LOGIN CREATEDB PASSWORD '%s';\nCREATE DATABASE atlas OWNER atlas_app ENCODING 'UTF8' TEMPLATE template0;\n" \
+            "$(<"$X/app_password")" | "${EXT[@]}" exec -T extdb psql -U postgres -d postgres -X -q -v ON_ERROR_STOP=1
+          "${EXT[@]}" exec -T extdb psql -U postgres -d postgres -AtX -c \
+            "SELECT rolname, rolsuper, rolcreatedb FROM pg_roles WHERE rolname = 'atlas_app'"
+          echo "=== plain TCP is refused (pg_hba.conf: hostssl only)"
+          if "${EXT[@]}" exec -T extdb psql "host=127.0.0.1 dbname=atlas user=atlas_app sslmode=disable" -w -Atc 'SELECT 1' > "$SMOKE_DIR/plain.out" 2>&1; then
+            echo "a plain TCP connection was accepted" >&2; exit 1
+          fi
+          cat "$SMOKE_DIR/plain.out"
+          grep -q 'no encryption' "$SMOKE_DIR/plain.out"
+
+      - name: "external 2: install with external-db.yml (no atlas-postgres; migrate, every service healthy, /healthz)"
+        timeout-minutes: 20
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          sed -i -e "s/atlas\.example\.com/$SMOKE_HOST/g" -e "s/privacy@example\.com/privacy@$SMOKE_HOST/" .env
+          bash ../../scripts/init-secrets.sh
+          echo "=== the URL and the CA, as docs/oss/guides/external-postgres.md says"
+          # Builtins only: the password is on no command line. init-secrets.sh's db_url is replaced
+          # in place, so it keeps its 0644 inside the 0700 secrets/.
+          printf 'postgresql+psycopg2://atlas_app:%s@db.test:5432/atlas?sslmode=verify-full&sslrootcert=/run/secrets/db_ca\n' \
+            "$(<"$SMOKE_EXTDB_DIR/app_password")" > secrets/db_url
+          chmod 0644 secrets/db_url
+          cp "$SMOKE_EXTDB_DIR/ca.crt" secrets/db-ca.crt
+          chmod 0644 secrets/db-ca.crt
+          echo 'ATLAS_DB_CA_SOURCE=./secrets/db-ca.crt' >> .env
+          ls -l secrets
+          echo "--- .env against .env.example:"; diff .env.example .env || true
+          grep -q 'db.test' .env && { echo "the database host reached .env" >&2; exit 1; }
+
+          echo "=== the SHIPPED files, rendered and checked (check_oss_compose S9, file modes included)"
+          docker compose -f docker-compose.yml -f external-db.yml --profile backup config --format json > "$SMOKE_DIR/ext.json"
+          python ../../tools/ci/check_oss_compose.py "$SMOKE_DIR/ext.json" --external-db
+
+          DC=(docker compose -f docker-compose.yml -f external-db.yml)
+          "${DC[@]}" config --services | tee "$SMOKE_DIR/services"
+          grep -qx atlas-postgres "$SMOKE_DIR/services" && { echo "atlas-postgres would start" >&2; exit 1; }
+          "${DC[@]}" --profile backup build
+          "${DC[@]}" up --no-start
+
+          # HOW THE STACK REACHES THE SERVER. The server stays on its own network, and is ALSO
+          # attached to the stack's `egress` network as `db.test` (Docker's DNS answers that name
+          # there, standing in for a real server's DNS name). So the stack reaches it the way
+          # external-db.yml lets it, over `egress`, and no packet has to cross from one bridge to
+          # another. A first version kept the server on its own bridge and opened the route with
+          # DOCKER-USER ACCEPT rules: on the self-hosted runners the connection timed out with the
+          # rules' counters at 0 (Docker drops traffic between bridges before DOCKER-USER sees it
+          # on some versions, and the runners share one kernel with other jobs' rules), so that
+          # tested the host's firewall, not Atlas. What stays honest: the bundled atlas-postgres
+          # never exists, the URL names another host, the server is in another compose project,
+          # and every connection out of the stack's bridges is still dropped (below), which this
+          # route does not use.
+          egress_net=$(docker network ls --filter label=com.docker.compose.project=atlas \
+            --filter label=com.docker.compose.network=egress --format '{{.Name}}')
+          test -n "$egress_net"
+          echo "$egress_net" > "$SMOKE_DIR/egress.net"
+          docker network connect --alias db.test "$egress_net" "$(docker compose -f "$EXTDB_COMPOSE" ps -q extdb)"
+          echo "external server attached to $egress_net as db.test"
+
+          echo "=== no egress from the stack's bridges (the database is on egress itself)"
+          : > "$SMOKE_DIR/bridges"
+          for id in $(docker network ls -q --filter label=com.docker.compose.project=atlas); do
+            read -r name internal < <(docker network inspect -f '{{.Name}} {{.Internal}}' "$id")
+            br="br-$id"
+            ip link show "$br" >/dev/null
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j DROP
+            sudo iptables -I DOCKER-USER -i "$br" ! -o "$br" -m conntrack --ctstate NEW -j LOG --log-prefix "atlas-egress $name: "
+            echo "$br" >> "$SMOKE_DIR/bridges"
+            echo "network $name internal=$internal bridge=$br: egress dropped"
+          done
+          sudo iptables -L DOCKER-USER -v -x -n
+
+          echo "=== up"
+          "${DC[@]}" up -d --wait --wait-timeout 600
+          "${DC[@]}" ps -a
+          bad=0
+          for svc in $(cat "$SMOKE_DIR/services"); do
+            cid=$("${DC[@]}" ps -aq "$svc")
+            [ -n "$cid" ] || { echo "$svc: no container"; bad=1; continue; }
+            state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid")
+            echo "$svc: $state"
+            case "$svc:$state" in
+              atlas-migrate:"exited exit=0 health=none") ;;
+              *:"running exit=0 health=healthy") ;;
+              *) bad=1 ;;
+            esac
+          done
+          [ "$bad" = 0 ] || { echo "a service is not healthy" >&2; exit 1; }
+          if [ -n "$(docker ps -aq --filter label=com.docker.compose.project=atlas --filter label=com.docker.compose.service=atlas-postgres)" ]; then
+            echo "an atlas-postgres container exists" >&2; exit 1
+          fi
+          echo "no atlas-postgres container"
+
+          echo "=== the egress rule bites: atlas-api (now on egress) cannot reach anything but the database"
+          if "${DC[@]}" exec -T atlas-api python -c "import socket; socket.create_connection(('1.1.1.1', 80), timeout=5)" 2>/dev/null; then
+            echo "atlas-api reached 1.1.1.1 with egress denied" >&2; exit 1
+          fi
+          echo "probe: atlas-api -> 1.1.1.1:80 refused, as it must be"
+          sudo iptables -L DOCKER-USER -v -x -n | awk '$3=="DROP"{s+=$1} END{print s+0}' > "$SMOKE_DIR/egress.baseline"
+
+          echo "=== migrate: the one-shot ran against the external server; again, idempotent"
+          "${DC[@]}" logs --no-color atlas-migrate | tail -20
+          rc=$(docker inspect -f '{{.State.ExitCode}}' "$("${DC[@]}" ps -aq atlas-migrate)")
+          echo "the atlas-migrate one-shot exited $rc"; [ "$rc" = 0 ]
+          "${DC[@]}" exec -T atlas-api atlas-migrate upgrade
+          "${DC[@]}" exec -T atlas-api atlas-migrate upgrade
+          echo "atlas-migrate upgrade: twice more, exit 0 both times"
+          curl -fsS --cacert "$SMOKE_CA" -o /dev/null -w 'GET /healthz through the ingress: %{http_code}\n' "$SMOKE_URL/healthz"
+
+      - name: "external 3: write then read through the API and MCP; the data is IN the external server, over TLS"
+        timeout-minutes: 8
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          umask 077
+          DC=(docker compose -f docker-compose.yml -f external-db.yml)
+          xq() { docker compose -f "$EXTDB_COMPOSE" exec -T extdb psql -U postgres -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          admin() { "${DC[@]}" exec -T atlas-api atlas-admin --actor install-smoke "$@"; }
+          # As smoke leg 3: the temp password and the raw token go to files, never to the log.
+          for spec in alice:owner bob:member; do
+            u=${spec%%:*}; role=${spec##*:}
+            admin user add "$u" --role "$role" > "$SMOKE_DIR/$u.add"
+            grep '^created' "$SMOKE_DIR/$u.add"
+          done
+          admin token mint --user alice --purpose agent --scopes read,write --out /tmp/alice.token
+          "${DC[@]}" exec -T atlas-api cat /tmp/alice.token > "$SMOKE_DIR/alice.token"
+          "${DC[@]}" exec -T atlas-api rm /tmp/alice.token
+          test -s "$SMOKE_DIR/alice.token"
+          echo "::add-mask::$(<"$SMOKE_DIR/alice.token")"
+          (cd "$GITHUB_WORKSPACE" && python tests/bootstrap_users.py alice bob \
+            && python -m pytest -v -s -p no:cacheprovider tests/external_db/test_external_db.py)
+
+          echo "=== the write, read from the external server itself"
+          got=$(xq "SELECT summary FROM node WHERE id = 'external-db-smoke'")
+          echo "node external-db-smoke in db.test/atlas: $got"
+          [ "$got" = "$(<"$SMOKE_DIR/external-db.mark")" ]
+          owners=$(xq "SELECT string_agg(DISTINCT tableowner, ',') FROM pg_tables WHERE schemaname = 'public'")
+          echo "owner of every public table: $owners"; [ "$owners" = atlas_app ]
+          echo "=== every connection atlas_app holds is TLS"
+          read -r tls plain < <(xq "SELECT count(*) FILTER (WHERE s.ssl), count(*) FILTER (WHERE NOT s.ssl) FROM pg_stat_ssl s JOIN pg_stat_activity a USING (pid) WHERE a.usename = 'atlas_app'" | tr '|' ' ')
+          echo "atlas_app connections: $tls over TLS, $plain without"
+          [ "$tls" -ge 1 ] && [ "$plain" = 0 ]
+
+      - name: "external 4: verify-full checks the certificate (the wrong CA is refused)"
+        timeout-minutes: 6
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          # The install's own CA (secrets/tls/ca.crt) as the database CA: a real CA, not the one
+          # that signed db.test. atlas-migrate must refuse to connect, and say why.
+          printf 'ATLAS_DB_CA_SOURCE=./secrets/tls/ca.crt\n' > "$SMOKE_DIR/wrong-ca.env"
+          WRONG=(docker compose --env-file .env --env-file "$SMOKE_DIR/wrong-ca.env" -f docker-compose.yml -f external-db.yml)
+          if "${WRONG[@]}" run --rm --no-deps -T atlas-migrate > "$SMOKE_DIR/wrong-ca.out" 2>&1; then
+            cat "$SMOKE_DIR/wrong-ca.out"; echo "atlas-migrate connected with the wrong CA" >&2; exit 1
+          fi
+          tail -5 "$SMOKE_DIR/wrong-ca.out"
+          grep -qi 'certificate verify failed' "$SMOKE_DIR/wrong-ca.out"
+          if grep -qF -f "$SMOKE_EXTDB_DIR/app_password" "$SMOKE_DIR/wrong-ca.out"; then
+            echo "the database password appeared in the refusal" >&2; exit 1
+          fi
+          echo "refused: certificate verify failed, and the password is not in the output"
+
+      - name: "external 5: backup and restore against the external server (backup run, dry run, restore, identical counts)"
+        timeout-minutes: 12
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          DC=(docker compose -f docker-compose.yml -f external-db.yml)
+          xq() { docker compose -f "$EXTDB_COMPOSE" exec -T extdb psql -U postgres -d atlas -AtX -v ON_ERROR_STOP=1 -c "$1"; }
+          bk() { "${DC[@]}" run --rm --no-deps -T atlas-backup atlas-admin --actor install-smoke "$@"; }
+          # tools/ci/oss_db_counts.sh's query, run in the external server (that script reads atlas-postgres).
+          counts() { xq "SELECT t || '=' || (xpath('/row/c/text()', query_to_xml(format('SELECT count(*) AS c FROM public.%I', t), false, true, '')))[1]::text FROM (SELECT tablename::text AS t FROM pg_tables WHERE schemaname = 'public') s ORDER BY t"; }
+
+          echo "=== atlas-api stopped: nothing may be connected to the database a restore replaces"
+          "${DC[@]}" stop atlas-api
+          counts > "$SMOKE_DIR/counts.before"
+          grep -qE '^node=[1-9]' "$SMOKE_DIR/counts.before"
+
+          echo "=== backup run: pg_dump 16 over TLS, verified by a restore into a temporary database on the same server"
+          bk backup run | tee "$SMOKE_DIR/backup.out"
+          dump=$(grep -oE 'atlas-[0-9]{8}T[0-9]{6}Z-manual\.dump' "$SMOKE_DIR/backup.out" | head -n 1)
+          test -n "$dump"
+          left=$(xq "SELECT count(*) FROM pg_database WHERE datname LIKE 'atlas\_verify\_%'")
+          echo "temporary verify databases left on the server: $left"; [ "$left" = 0 ]
+
+          echo "=== data changed after the backup"
+          xq "DELETE FROM graph_event WHERE id IN (SELECT id FROM graph_event ORDER BY id DESC LIMIT 5)"
+          xq "UPDATE node SET name = name || ' (changed after the backup)' WHERE id IN (SELECT id FROM node ORDER BY id LIMIT 3)"
+          counts > "$SMOKE_DIR/counts.changed"
+          diff -q "$SMOKE_DIR/counts.before" "$SMOKE_DIR/counts.changed" >/dev/null && { echo "the counts did not change" >&2; exit 1; }
+
+          echo "=== restore --dry-run: nothing changed"
+          bk backup restore "$dump" --dry-run
+          counts | diff "$SMOKE_DIR/counts.changed" -
+
+          echo "=== restore: staging database, counted, swapped in (CREATEDB + ownership, no superuser)"
+          bk backup restore "$dump" | tee "$SMOKE_DIR/restore.out"
+          safety=$(grep -oE 'atlas_prerestore_[0-9]{8}t[0-9]{6}z' "$SMOKE_DIR/restore.out" | head -n 1)
+          test -n "$safety"
+          counts > "$SMOKE_DIR/counts.after"
+          diff "$SMOKE_DIR/counts.before" "$SMOKE_DIR/counts.after"
+          echo "every table's row count after the restore is identical to before the backup"
+          [ "$(xq "SELECT pg_catalog.pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'atlas'")" = atlas_app ]
+          xq "DROP DATABASE \"$safety\""
+
+          echo "=== atlas-api started again, on the restored database"
+          "${DC[@]}" start atlas-api
+          st=none
+          for _ in $(seq 1 60); do
+            st=$(docker inspect -f '{{.State.Health.Status}}' "$("${DC[@]}" ps -q atlas-api)")
+            [ "$st" = healthy ] && break
+            sleep 2
+          done
+          echo "atlas-api: $st"; [ "$st" = healthy ]
+          code=$(printf 'header = "Authorization: Bearer %s"\n' "$(<"$SMOKE_DIR/alice.token")" \
+            | curl -sS -K - --cacert "$SMOKE_CA" -o /dev/null -w '%{http_code}' "$SMOKE_URL/api/me")
+          echo "GET /api/me with alice's agent token, after the restore: $code"; [ "$code" = 200 ]
+
+      - name: "external: no egress beyond the database server was attempted"
+        if: always()
+        run: |
+          set -uo pipefail
+          [ -f "$SMOKE_DIR/egress.baseline" ] || { echo "the egress rules were not set"; exit 1; }
+          now=$(sudo iptables -L DOCKER-USER -v -x -n | awk '$3=="DROP"{s+=$1} END{print s+0}')
+          base=$(cat "$SMOKE_DIR/egress.baseline")
+          sudo iptables -L DOCKER-USER -v -x -n
+          sudo dmesg 2>/dev/null | grep 'atlas-egress' | tail -20 || true
+          echo "dropped egress packets: $base during the probe, $((now - base)) after it"
+          [ "$now" = "$base" ]
+
+      - name: collect compose logs (on failure)
+        if: failure()
+        working-directory: deploy/oss
+        run: |
+          docker compose -f docker-compose.yml -f external-db.yml --profile backup ps -a > "$SMOKE_ARTIFACTS/compose-ps.txt" 2>&1 || true
+          docker compose -f docker-compose.yml -f external-db.yml --profile backup logs --no-color --timestamps > "$SMOKE_ARTIFACTS/compose-logs.txt" 2>&1 || true
+          tail -100 "$SMOKE_ARTIFACTS/compose-logs.txt" || true
+          docker compose -f "$EXTDB_COMPOSE" logs --no-color --timestamps > "$SMOKE_ARTIFACTS/extdb-logs.txt" 2>&1 || true
+          tail -60 "$SMOKE_ARTIFACTS/extdb-logs.txt" || true
+
+      - name: upload artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: install-smoke-external-db
+          path: ${{ runner.temp }}/extdb-artifacts
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: tear down
+        if: always()
+        working-directory: deploy/oss
+        run: |
+          # The external server first: while it is attached to the stack's `egress` network, that
+          # network cannot be removed. The drop rules are left as the smoke job leaves its own
+          # (their bridges are gone with the stack); this job adds no ACCEPT rule.
+          if [ -f "$SMOKE_DIR/egress.net" ]; then
+            docker network disconnect -f "$(cat "$SMOKE_DIR/egress.net")" "$(docker compose -f "$EXTDB_COMPOSE" ps -q extdb)" || true
+          fi
+          docker compose -f "$EXTDB_COMPOSE" down -v --remove-orphans || true
+          docker compose -f docker-compose.yml -f external-db.yml --profile backup down -v --remove-orphans || true
+          rm -rf secrets .env "$SMOKE_DIR"
+  # --- end TASK-1471 ---------------------------------------------------------------------------
+
+  backend-pytest:
+    name: backend suite via pytest (backend/test_verify_all.py)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"          # matches backend/Dockerfile
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            tests/requirements.txt
+
+      - run: pip install -r backend/requirements.txt -r tests/requirements.txt
+
+      # verify_frontend_v2.py fails without node (see verify.yml, which runs the same 24).
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # SMOKE ON A PULL REQUEST, FULL ON THE SCHEDULE AND BY HAND (2026-10-29). This job exists
+      # so the pytest ENTRY POINT cannot rot; the scripts themselves already run in full twice
+      # per pull request in verify.yml (default and features-disabled). Running all ~58 of them
+      # a third time here took 6-8.5 min of a runner per PR and was the longest job in this
+      # workflow. On a pull request it now runs the discovery check (test_suite_is_not_empty,
+      # which fails on zero scripts) plus three fast scripts, which exercises discovery, the
+      # session database fixture, run_one and the failure digest. The Tuesday cron and
+      # workflow_dispatch still run every script through pytest.
+      - name: python -m pytest backend/test_verify_all.py
+        working-directory: backend
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            python -m pytest -v -p no:cacheprovider test_verify_all.py \
+              -k "suite_is_not_empty or verify_feature_flags or verify_rbac_off_unchanged or verify_nul_bytes"
+          else
+            python -m pytest -v -p no:cacheprovider test_verify_all.py
+          fi
+
+  # --- OSS-26 C: upgrade from the previous release (TASK-1416) -------------------------------
+  # docs/oss/RELEASES.md "Upgrading with released images" and INSTALL section 10, on one runner:
+  # the PREVIOUS release installed from its published images (its own checkout of deploy/oss,
+  # release.yml, the release's release-images.env), seeded, backed up; then THIS checkout over
+  # the same compose project and volumes, built from source, the schema step, and every table
+  # compared. Separate from `smoke` so neither changes the other's stack.
+  #
+  # The previous release is the newest vX.Y.Z tag reachable from HEAD^ (on a pull request, the
+  # base branch; a tag on HEAD itself is not "previous"), pre-releases skipped. No such tag, or
+  # no published GitHub release for it: `upgrade` is skipped and `upgrade-from` says why.
+  upgrade-from:
+    name: install smoke, upgrade - find the previous release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.prev.outputs.tag }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # The self-hosted runners have no `gh`: the REST API with curl, the token handed to curl
+      # as a config file on stdin (`-K -`), never on a command line. 404 = no published release
+      # (a draft has no release-by-tag); anything else that is not 200 fails the job.
+      - name: the newest release before this change
+        id: prev
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag=$(git tag -l 'v*' --merged HEAD^ --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
+          if [ -z "$tag" ]; then
+            echo "::notice title=upgrade skipped::no vX.Y.Z tag before this change: there is no previous release to upgrade from"
+            exit 0
+          fi
+          code=$(printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN" | curl -sS -K - \
+            -H 'Accept: application/vnd.github+json' -o "$RUNNER_TEMP/release.json" -w '%{http_code}' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$tag")
+          if [ "$code" = 404 ]; then
+            echo "::notice title=upgrade skipped::tag $tag has no published GitHub release: nothing to upgrade from"
+            exit 0
+          fi
+          [ "$code" = 200 ] || { echo "GET releases/tags/$tag: HTTP $code" >&2; exit 1; }
+          python -I -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if not r["draft"] and any(a["name"]=="release-images.env" for a in r["assets"]) else 1)' "$RUNNER_TEMP/release.json" || {
+            echo "release $tag is a draft or has no release-images.env" >&2; exit 1; }
+          rm -f "$RUNNER_TEMP/release.json"
+          echo "previous release: $tag ($(git rev-parse --short "$tag^{commit}"))"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  upgrade:
+    name: install smoke, upgrade from the previous release (published images -> this checkout)
+    needs: upgrade-from
+    if: needs.upgrade-from.outputs.tag != ''
+    # The same single stack runner as `smoke` (compose project `atlas`, fixed ports): the two
+    # jobs queue behind each other and never share a stack.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    # public-ci: allow-permissions pulls the previous release's images from GHCR (read only)
+    permissions:
+      contents: read      # the release tag and its release-images.env asset (private repository)
+      packages: read      # docker pull of the release's images from ghcr.io (private packages)
+    defaults:
+      run:
+        shell: bash
+    env:
+      PREV_TAG: ${{ needs.upgrade-from.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            mcp/requirements.txt
+            tests/requirements.txt
+
+      - name: prepare the runner (client deps, the test name, the previous release's checkout)
+        run: |
+          set -euo pipefail
+          SMOKE_DIR="$RUNNER_TEMP/upgrade"; rm -rf "$SMOKE_DIR"; mkdir -m 0700 "$SMOKE_DIR"
+          PREV_DIR="$RUNNER_TEMP/upgrade-prev"; rm -rf "$PREV_DIR"; mkdir "$PREV_DIR"
+          {
+            echo "SMOKE_DIR=$SMOKE_DIR"
+            echo "SMOKE_ARTIFACTS=$RUNNER_TEMP/upgrade-artifacts"
+            echo "PREV_DIR=$PREV_DIR"
+            echo "PREV_OSS=$PREV_DIR/deploy/oss"
+            echo "NEW_OSS=$GITHUB_WORKSPACE/deploy/oss"
+            echo "DOCKER_CONFIG_JOB=$RUNNER_TEMP/docker-config"
+          } >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/upgrade-artifacts"
+          pip install -r mcp/requirements.txt -r tests/requirements.txt
+          grep -qE "^127\.0\.0\.1[[:space:]]+$SMOKE_HOST\$" /etc/hosts || echo "127.0.0.1 $SMOKE_HOST" | sudo tee -a /etc/hosts
+          # release.yml's `!reset` needs Docker Compose 2.24.4 or later.
+          v=$(docker compose version --short); v=${v#v}
+          echo "docker compose $v"
+          [ "$(printf '%s\n' 2.24.4 "$v" | sort -V | head -n 1)" = 2.24.4 ] || { echo "release.yml needs Docker Compose >= 2.24.4" >&2; exit 1; }
+          # The previous release's whole tree, at its tag, beside this checkout (never over it).
+          git fetch --no-tags --depth=1 origin "refs/tags/$PREV_TAG:refs/tags/$PREV_TAG"
+          git archive "$PREV_TAG" | tar -x -C "$PREV_DIR"
+          echo "previous release $PREV_TAG in $PREV_DIR; this checkout $(git rev-parse --short HEAD)"
+
+      - name: "upgrade 1: the previous release from its published images (release.yml, release-images.env)"
+        timeout-minutes: 15
+        working-directory: ${{ env.PREV_OSS }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          sed -i -e "s/atlas\.example\.com/$SMOKE_HOST/g" -e "s/privacy@example\.com/privacy@$SMOKE_HOST/" .env
+          bash ../../scripts/init-secrets.sh
+          echo "=== release-images.env of $PREV_TAG"
+          # No `gh` on the self-hosted runners: the REST API, the token as curl config on stdin.
+          # The asset's download redirects to storage; curl does not carry the header across hosts.
+          api() {  # api <url> <accept> <out>
+            printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN" | curl -fsSL -K - \
+              -H "Accept: $2" -o "$3" "$1"
+          }
+          api "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$PREV_TAG" application/vnd.github+json "$SMOKE_DIR/release.json"
+          asset=$(python -I -c 'import json,sys; print(next(a["url"] for a in json.load(open(sys.argv[1]))["assets"] if a["name"]=="release-images.env"))' "$SMOKE_DIR/release.json")
+          api "$asset" application/octet-stream "$SMOKE_DIR/release-images.env"
+          # Exactly the five ATLAS_IMAGE_* lines, each a ghcr.io reference with tag AND digest;
+          # nothing else from the downloaded file reaches .env.
+          grep -E '^ATLAS_IMAGE_(API|MCP|BACKUP|POSTGRES|TLS)=ghcr\.io/[a-z0-9._-]+/gradinai-atlas-[a-z]+:v[0-9.]+@sha256:[0-9a-f]{64}$' \
+            "$SMOKE_DIR/release-images.env" > "$SMOKE_DIR/images.env"
+          [ "$(cut -d= -f1 "$SMOKE_DIR/images.env" | sort -u | wc -l)" = 5 ] || {
+            cat "$SMOKE_DIR/release-images.env"; echo "release-images.env does not hold the five references" >&2; exit 1; }
+          cat "$SMOKE_DIR/images.env"
+          # RELEASES.md step 5: release.yml once in COMPOSE_FILE, so every plain `docker compose`
+          # below runs the published images.
+          { cat "$SMOKE_DIR/images.env"; echo "COMPOSE_FILE=docker-compose.yml:release.yml"; } >> .env
+          docker compose --profile backup config --images | sort -u
+
+          echo "=== pull, signed in to ghcr.io with this job's token, in a job-scoped DOCKER_CONFIG"
+          # The packages are private. The credential lives only in $DOCKER_CONFIG_JOB, never in
+          # the runner user's ~/.docker (six runners share this host), and is deleted as soon as
+          # the pull is done (and by the always() step below if this step dies first).
+          mkdir -m 0700 "$DOCKER_CONFIG_JOB"
+          trap 'rm -rf "$DOCKER_CONFIG_JOB"' EXIT
+          # The CLI plugins (compose) may live in the user's config dir: point at them.
+          if [ -d "$HOME/.docker/cli-plugins" ]; then ln -s "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG_JOB/cli-plugins"; fi
+          export DOCKER_CONFIG="$DOCKER_CONFIG_JOB"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker compose --profile backup pull
+          docker logout ghcr.io
+          unset DOCKER_CONFIG
+          rm -rf "$DOCKER_CONFIG_JOB"
+
+          echo "=== up, nothing built"
+          docker compose up -d --wait --wait-timeout 600
+          docker compose ps -a
+          bad=0
+          for svc in $(docker compose config --services); do
+            cid=$(docker compose ps -aq "$svc")
+            [ -n "$cid" ] || { echo "$svc: no container"; bad=1; continue; }
+            state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid")
+            img=$(docker inspect -f '{{.Config.Image}}' "$cid")
+            echo "$svc: $state image=$img"
+            case "$svc:$state" in
+              atlas-migrate:"exited exit=0 health=none") ;;
+              *:"running exit=0 health=healthy") ;;
+              *) bad=1 ;;
+            esac
+            # Every service runs a reference from release-images.env, not a local build.
+            grep -qxF "$img" <(cut -d= -f2- "$SMOKE_DIR/images.env") || { echo "$svc: not a released image" >&2; bad=1; }
+          done
+          [ "$bad" = 0 ] || { echo "the previous release is not up from its published images" >&2; exit 1; }
+          curl -fsS --cacert secrets/tls/ca.crt -o /dev/null -w "GET /healthz on $PREV_TAG: %{http_code}\n" "$SMOKE_URL/healthz"
+
+      - name: "upgrade 2: seed the previous release (two people, an agent token, a project, a write through MCP)"
+        timeout-minutes: 8
+        working-directory: ${{ env.PREV_OSS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          export SMOKE_CA="$PREV_OSS/secrets/tls/ca.crt"
+          admin() { docker compose exec -T atlas-api atlas-admin --actor install-smoke "$@"; }
+          # As smoke leg 3: the temp password and the raw token go to files, never to the log.
+          for spec in alice:owner bob:member; do
+            u=${spec%%:*}; role=${spec##*:}
+            admin user add "$u" --role "$role" > "$SMOKE_DIR/$u.add"
+            grep '^created' "$SMOKE_DIR/$u.add"
+          done
+          admin token mint --user alice --purpose agent --scopes read,write --out /tmp/alice.token
+          docker compose exec -T atlas-api cat /tmp/alice.token > "$SMOKE_DIR/alice.token"
+          docker compose exec -T atlas-api rm /tmp/alice.token
+          test -s "$SMOKE_DIR/alice.token"
+          echo "::add-mask::$(<"$SMOKE_DIR/alice.token")"
+          cd "$GITHUB_WORKSPACE"
+          python tests/bootstrap_users.py alice bob
+          python -m pytest -v -s -p no:cacheprovider "tests/upgrade/test_upgrade.py::test_seed_on_the_previous_release"
+
+      - name: "upgrade 3: backup on the previous release (atlas-admin backup run, the release's backup image)"
+        timeout-minutes: 8
+        working-directory: ${{ env.PREV_OSS }}
+        run: |
+          set -euo pipefail
+          echo "=== atlas-api stopped: the counts and the backup see a quiet database"
+          docker compose stop atlas-api
+          docker compose run --rm --no-deps -T atlas-backup atlas-admin --actor install-smoke backup run | tee "$SMOKE_DIR/backup.out"
+          dump=$(grep -oE 'atlas-[0-9]{8}T[0-9]{6}Z-manual\.dump' "$SMOKE_DIR/backup.out" | head -n 1)
+          test -n "$dump"
+          echo "$dump" > "$SMOKE_DIR/upgrade.dump"
+          echo "the backup of $PREV_TAG: $dump"
+          # Counted AFTER the backup: `backup run` itself records the backup (a crunch_history
+          # row and a graph_event), and that is the previous release's data too.
+          bash "$GITHUB_WORKSPACE/tools/ci/oss_db_counts.sh" > "$SMOKE_DIR/counts.before"  # this checkout's copy: the tag's tree predates it
+          echo "every table on $PREV_TAG ($(grep -c . "$SMOKE_DIR/counts.before") tables):"
+          sed 's/^/  /' "$SMOKE_DIR/counts.before"
+          grep -qE '^node=[1-9]' "$SMOKE_DIR/counts.before"
+          grep -qE '^auth_user=[1-9]' "$SMOKE_DIR/counts.before"
+          docker inspect -f '{{.Config.Image}} {{.Image}}' "$(docker compose ps -q atlas-postgres)" | tee "$SMOKE_DIR/postgres-image.before"
+
+      - name: "upgrade 4: this checkout over the same install (same .env and secrets, built from source, schema step)"
+        timeout-minutes: 20
+        working-directory: ${{ env.NEW_OSS }}
+        run: |
+          set -euo pipefail
+          # The install's own files carried over, as an upgrade in place keeps them: .env and
+          # secrets/. Back to building from the checkout = release.yml out of COMPOSE_FILE
+          # (RELEASES.md); the ATLAS_IMAGE_* lines are then read by nothing.
+          cp -a "$PREV_OSS/secrets" ./secrets
+          sed '/^COMPOSE_FILE=/d' "$PREV_OSS/.env" > .env
+          # OSS-26 D (operations.md, "Upgrading"): an install made before the origin listeners
+          # has no api-origin / mcp-origin certificates. The one step it runs: --origin-only
+          # adds them (and a separate origin CA) and touches nothing it already has. Run only
+          # when they are missing, as the guide says, so this job keeps working once the
+          # previous release is one that already made them.
+          if [ ! -e secrets/tls/origin-ca.crt ]; then
+            bash ../../scripts/init-certs.sh --origin-only
+            ls -l secrets/tls
+          fi
+          echo "--- INSTALL section 10 step 3: .env against this checkout's .env.example"
+          diff .env.example .env || true
+          docker compose up -d --build --wait --wait-timeout 600
+          docker compose ps -a
+          bad=0
+          for svc in $(docker compose config --services); do
+            cid=$(docker compose ps -aq "$svc")
+            [ -n "$cid" ] || { echo "$svc: no container"; bad=1; continue; }
+            state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid")
+            img=$(docker inspect -f '{{.Config.Image}}' "$cid")
+            echo "$svc: $state image=$img"
+            case "$svc:$state" in
+              atlas-migrate:"exited exit=0 health=none") ;;
+              *:"running exit=0 health=healthy") ;;
+              *) bad=1 ;;
+            esac
+            if grep -qxF "$img" <(cut -d= -f2- "$SMOKE_DIR/images.env"); then
+              echo "$svc: still the released image, not this checkout's build" >&2; bad=1
+            fi
+          done
+          [ "$bad" = 0 ] || { echo "a service is not healthy on this checkout" >&2; exit 1; }
+          echo "--- the schema step: the one-shot ran on the old database; once more by hand"
+          docker compose logs --no-color atlas-migrate | tail -20
+          rc=$(docker inspect -f '{{.State.ExitCode}}' "$(docker compose ps -aq atlas-migrate)")
+          echo "the atlas-migrate one-shot exited $rc"; [ "$rc" = 0 ]
+          docker compose exec -T atlas-api atlas-migrate upgrade
+          curl -fsS --cacert secrets/tls/ca.crt -o /dev/null -w 'GET /healthz on this checkout: %{http_code}\n' "$SMOKE_URL/healthz"
+
+      - name: "upgrade 5: every table as before the upgrade; the old release's backup reads on this one"
+        timeout-minutes: 12
+        working-directory: ${{ env.NEW_OSS }}
+        run: |
+          set -euo pipefail
+          docker compose stop atlas-api
+          bash ../../tools/ci/oss_db_counts.sh > "$SMOKE_DIR/counts.after"
+          # Every table of the previous release, with the same row count. One exception: the
+          # node_type and edge_type registries, which startup writes on every boot (backend/
+          # main.py), may GROW when this checkout adds a type. A table only this checkout has is
+          # new schema, and is listed.
+          awk -F= '
+            NR == FNR { before[$1] = $2; next }
+            { after[$1] = $2 }
+            END {
+              bad = 0
+              for (t in before) {
+                if (!(t in after)) { print "MISSING " t " (had " before[t] " rows)"; bad = 1; continue }
+                if (after[t] == before[t]) continue
+                if ((t == "node_type" || t == "edge_type") && after[t] + 0 > before[t] + 0) {
+                  print "grew    " t ": " before[t] " -> " after[t] " (registry seeded at boot)"; continue }
+                print "CHANGED " t ": " before[t] " -> " after[t]; bad = 1
+              }
+              for (t in after) if (!(t in before)) print "new     " t " (" after[t] " rows)"
+              exit bad
+            }' "$SMOKE_DIR/counts.before" "$SMOKE_DIR/counts.after"
+          echo "every table of $PREV_TAG has its row count after the upgrade ($(grep -c . "$SMOKE_DIR/counts.after") tables now)"
+
+          echo "=== the backup taken on $PREV_TAG, checked and staged by this checkout's backup image"
+          dump=$(cat "$SMOKE_DIR/upgrade.dump")
+          docker compose --profile backup build atlas-backup
+          docker compose run --rm --no-deps -T atlas-backup atlas-admin --actor install-smoke backup restore "$dump" --dry-run
+          bash ../../tools/ci/oss_db_counts.sh | diff "$SMOKE_DIR/counts.after" -
+          echo "dry run of the old backup: checksum and staging restore pass; every table as it was"
+
+          docker compose start atlas-api
+          st=none
+          for _ in $(seq 1 60); do
+            st=$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q atlas-api)")
+            [ "$st" = healthy ] && break
+            sleep 2
+          done
+          echo "atlas-api: $st"; [ "$st" = healthy ]
+
+      - name: "upgrade 6: the collation check (operations.md section 3)"
+        timeout-minutes: 8
+        working-directory: ${{ env.NEW_OSS }}
+        run: |
+          set -euo pipefail
+          pg=$(docker compose ps -q atlas-postgres)
+          echo "atlas-postgres on $PREV_TAG: $(cat "$SMOKE_DIR/postgres-image.before")"
+          echo "atlas-postgres now: $(docker inspect -f '{{.Config.Image}} {{.Image}}' "$pg")"
+          changed=0
+          if git diff --quiet "$PREV_TAG" HEAD -- ../postgres/; then
+            echo "deploy/postgres/ as in $PREV_TAG: the same Postgres recipe, so the check must find no mismatch"
+          else
+            changed=1
+            echo "deploy/postgres/ changed since $PREV_TAG:"; git diff --stat "$PREV_TAG" HEAD -- ../postgres/
+          fi
+          rc=0; bash ../../tools/db_collation_check.sh "$pg" || rc=$?
+          if [ "$rc" = 1 ] && [ "$changed" = 1 ]; then
+            echo "=== a mismatch after a Postgres image change: the repair operations.md gives, then the check again"
+            bash ../../tools/db_collation_check.sh --fix "$pg"
+            bash ../../tools/db_collation_check.sh "$pg"
+          elif [ "$rc" != 0 ]; then
+            echo "the collation check exited $rc" >&2; exit 1
+          fi
+
+      - name: "upgrade 7: the previous release's data, passwords and agent token on this checkout"
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          export SMOKE_CA="$NEW_OSS/secrets/tls/ca.crt"
+          python -m pytest -v -s -p no:cacheprovider "tests/upgrade/test_upgrade.py::test_data_survived_the_upgrade"
+
+      - name: collect compose logs (on failure)
+        if: failure()
+        run: |
+          for d in "$NEW_OSS" "$PREV_OSS"; do
+            [ -f "$d/.env" ] || continue
+            (cd "$d" && docker compose ps -a && docker compose logs --no-color --timestamps) > "$SMOKE_ARTIFACTS/compose-logs.txt" 2>&1 || true
+            tail -100 "$SMOKE_ARTIFACTS/compose-logs.txt" || true
+            break
+          done
+
+      - name: upload artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: install-smoke-upgrade
+          path: ${{ runner.temp }}/upgrade-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # No registry credential may stay on the shared host, whatever happened above.
+      - name: remove the job's docker credentials
+        if: always()
+        run: |
+          d=${DOCKER_CONFIG_JOB:-$RUNNER_TEMP/docker-config}
+          rm -rf "$d"
+          if [ -e "$d" ]; then echo "$d is still there" >&2; exit 1; fi
+          echo "job-scoped docker config removed"
+
+      - name: tear down
+        if: always()
+        run: |
+          for d in "$NEW_OSS" "$PREV_OSS"; do
+            [ -n "$d" ] && [ -f "$d/.env" ] || continue
+            (cd "$d" && docker compose --profile backup down -v --remove-orphans) || true
+            break
+          done
+          rm -rf "$GITHUB_WORKSPACE/deploy/oss/secrets" "$GITHUB_WORKSPACE/deploy/oss/.env"
+          rm -rf "$RUNNER_TEMP/upgrade-prev" "$RUNNER_TEMP/upgrade"

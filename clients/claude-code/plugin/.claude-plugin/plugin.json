@@ -1,0 +1,11 @@
+{
+  "name": "atlas",
+  "displayName": "Atlas",
+  "version": "0.1.0",
+  "description": "Skills for working with an Atlas install over MCP: read context cheaply (atlas-retrieval), file a workitem the right way (file-task), and run the first-run setup guide (setup-guide).",
+  "author": {
+    "name": "Atlas contributors"
+  },
+  "license": "Apache-2.0",
+  "keywords": ["atlas", "mcp", "knowledge-graph", "backlog"]
+}

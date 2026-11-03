@@ -1,0 +1,502 @@
+# The OSS install's images (STORY-oss-18, OSS-26 E): build, check, scan, and publish on a release tag.
+#
+# WHAT. Every image deploy/oss/docker-compose.yml BUILDS, from the same recipe it builds:
+#
+#   atlas-api       backend/Dockerfile --target hardened   atlas-api, atlas-migrate, atlas-retrieval
+#   atlas-mcp       mcp/Dockerfile --target hardened       atlas-mcp
+#   atlas-backup    backend/Dockerfile --target backup     atlas-backup (profile backup)
+#   atlas-postgres  deploy/postgres/pgvector.Dockerfile    atlas-postgres
+#   atlas-tls       deploy/caddy/Dockerfile                atlas-tls (Caddy + the Cloudflare DNS plugin)
+#
+# The one image the OSS compose PULLS, the gateway profile's AgentGateway, is upstream and pinned
+# tag@digest in the compose file; it is not republished (docs/oss/RELEASES.md, "What a release
+# publishes"). The hardened api/mcp/backup images are non-root, UID-agnostic, with a HEALTHCHECK;
+# the default stage the homelab builds is not touched by this workflow.
+#
+#   build-scan  every PR touching the images' inputs, every v* tag, by hand: build all five,
+#               check the image config of api, mcp and backup (numeric non-root USER,
+#               HEALTHCHECK, starts a process under an arbitrary UID in group 0; Postgres and
+#               Caddy run as their upstream images do, outside OSS-18's scope), then Trivy and
+#               THE SAME GATE as sbom-sca.yml (tools/ci/sca_gate.py + tools/ci/sca-accepted.json:
+#               a fixable CRITICAL or HIGH fails, an accepted one warns until its date, one with
+#               no fix is reported). The dependencies are the hashed locks (--require-hashes).
+#   publish     v* tags only (the tag push, or `gh workflow run images.yml --ref <tag>` to run it
+#               again), after build-scan passed. First the release check: the tag is
+#               semver (vMAJOR.MINOR.PATCH, optionally -prerelease) and docs/oss/RELEASES.md has a
+#               `## <tag>` section. Then push all five to ghcr.io/<owner>/gradinai-atlas-<name>,
+#               tagged with the git tag, and write each `name:tag@digest` (job summary, outputs,
+#               and `release-images.env`, the five lines an install pastes into .env for
+#               deploy/oss/release.yml). The only job with `packages: write`. The push rebuilds
+#               from build-scan's layer cache (type=gha, same scope), so it pushes the layers
+#               that were scanned.
+#   release     after publish: a DRAFT GitHub release for the tag, its notes the tag's section
+#               of docs/oss/RELEASES.md plus the five references, `release-images.env` attached.
+#               A -prerelease tag makes a prerelease. Re-running updates the notes and replaces
+#               the asset. The only job with `contents: write`. A draft, because a release made
+#               with the job's own token triggers no workflow: a maintainer publishes it
+#               (`gh release edit <tag> --draft=false`), and that `release: published` event is
+#               what makes sbom-sca.yml attach the SBOMs. It is also the last look before the
+#               release is public.
+#
+# HOW A RELEASE IS CUT: docs/oss/RELEASES.md, "Cutting a release" (a maintainer pushes the tag;
+# nothing here creates one).
+#
+# MINUTES. One build job; layers from the GitHub Actions cache, the Trivy binary and DB from
+# actions/cache. Actions are pinned to commit SHAs (tools/ci/check_pins.py).
+
+name: images
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    branches: [master]
+    # Path filter on pull requests only: what goes into either image, and this gate.
+    paths:
+      - "backend/**"
+      - "mcp/**"
+      - "frontend/**"
+      - "deploy/postgres/**"
+      - "deploy/caddy/**"
+      - "docs/oss/RELEASES.md"
+      - "tools/ci/sca_gate.py"
+      - "tools/ci/sca-accepted.json"
+      - ".github/workflows/images.yml"
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE, as in the other workflows: a PR's superseded runs are cancelled; tags and
+# manual runs are grouped by commit SHA and never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}-${{ github.ref_type }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # The same Trivy as sbom-sca.yml (keep the two in step).
+  TRIVY_VERSION: 0.75.0
+  TRIVY_SHA256: c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
+  TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db,ghcr.io/aquasecurity/trivy-db
+  TRIVY_NO_PROGRESS: "true"
+  TRIVY_DISABLE_VEX_NOTICE: "true"
+
+jobs:
+  build-scan:
+    name: build, check and scan the OSS images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: prepare
+        id: prep
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/sca"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: cache trivy
+        id: trivy-bin
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/bin/trivy
+          key: trivy-bin-${{ env.TRIVY_VERSION }}-${{ env.TRIVY_SHA256 }}
+
+      - name: download trivy (checksum verified)
+        if: steps.trivy-bin.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          f="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO --retry 3 "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/$f"
+          echo "$TRIVY_SHA256  $f" | sha256sum -c -
+          tar -xzf "$f" -C bin trivy
+
+      - name: cache the trivy DB
+        id: trivy-db
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/trivy/db
+          key: trivy-db-${{ steps.prep.outputs.day }}
+          restore-keys: trivy-db-
+
+      - name: trivy DB
+        run: |
+          set -euo pipefail
+          trivy --version
+          if [ "${{ steps.trivy-db.outputs.cache-hit }}" = "true" ]; then
+            echo "TRIVY_SKIP_DB_UPDATE=true" >> "$GITHUB_ENV"; echo "DB from today's cache"
+          else
+            trivy image --download-db-only --quiet
+          fi
+
+      # On the self-hosted runner (CI_RUNNER set) buildx builds in the runner's own docker: no
+      # BuildKit container per job, no second copy of every layer through `load`, and the layers the
+      # last run built are reused. The GitHub Actions cache needs the docker-container driver, so it
+      # is used only on GitHub's runners. operations.md on atlas-ci-runner, "Builds".
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: ${{ vars.CI_RUNNER && 'docker' || 'docker-container' }}
+
+      - name: build atlas-api (hardened)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          target: hardened
+          tags: atlas-api:hardened
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-api-hardened' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-api-hardened' || '' }}
+
+      - name: build atlas-mcp (hardened)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: mcp
+          target: hardened
+          tags: atlas-mcp:hardened
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-mcp-hardened' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-mcp-hardened' || '' }}
+
+      # The `backup` stage is `hardened` plus the Postgres client: the api layers come from the
+      # build above (the same builder), only its own stage is new.
+      - name: build atlas-backup (backup stage)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          target: backup
+          tags: atlas-backup:release
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-backup' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-backup' || '' }}
+
+      - name: build atlas-postgres (deploy/postgres/pgvector.Dockerfile)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/postgres
+          file: deploy/postgres/pgvector.Dockerfile
+          tags: atlas-postgres:release
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-postgres-release' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-postgres-release' || '' }}
+
+      - name: build atlas-tls (deploy/caddy)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/caddy
+          tags: atlas-tls:release
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-tls-release' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-tls-release' || '' }}
+
+      # Acceptance 1 and 2 on the image itself. The full stack under an arbitrary UID is the
+      # install smoke's leg 1 (install-smoke.yml).
+      - name: "check: non-root numeric USER, HEALTHCHECK, runs under an arbitrary UID"
+        run: |
+          set -euo pipefail
+          bad=0
+          for img in atlas-api:hardened atlas-mcp:hardened atlas-backup:release; do
+            user=$(docker image inspect -f '{{.Config.User}}' "$img")
+            hc=$(docker image inspect -f '{{if .Config.Healthcheck}}{{join .Config.Healthcheck.Test " "}}{{end}}' "$img")
+            echo "$img: USER=$user"
+            echo "$img: HEALTHCHECK=$hc"
+            [[ "$user" =~ ^[1-9][0-9]*:0$ ]] || { echo "::error::$img: USER is not a numeric non-root UID in group 0"; bad=1; }
+            [ -n "$hc" ] || { echo "::error::$img: no HEALTHCHECK"; bad=1; }
+            # A UID the image has never heard of: reads its code, writes HOME and /tmp, not /app.
+            out=$(docker run --rm --user 1000770000:0 --entrypoint sh "$img" -c \
+              'id -u; cat /app/Dockerfile.build >/dev/null && echo readable; touch "$HOME/.probe" /tmp/.probe && echo writable; if touch /app/.probe 2>/dev/null; then echo app-writable; else echo app-readonly; fi')
+            echo "$out" | sed "s|^|$img: |"
+            [ "$(echo "$out" | sed -n 1p)" = 1000770000 ] || bad=1
+            echo "$out" | grep -qx readable || { echo "::error::$img: an arbitrary UID cannot read /app"; bad=1; }
+            echo "$out" | grep -qx writable || { echo "::error::$img: an arbitrary UID cannot write HOME or /tmp"; bad=1; }
+            echo "$out" | grep -qx app-readonly || { echo "::error::$img: /app is writable at run time"; bad=1; }
+          done
+          [ "$bad" = 0 ]
+
+      # The report names are what an `in` list in tools/ci/sca-accepted.json matches, so an image
+      # built from the same recipe as one in sbom-sca.yml is reported under sbom-sca's name: one
+      # acceptance then covers both runs, and sbom-sca's --full-scan knows every name.
+      # atlas-postgres (pgvector.Dockerfile) is atlas-postgres-pgvector (sbom-sca's atlas-postgres is
+      # the homelab's postgres:16); atlas-tls (deploy/caddy) is atlas-caddy. No --full-scan here:
+      # this run sees five images, so an acceptance for an image it does not scan is skipped.
+      - name: scan the images
+        run: |
+          set -euo pipefail
+          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-api-hardened.json" atlas-api:hardened
+          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-mcp-hardened.json" atlas-mcp:hardened
+          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-backup.json" atlas-backup:release
+          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-postgres-pgvector.json" atlas-postgres:release
+          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-caddy.json" atlas-tls:release
+
+      - name: "gate: a fixable critical or high fails (tools/ci/sca_gate.py, sca-accepted.json)"
+        run: python3 tools/ci/sca_gate.py "$RUNNER_TEMP/sca" --summary-md "$RUNNER_TEMP/sca/summary.md"
+
+      - name: upload the scan reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: images-sca
+          path: ${{ runner.temp }}/sca
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish:
+    name: publish to GHCR (v* tags)
+    needs: build-scan
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # public-ci: allow-permissions pushes the release images to GHCR, on tag pushes only
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      api-digest: ${{ steps.api.outputs.digest }}
+      mcp-digest: ${{ steps.mcp.outputs.digest }}
+      backup-digest: ${{ steps.backup.outputs.digest }}
+      postgres-digest: ${{ steps.postgres.outputs.digest }}
+      tls-digest: ${{ steps.tls.outputs.digest }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Before anything is pushed: a tag that is not semver, or one with no release notes, stops
+      # here and publishes nothing (docs/oss/RELEASES.md, "Versioning").
+      - name: "release check: semver tag, notes in docs/oss/RELEASES.md"
+        run: |
+          set -euo pipefail
+          tag=$GITHUB_REF_NAME
+          if ! [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag $tag is not vMAJOR.MINOR.PATCH[-prerelease] (docs/oss/RELEASES.md, Versioning)"; exit 1
+          fi
+          grep -qxF "## $tag" docs/oss/RELEASES.md || {
+            echo "::error::docs/oss/RELEASES.md has no '## $tag' section: write the release notes first"; exit 1; }
+          echo "tag $tag: semver, release notes present"
+
+      - name: names
+        id: names
+        run: |
+          set -euo pipefail
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          for n in api mcp backup postgres tls; do
+            echo "$n=ghcr.io/$owner/gradinai-atlas-$n" >> "$GITHUB_OUTPUT"
+          done
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The job's own short-lived token, passed to the action as an input (not on a command line).
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: push atlas-api
+        id: api
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          target: hardened
+          push: true
+          tags: ${{ steps.names.outputs.api }}:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: type=gha,scope=atlas-api-hardened
+
+      - name: push atlas-mcp
+        id: mcp
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: mcp
+          target: hardened
+          push: true
+          tags: ${{ steps.names.outputs.mcp }}:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: type=gha,scope=atlas-mcp-hardened
+
+      - name: push atlas-backup
+        id: backup
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          target: backup
+          push: true
+          tags: ${{ steps.names.outputs.backup }}:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: |
+            type=gha,scope=atlas-api-hardened
+            type=gha,scope=atlas-backup
+
+      - name: push atlas-postgres
+        id: postgres
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/postgres
+          file: deploy/postgres/pgvector.Dockerfile
+          push: true
+          tags: ${{ steps.names.outputs.postgres }}:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          cache-from: type=gha,scope=atlas-postgres-release
+
+      - name: push atlas-tls
+        id: tls
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/caddy
+          push: true
+          tags: ${{ steps.names.outputs.tls }}:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          cache-from: type=gha,scope=atlas-tls-release
+
+      # The five references, tag AND digest, as the job summary and as release-images.env: the
+      # lines an install pastes into .env for deploy/oss/release.yml (variable names as in
+      # .env.example's "Released images" block).
+      - name: digests and release-images.env
+        env:
+          API: ${{ steps.names.outputs.api }}@${{ steps.api.outputs.digest }}
+          MCP: ${{ steps.names.outputs.mcp }}@${{ steps.mcp.outputs.digest }}
+          BACKUP: ${{ steps.names.outputs.backup }}@${{ steps.backup.outputs.digest }}
+          POSTGRES: ${{ steps.names.outputs.postgres }}@${{ steps.postgres.outputs.digest }}
+          TLS: ${{ steps.names.outputs.tls }}@${{ steps.tls.outputs.digest }}
+        run: |
+          set -euo pipefail
+          ref() { local repo=${1%@*} digest=${1#*@}; echo "$repo:$GITHUB_REF_NAME@$digest"; }
+          out="$RUNNER_TEMP/release-images.env"
+          {
+            echo "# Atlas $GITHUB_REF_NAME: the released images, for deploy/oss/release.yml."
+            echo "# Paste into deploy/oss/.env, replacing any earlier ATLAS_IMAGE_* lines; keep the"
+            echo "# checkout at $GITHUB_REF_NAME. docs/oss/RELEASES.md has the procedure."
+            echo "ATLAS_IMAGE_API=$(ref "$API")"
+            echo "ATLAS_IMAGE_MCP=$(ref "$MCP")"
+            echo "ATLAS_IMAGE_BACKUP=$(ref "$BACKUP")"
+            echo "ATLAS_IMAGE_POSTGRES=$(ref "$POSTGRES")"
+            echo "ATLAS_IMAGE_TLS=$(ref "$TLS")"
+          } > "$out"
+          # Every line carries a digest: a failed push output would leave `@` with nothing after.
+          if grep '^ATLAS_IMAGE_' "$out" | grep -vqE '@sha256:[0-9a-f]{64}$'; then
+            cat "$out"; echo "::error::an image reference without a digest"; exit 1
+          fi
+          {
+            echo "## Published images ($GITHUB_REF_NAME)"
+            echo ""
+            echo "| image | reference |"
+            echo "|---|---|"
+            grep '^ATLAS_IMAGE_' "$out" | sed -E 's/^([A-Z_]+)=(.*)$/| \1 | `\2` |/'
+            echo ""
+            echo "\`release-images.env\` (also attached to the GitHub release):"
+            echo ""
+            echo '```'
+            cat "$out"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: upload release-images.env
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-images
+          path: ${{ runner.temp }}/release-images.env
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: draft GitHub release (notes from docs/oss/RELEASES.md)
+    needs: publish
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # public-ci: allow-permissions writes the draft GitHub release, on tag pushes only
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The notes are the tag's section of RELEASES.md (its `## <tag>` heading up to the next
+      # `## `), then the five image references. The token is the job's own, read by gh from GH_TOKEN.
+      - name: create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          API_DIGEST: ${{ needs.publish.outputs.api-digest }}
+          MCP_DIGEST: ${{ needs.publish.outputs.mcp-digest }}
+          BACKUP_DIGEST: ${{ needs.publish.outputs.backup-digest }}
+          POSTGRES_DIGEST: ${{ needs.publish.outputs.postgres-digest }}
+          TLS_DIGEST: ${{ needs.publish.outputs.tls-digest }}
+        run: |
+          set -euo pipefail
+          tag=$GITHUB_REF_NAME
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          # release-images.env again, from publish's digests (the same lines as its artifact).
+          env_file="$RUNNER_TEMP/release-images.env"
+          {
+            echo "# Atlas $tag: the released images, for deploy/oss/release.yml."
+            echo "# Paste into deploy/oss/.env, replacing any earlier ATLAS_IMAGE_* lines; keep the"
+            echo "# checkout at $tag. docs/oss/RELEASES.md has the procedure."
+            echo "ATLAS_IMAGE_API=ghcr.io/$owner/gradinai-atlas-api:$tag@$API_DIGEST"
+            echo "ATLAS_IMAGE_MCP=ghcr.io/$owner/gradinai-atlas-mcp:$tag@$MCP_DIGEST"
+            echo "ATLAS_IMAGE_BACKUP=ghcr.io/$owner/gradinai-atlas-backup:$tag@$BACKUP_DIGEST"
+            echo "ATLAS_IMAGE_POSTGRES=ghcr.io/$owner/gradinai-atlas-postgres:$tag@$POSTGRES_DIGEST"
+            echo "ATLAS_IMAGE_TLS=ghcr.io/$owner/gradinai-atlas-tls:$tag@$TLS_DIGEST"
+          } > "$env_file"
+          if grep '^ATLAS_IMAGE_' "$env_file" | grep -vqE '@sha256:[0-9a-f]{64}$'; then
+            cat "$env_file"; echo "::error::an image reference without a digest"; exit 1
+          fi
+          notes="$RUNNER_TEMP/notes.md"
+          awk -v h="## $tag" '$0 == h {on = 1; next} on && /^## / {exit} on {print}' docs/oss/RELEASES.md > "$notes"
+          {
+            echo ""
+            echo "### Images"
+            echo ""
+            echo "Pinned by tag and digest. Paste \`release-images.env\` (attached) into \`deploy/oss/.env\` and add"
+            echo "\`release.yml\` to the compose files; [the procedure]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$tag/docs/oss/RELEASES.md#upgrading-with-released-images)."
+            echo ""
+            echo '```'
+            grep '^ATLAS_IMAGE_' "$env_file"
+            echo '```'
+          } >> "$notes"
+          pre=()
+          [[ "$tag" == *-* ]] && pre=(--prerelease)
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release edit "$tag" --notes-file "$notes"
+            gh release upload "$tag" "$env_file" --clobber
+          else
+            gh release create "$tag" --draft --verify-tag --title "Atlas $tag" --notes-file "$notes" "${pre[@]}" \
+              "$env_file"
+          fi
+          {
+            echo "## Release $tag"
+            echo ""
+            gh release view "$tag" --json url,isDraft -q '.url + (if .isDraft then " (draft)" else "" end)'
+            echo ""
+            echo "Publish it when the notes read right: \`gh release edit $tag --draft=false\`"
+            echo "(that event attaches the SBOMs, sbom-sca.yml)."
+          } | tee -a "$GITHUB_STEP_SUMMARY"

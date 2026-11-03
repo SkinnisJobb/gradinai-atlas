@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "atlas": {
+      "type": "http",
+      "url": "https://atlas.example.com/mcp/",
+      "headersHelper": "sh \"$HOME/.config/atlas/atlas-mcp-headers.sh\""
+    }
+  }
+}

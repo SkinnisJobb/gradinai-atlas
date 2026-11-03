@@ -1,0 +1,12 @@
+# CADDY_CLIENT_AUTH=require (ATLAS_TLS_CLIENT_AUTH=require in .env): the optional mTLS leg
+# (OSS-24). A connection to :9443 without a client certificate issued by the CA in
+# /certs/client-ca.crt (ATLAS_TLS_CLIENT_CA_FILE) is refused in the handshake, before any
+# request is read. atlas-mcp presents its pair from ATLAS_MCP_CLIENT_CERT_FILE /
+# ATLAS_MCP_CLIENT_KEY_FILE. It is a network-level identity beside the Bearer token, not
+# instead of it: atlas-api still authenticates every request by its token.
+# Imported inside the `tls` block of the atlas-api:9443 site in Caddyfile.
+protocols tls1.2 tls1.3
+client_auth {
+	mode require_and_verify
+	trust_pool file /certs/client-ca.crt
+}

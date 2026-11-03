@@ -1,0 +1,73 @@
+# Desktop-side tools that touch the server, tested with stubs (ADR 0046).
+#
+# `deploy-sh` runs tools/ci/test_deploy_sh.sh: tools/deploy.sh runs only its allowlisted commands,
+# byte for byte, refuses anything else before any ssh, stops at the first failed step, and logs one
+# JSON line per run; stage.sh and fork.sh ship the overlay from the ref, not the working tree.
+# `ssh`, `gh` and `curl` are PATH stubs; nothing here reaches the server (atlas.example.com).
+#
+# A separate file from verify.yml on purpose: a static, network-free check of shell tools that
+# needs no database and no suite.
+
+name: tools
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE (2026-10-25, after the account ran out of Actions minutes; narrowed
+# 2026-10-26). A pull request runs on `pull_request` only, and its superseded runs are
+# cancelled. A master push does NOT run this workflow: it already ran on the pull request that
+# made the commit, and on the shared self-hosted runner pool every master run queues behind the PR runs.
+# Only verify.yml runs on a master push, because tools/deploy.sh gates on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+
+
+  # LICENSE is the unmodified Apache-2.0 text and NOTICE names every vendored file
+  # (STORY-oss-22). Static, a few seconds; see tools/ci/check_notice.sh.
+  licence:
+    name: licence + NOTICE
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: LICENSE and NOTICE
+        run: bash tools/ci/check_notice.sh
+
+  # The Claude Code client pack (STORY-oss-19): JSON and manifest checks, both headersHelper
+  # variants against good and bad token files, and the real Claude Code CLI connecting to a
+  # TLS stub of the MCP endpoint with the template, the helper and NODE_EXTRA_CA_CERTS. No
+  # Atlas, no repository secret; the token is generated in the job and never printed.
+  client-pack:
+    name: client pack (clients/claude-code)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node pinned here, not taken from the runner image: GitHub's images ship one, the
+      # self-hosted runner (vars.CI_RUNNER) does not. Same pin as verify.yml and install-smoke.yml.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Claude Code CLI (pinned)
+        run: |
+          npm install -g --no-fund --no-audit @anthropic-ai/claude-code@2.1.310
+          claude --version
+          pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+
+      - name: client pack against a stub
+        env:
+          CLIENT_PACK_E2E_CLAUDE: "1"
+          DISABLE_TELEMETRY: "1"
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: bash clients/claude-code/tests/test_client_pack.sh

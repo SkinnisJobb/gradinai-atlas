@@ -1,0 +1,62 @@
+# Single sign-on (OIDC) on the OSS install (ADR 0041 §5-§7, STORY-oss-13; shipped by OSS-26 A): an
+# OVERLAY, added on the command line by an install that turns SSO on. The base install
+# (docker-compose.yml alone) is unchanged by this file's existence: local accounts only, and
+# atlas-api with no route out of the node.
+#
+#   docker compose -f docker-compose.yml -f oidc.yml up -d
+#   (with retrieval too: -f docker-compose.yml -f retrieval.yml -f oidc.yml, or
+#   COMPOSE_FILE=docker-compose.yml:retrieval.yml:oidc.yml in .env)
+#
+# What it adds, and nothing else:
+#   * atlas-api joins `egress`, its route to the IdP. atlas-api itself calls the issuer's
+#     discovery document, token endpoint and JWKS (the browser only visits the authorization
+#     endpoint). In the base layout atlas-api is on internal networks only, so without this a
+#     real IdP (Entra ID, a Keycloak elsewhere) is unreachable and "Sign in with SSO" answers
+#     503 "Single sign-on unavailable" (auth_event reason oidc:discovery_unavailable).
+#     `egress` is not internal: from here on atlas-api can open connections out of the node.
+#   * the OIDC credentials as compose secrets, each mounted at /run/secrets/<name>, which is
+#     what the "Sign-in" block of .env.example names:
+#       oidc_client_secret  ATLAS_OIDC_CLIENT_SECRET_FILE=/run/secrets/oidc_client_secret
+#                           from ./secrets/oidc_client_secret
+#       oidc_group_map      ATLAS_OIDC_GROUP_MAP_FILE=/run/secrets/oidc_group_map
+#                           from ./secrets/oidc_group_map.yml
+#       oidc_client_key     ATLAS_OIDC_CLIENT_KEY_FILE=/run/secrets/oidc_client_key
+#                           (private_key_jwt only) from /dev/null unless you name a file
+#     A host file is chosen with the ATLAS_OIDC_*_SOURCE variables in .env (commented in
+#     .env.example). With a key instead of a secret (ATLAS_OIDC_TOKEN_AUTH=private_key_jwt):
+#     ATLAS_OIDC_CLIENT_KEY_SOURCE=./secrets/oidc_client_key and
+#     ATLAS_OIDC_CLIENT_SECRET_SOURCE=/dev/null. Without a group map:
+#     ATLAS_OIDC_GROUP_MAP_SOURCE=/dev/null and ATLAS_OIDC_GROUP_MAP_FILE unset.
+#     Files are read by atlas-api under a UID that is not yours: chmod 0644 inside the 0700
+#     ./secrets/ (init-secrets.sh's rule).
+#
+# An IdP whose certificate comes from a PRIVATE CA (an internal Keycloak or ADFS): atlas-api
+# verifies it with the system trust store, so add the CA as a secret and point SSL_CERT_FILE at
+# it, in your own override or by uncommenting the lines below. SSL_CERT_FILE replaces the trust
+# store for every outbound call atlas-api makes, so the bundle must then also hold any public CA
+# another endpoint needs. Entra ID needs none of this.
+services:
+  atlas-api:
+    networks:
+      egress: {}
+    secrets:
+      - db_url
+      - password_pepper
+      - token_pepper
+      - tls_cert            # the base file's list, repeated (TASK-1419: cert_warnings)
+      - oidc_client_secret
+      - oidc_client_key
+      - oidc_group_map
+      # - idp_ca
+    # environment:
+    #   SSL_CERT_FILE: /run/secrets/idp_ca
+
+secrets:
+  oidc_client_secret:
+    file: ${ATLAS_OIDC_CLIENT_SECRET_SOURCE:-./secrets/oidc_client_secret}
+  oidc_client_key:
+    file: ${ATLAS_OIDC_CLIENT_KEY_SOURCE:-/dev/null}
+  oidc_group_map:
+    file: ${ATLAS_OIDC_GROUP_MAP_SOURCE:-./secrets/oidc_group_map.yml}
+  # idp_ca:
+  #   file: ./secrets/idp-ca.crt

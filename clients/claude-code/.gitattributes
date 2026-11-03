@@ -1,0 +1,2 @@
+# The sh helper and the test must keep LF on a Windows checkout, or sh fails on the \r.
+*.sh text eol=lf

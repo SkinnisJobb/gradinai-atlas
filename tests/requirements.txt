@@ -1,0 +1,7 @@
+# The install smoke's test clients (STORY-oss-17, .github/workflows/install-smoke.yml), pinned
+# exactly per ADR 0006. Installed beside mcp/requirements.txt, which brings the `mcp` client and
+# httpx at the versions atlas-mcp itself runs. Not part of any image.
+pytest==9.0.3
+# The browser driver, and through `python -m playwright install chromium` the browser build
+# that matches it: pinning this pins both.
+playwright==1.55.0

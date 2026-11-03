@@ -1,0 +1,493 @@
+# The gate the loop does not control.
+#
+# RAIL 5 of STORY-atlas-fork-loop-rails, and the answer to TASK-1070 ("decide
+# where the suite runs, and wire it"), which has been the open decision on
+# `atlas-ops` for weeks. Until now nothing in this repo ran by itself: parse
+# check, suite, staging, measurement, deploy and closing the ticket all
+# happened because somebody remembered. "Somebody remembered" is not an
+# invariant an unattended agent loop can rest on.
+#
+# ⚠ THIS FILE ALONE DOES NOT BLOCK A MERGE. A workflow reports; a *branch
+# protection rule* enforces. Two settings on GitHub have to exist for the
+# story's criteria to actually hold, and neither lives in this repo:
+#
+#   1. Require the `suite` and `parse` checks to pass before merging to master.
+#   2. Restrict who may push to master, so the loop opens a pull request rather
+#      than merging its own work.
+#
+# Without those, a red run is a red X somebody can ignore — which is the same
+# failure as a suite nobody types, arriving through a different door.
+#
+# ⚠ AND NOTE WHAT A WORKFLOW FILE IN THIS REPO CANNOT BE. An agent that can
+# push here can edit this file. So "the loop cannot disable the gate" is NOT
+# established by anything written below — it is established by a deny rule on
+# `.github/**` in the operator's permission settings, plus branch protection.
+# Read that criterion as unmet until both exist, whatever this file says.
+#
+# WHY ACTIONS, since the choice was a real one and the alternatives were not
+# obviously worse. The server (atlas.example.com) has Docker and Postgres already — but it is the
+# box the board runs on, and a suite there competes with live. A pre-push hook
+# is the cheapest option and entirely local, which is precisely how it would
+# eventually get skipped by whoever is in a hurry. Actions is off-box, visible
+# on the commit without anyone opening a log, and cannot be skipped quietly.
+#
+# AND WHY THERE IS NO `services: postgres` BLOCK, which is the idiomatic
+# Actions move and is deliberately not made here. It would mean setting
+# `ATLAS_TEST_DB_URL` — the one variable `backend/TESTING.md` warns against,
+# because it is the configuration two concurrent runs once raced in — and CI
+# would then exercise a different path from the one every developer runs.
+# `verify_all.py` starts its own disposable container on the runner exactly as
+# it does on a workstation, so a green CI run means the same thing as a green
+# local run. That equality is the point; a faster CI without it is worth less.
+#
+# (This reasoning was in AGENTS.md until 2026-08-25, where it loaded on every
+# session to answer a question only somebody editing this file ever asks.)
+
+name: verify
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE (2026-10-25; master narrowed 2026-10-26). A pull request runs on
+# `pull_request` only; a branch push without a PR runs nothing; master runs on `push`, and this
+# is the ONLY workflow that does (the others ran on the pull request). Runs are grouped by PR
+# number, or by ref for master, and a newer run cancels an older one in the same group.
+# tools/deploy.sh gates on the verify run of master's LATEST commit, and that run is never
+# cancelled (nothing newer replaces it); an older commit's run would only have queued behind it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Read-only token for every job: each one checks out the tree and runs checks; none writes a
+# check run, a release, a package or a comment (the job's own status is reported by Actions,
+# not by the token).
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: backend suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"          # matches backend/Dockerfile
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r backend/requirements.txt
+
+      # verify_frontend_v2.py runs board v2's `node --test` suite, and FAILS
+      # rather than skips without node (ADR 0043). Pinned, so the runner image
+      # changing its default cannot change what the suite means.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # NO `services:` BLOCK, AND THAT IS DELIBERATE.
+      #
+      # The idiomatic Actions move is a `services: postgres` container plus
+      # ATLAS_TEST_DB_URL. This repo warns loudly against setting that variable
+      # yourself, because doing so is what put two runs on one database on
+      # 2026-08-10 — one dropped the other's schema mid-run and both reported
+      # green on the re-run. Per-job isolation would make it safe HERE, but it
+      # would also mean CI exercises a different path from the one every
+      # developer runs, and the value of a gate is that it fails the way the
+      # real thing fails.
+      #
+      # So `verify_all.py` starts its own disposable postgres:16-alpine, exactly
+      # as it does on a workstation. Runners have Docker. The cost is one image
+      # pull per run; the benefit is that a green CI run means the same thing as
+      # a green local run.
+      - name: run the suite
+        working-directory: backend
+        run: python verify_all.py
+
+  # STORY-oss-08: the same suite again with every personal/homelab feature switched off, so
+  # "off" is proven not to break anything else. Scripts whose subject IS one of these features
+  # pin the default themselves; verify_feature_flags.py proves the off side.
+  #
+  # ITS OWN JOB, in parallel with `suite` (2026-10-29). It used to be a second STEP of `suite`
+  # so that the check's name would not change for branch protection; that made one job run
+  # the suite twice back to back (11-13 min of a 15 min timeout, ~5.5 min per pass). The
+  # master-gate ruleset is disabled for now, and the default job keeps the name
+  # "backend suite" anyway, so a rule requiring that check still finds it. If the ruleset is
+  # re-enabled, add "backend suite (features disabled)" to its required checks as well.
+  # Each job's verify_all.py starts its own disposable Postgres, so the two never share a
+  # database. A red default half cannot hide this half: they report separately, which is
+  # what the old step's `if: always()` was for.
+  #
+  # TIMEOUT 30 (suite) and 35 (this job): one pass took 4.9-7.1 min over the last 8 green
+  # runs on the self-hosted pool; the limit leaves room for a busy runner and a growing suite
+  # without letting a hung script hold a runner for long. On GitHub-hosted runners (the public
+  # repository's first run, 2026-11-03) the default half took 12 min and this half 19.6 min, past
+  # the old 20 after all 70 scripts had passed, so both were raised.
+  suite-features-disabled:
+    name: backend suite (features disabled)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"          # matches backend/Dockerfile
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - run: pip install -r backend/requirements.txt
+
+      # verify_frontend_v2.py runs board v2's `node --test` suite, and FAILS
+      # rather than skips without node (ADR 0043). Pinned, so the runner image
+      # changing its default cannot change what the suite means.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # verify_all.py starts its own disposable Postgres (see the `suite` job for why there
+      # is no `services:` block).
+      - name: run the suite with every feature disabled
+        working-directory: backend
+        env:
+          ATLAS_DISABLED_FEATURES: github_link,save_work,deploy_status,deploy_warning,attention_probes
+        run: python verify_all.py
+
+  routes:
+    name: route table matches routes.snapshot.txt
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"          # matches backend/Dockerfile
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+
+      # STORY-oss-04 split app.py into main/db/deps and routers/. The route
+      # table is the contract that split must not move: this imports the real
+      # app (no database; create_engine does not connect) and diffs every
+      # (method, path, endpoint) against the committed snapshot, then checks no
+      # route is shadowed by an earlier one. Its own job, like `docs`, so a
+      # route drift reads as exactly that and not as a red "backend suite".
+      # It also runs inside verify_all.py, which is what a developer types.
+      - name: verify_routes
+        working-directory: backend
+        run: python verify_routes.py
+
+  mcp:
+    name: atlas-mcp verify scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"          # matches mcp/Dockerfile
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            mcp/requirements.txt
+
+      # BOTH requirement files: verify_caller_auth_api.py drives the real
+      # atlas-api in process against a disposable Postgres (testdb, the same
+      # way the backend suite does), so scopes and graph_event attribution are
+      # atlas-api's own answers, not a stub's. The pins agree where they overlap.
+      - run: pip install -r backend/requirements.txt -r mcp/requirements.txt
+
+      # Every mcp/verify_*.py, by glob, so a new one cannot be forgotten here.
+      # verify_all.py only discovers backend/. Under 3.12 on purpose: see
+      # verify_tool_descriptions.py on why a newer Python under-measures.
+      - name: run every mcp/verify_*.py
+        working-directory: mcp
+        run: |
+          set -e
+          shopt -s nullglob
+          scripts=(verify_*.py)
+          if [ ${#scripts[@]} -eq 0 ]; then
+            echo "no mcp/verify_*.py found - the glob is wrong, or the tree moved" >&2
+            exit 1
+          fi
+          bad=0
+          for f in "${scripts[@]}"; do
+            echo "::group::$f"
+            if python "$f"; then echo "ok: $f"; else echo "FAILED: $f" >&2; bad=1; fi
+            echo "::endgroup::"
+          done
+          exit $bad
+
+      # STORY-oss-08: the same scripts with every feature switched off (see the
+      # suite-features-disabled job for the history).
+      - name: run every mcp/verify_*.py with every feature disabled
+        if: always()
+        working-directory: mcp
+        env:
+          ATLAS_DISABLED_FEATURES: github_link,save_work,deploy_status,deploy_warning,attention_probes
+        run: |
+          set -e
+          shopt -s nullglob
+          scripts=(verify_*.py)
+          if [ ${#scripts[@]} -eq 0 ]; then
+            echo "no mcp/verify_*.py found - the glob is wrong, or the tree moved" >&2
+            exit 1
+          fi
+          bad=0
+          for f in "${scripts[@]}"; do
+            echo "::group::$f"
+            if python "$f"; then echo "ok: $f"; else echo "FAILED: $f" >&2; bad=1; fi
+            echo "::endgroup::"
+          done
+          exit $bad
+
+  network:
+    name: network exposure and TLS
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # OSS-02 and OSS-24. Static checks over the tracked tree, seconds each.
+      # check_binds.sh: nothing publishes to every interface by accident.
+      # check_tls.sh: no token-carrying hop is plain HTTP past loopback, and
+      # nothing switches certificate verification off. Each runs its self-test
+      # first, so a check that silently stopped failing on its bad cases is red.
+      - name: self-tests
+        run: |
+          bash tools/ci/check_binds.sh --self-test
+          bash tools/ci/check_tls.sh --self-test
+      - name: check_binds
+        run: bash tools/ci/check_binds.sh
+      - name: check_tls
+        run: bash tools/ci/check_tls.sh
+
+  gate-integrity:
+    name: the gate refuses deletion of itself
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0                 # need history to diff the pushed range
+
+      # RAIL 2 of STORY-atlas-fork-loop-rails: the loop may not REMOVE the
+      # things that judge it — `backend/verify_*.py` and this workflow. It
+      # said "may not edit" until 2026-08-24; see the narrowing note below the
+      # boilerplate for why that was too wide to survive contact.
+      #
+      # ⚠ READ THIS BEFORE TRUSTING IT. This is a TRIPWIRE, not a wall. It
+      # identifies loop-authored commits by the `Co-Authored-By: Claude` trailer,
+      # which an agent that wanted to evade it would simply omit. It catches the
+      # accidental case and an honest one; it does not stop a determined one.
+      #
+      # The actual wall is two things that do not live in this repo: a
+      # `permissions.deny` rule on `backend/verify_*.py` and `.github/**` in the
+      # operator's settings, and branch protection so the loop opens a pull
+      # request rather than merging its own work. Until both exist, treat the
+      # story's "the loop cannot disable, skip or edit the CI gate" as UNMET,
+      # whatever this job reports.
+      #
+      # It is still worth having: it makes a removal visible in the one place a
+      # human is already looking, and it costs six seconds.
+      #
+      # PULL REQUESTS ONLY, and that is the whole design.
+      #
+      # On a feature branch the loop SHOULD be free to work; the question this
+      # job answers is "may this land on master", which is a pull-request
+      # question.
+      #
+      # THE BOOTSTRAP HAPPENED on 2026-08-23 and is no longer pending. PR #18
+      # was the first pull request this job ever judged; it failed, correctly,
+      # and was merged knowingly. What the bootstrap actually taught was not
+      # about bootstrapping: the job then failed #19 and #21 as well, and all
+      # three were legitimate work. That is what forced the narrowing.
+      #
+      # NARROWED TO DELETIONS (owner decision, 2026-08-24). It used to refuse any TOUCH
+      # of a gate file, and that is why it is narrower now: it fired on three
+      # consecutive pull requests, and every one of them was legitimate —
+      # #18 added a verify script, #19 fixed a bug the loop had found in its own
+      # test, #21 updated checks to match a rail whose behaviour had
+      # deliberately changed. A check that is red on every honest change is one
+      # people learn to merge past, and a gate everybody merges past is
+      # decoration. Refusing only DELETION keeps the signal rare enough to still
+      # mean something.
+      #
+      # ⚠ WHAT THIS NO LONGER CATCHES, AND IT IS THE LIKELIER ATTACK. Deleting a
+      # verify script is the loud way to remove a check. The quiet way is to
+      # leave the file in place and neuter what is inside it — invert an
+      # assertion, drop a `check(...)` line, set a cap to 0. None of that is a
+      # deletion and none of it is caught here. The step PRINTS modifications so
+      # they are visible in the log, but it does not fail on them. Reading the
+      # diff of a gate file remains a human job; this job never replaced it.
+      #
+      # `--no-renames` is deliberate. With rename detection on, moving
+      # `backend/verify_x.py` to `notes/x.py` reads as a rename and passes,
+      # which is deletion-from-the-suite by another name. The cost is that a
+      # genuine rename inside the pattern also trips it — rare, and worth a
+      # human glance when it happens.
+      - name: no loop-authored DELETION of the suite or the workflow
+        if: github.event_name == 'pull_request'
+        run: |
+          set -e
+          range="${{ github.event.pull_request.base.sha }}..${{ github.sha }}"
+          gate='^backend/verify_.*\.py$|^\.github/'
+          echo "  range: $range"
+          bad=0
+          for sha in $(git rev-list "$range"); do
+            gone="$(git show --pretty="" --name-only --no-renames --diff-filter=D "$sha" \
+                    | grep -E "$gate" || true)"
+            touched="$(git show --pretty="" --name-only --no-renames --diff-filter=AM "$sha" \
+                    | grep -E "$gate" || true)"
+            loop=0
+            if git show -s --format='%B' "$sha" | grep -qi 'Co-Authored-By: Claude'; then
+              loop=1
+            fi
+            if [ -n "$gone" ] && [ "$loop" = 1 ]; then
+              echo "  REFUSED $sha — loop-authored commit DELETES gate files:" >&2
+              echo "$gone" | sed 's/^/    - /' >&2
+              bad=1
+            elif [ -n "$gone" ]; then
+              echo "  ok $sha — human-authored deletion of a gate file"
+              echo "$gone" | sed 's/^/    - /'
+            fi
+            # Reported, never fatal. Somebody still has to read these.
+            if [ -n "$touched" ]; then
+              echo "  note $sha — gate files changed (not a deletion, not refused):"
+              echo "$touched" | sed 's/^/    ~ /'
+            fi
+          done
+          exit $bad
+
+  parse:
+    name: frontend parse check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # AGENTS.md §"What done means here", step 1: the board has no build step,
+      # so NOTHING else catches a syntax error in a module — it ships, and the
+      # first sign is a blank canvas in a browser.
+      - name: node --check every frontend module
+        run: |
+          set -e
+          shopt -s nullglob globstar
+          # board v2 (ADR 0043) is a tree, so it is walked recursively; its
+          # `*.test.js` files are node --test suites and are checked too.
+          # The product website (TASK-1463, frontend/landing-v2/) has one script, checked too.
+          files=(frontend/*.js frontend/v2/**/*.js frontend/landing-v2/*.js)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no frontend modules found — the glob is wrong, or the tree moved" >&2
+            exit 1                      # zero files must never read as green
+          fi
+          for f in "${files[@]}"; do
+            printf '  %-28s ' "$f"; node --check "$f" && echo ok
+          done
+
+      # Every module must be in ASSET_FILES or it 404s on live while rendering
+      # fine anywhere that serves the directory. That has bitten before, and it
+      # is exactly the class of defect a human reviewer does not see in a diff.
+      # SCOPE: the things `/assets/*` actually serves — the modules, the
+      # stylesheet, and the board shell. Deliberately NOT every file under
+      # frontend/:
+      #
+      #   - `index.html` is the superseded v0 tree view. It is UNREACHABLE: no
+      #     route, and the /static mount that served it is deleted.
+      #   - `login.html`, `logout.html` and `change-password.html` are NOT
+      #     rendered from disk at all — the live login form, forced-change page,
+      #     /auth/denied and /auth/privacy come from the `_PAGE` string template
+      #     inline in backend/auth.py. So requiring these files in the allowlist
+      #     would fail this job for a correct tree. (Re-checked 2026-08-25:
+      #     `auth.py` DOES name `login.html` once, in a comment; nothing routes
+      #     to any of the three. The comment used to say TASK-969 owned them,
+      #     but that task is done — they are orphaned, not pending. Whether to
+      #     delete them is not this job's call.)
+      #
+      # Widening this glob without checking how a file is served is how a gate
+      # starts crying wolf, and a gate people learn to ignore is worse than none.
+      - name: every asset is served by the allowlist
+        run: |
+          set -e
+          missing=0
+          for f in frontend/*.js frontend/*.css frontend/board.html; do
+            base="$(basename "$f")"
+            if ! grep -q "\"$base\"" backend/routers/assets.py; then
+              echo "  MISSING from ASSET_FILES: $base" >&2; missing=1
+            else
+              echo "  ok: $base"
+            fi
+          done
+          # board v2 is keyed by its path under frontend/ (`"v2/core/store.js"`),
+          # so the key is the relative path, not the basename. Test suites are
+          # not served and are not required to be listed, and v2/index.html is
+          # served by its own route (`/board/v2`), as board.html is by `/board`.
+          shopt -s nullglob globstar
+          for f in frontend/v2/**/*.js frontend/v2/**/*.css; do
+            case "$f" in *.test.js|frontend/v2/test-support/*) continue ;; esac
+            rel="${f#frontend/}"
+            if ! grep -q "\"$rel\"" backend/routers/assets.py; then
+              echo "  MISSING from ASSET_FILES: $rel" >&2; missing=1
+            else
+              echo "  ok: $rel"
+            fi
+          done
+          exit $missing
+
+  docs:
+    name: the briefing files against their own rules
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # ITS OWN JOB, NOT PART OF `suite`, for one reason: verify_docs.py is the
+      # only verify_* script that needs no database. Folding it into the suite
+      # would make a documentation typo wait on a Postgres image pull, and would
+      # hide a red doc check behind a job whose name says "backend suite".
+      #
+      # It ALSO runs inside verify_all.py, because that is the command a
+      # developer types and a check nobody can run locally is a check nobody
+      # fixes. Running twice costs nothing here; running nowhere costs the rule.
+      #
+      # What fails it: a line budget exceeded, a strikethrough, a "Shipped
+      # 20xx" heading, a workitem id, or a 12-word restatement of a skill or a
+      # nested CLAUDE.md, in AGENTS.md or CLAUDE.md. The script's docstring
+      # says why each one is a rule.
+      - name: verify_docs
+        working-directory: backend
+        run: python verify_docs.py
+
+      # The handbook (STORY-atlas-system-node-handbook, ADR 0047): backend/system_handbook.py is
+      # the one source (the seed writes it into the atlas-system nodes' documents); frontend/docs/
+      # (the /docs site) is generated from it and committed. This re-renders the site in memory
+      # and fails on any stale, missing or extra file. Standard library only, no database.
+      - name: the handbook site is generated from the current system node docs
+        run: python tools/docs_site.py --check
+
+      # project-ai-dev-seat is the ONLY repo in the estate whose default branch
+      # is `main`; it has no `master` ref, so a `.../project-ai-dev-seat/blob/master/...`
+      # link 404s. The ADR 0031 repo split once produced 50 of those across four
+      # repos, invisible from inside any one of them. This was a remembered rule;
+      # since 2026-09-15 it is this step. (The other four repos default to master.)
+      - name: no dead links into the seat repo
+        run: |
+          if grep -rn --exclude-dir=.github --exclude-dir=.git --include='*.md' --include='*.py' --include='*.js' --include='*.yml'                'project-ai-dev-seat/blob/master' . ; then
+            echo "project-ai-dev-seat's default branch is main - use blob/main" >&2
+            exit 1
+          fi
+          echo "no project-ai-dev-seat/blob/master links"
+

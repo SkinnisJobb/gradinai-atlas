@@ -1,0 +1,207 @@
+# The website's screenshots (TASK-1465), from a disposable, self-seeded demo install.
+#
+# docs/site/content.md section 19: every screenshot comes from a fresh demo install, never from
+# a real instance. This boots the OSS stack from deploy/oss/.env.example the way
+# install-smoke.yml's leg 1 does (images built from this checkout), with ATLAS_SEED=self (the
+# install's own world model, TASK-1461) and the example's own name, atlas.example.com, mapped
+# to the runner's loopback. Then:
+#
+#   accounts    tools/site/demo_work.py accounts: the person "Alex" (owner) and the agent
+#               alex-claude linked to Alex, by atlas-admin, as install-smoke's leg 3
+#   seed shot   tools/site/capture.py --phase seed: fresh-seed-graph, BEFORE any work exists
+#   demo work   tools/site/demo_work.py work: epics, stories, tasks, a proposal, comments,
+#               history by both, through the API
+#   work shots  tools/site/capture.py --phase work: the other six slugs
+#   scrub       tools/scrub/scan.py, enforce, over demo_work.py, capture.py and the page text
+#               captured with each shot; a finding fails the run and nothing is uploaded
+#   upload      the `site-shots` artifact: shots/<slug>.png and shots/<slug>-390.png
+#
+# Manual only. tools/site/README.md says how to trigger it and what to do with the artifact
+# (the PNGs are reviewed, then committed into frontend/landing-v2/img/shots/ by hand).
+#
+# SECRETS. Every demo credential is generated in the job, in a 0700 directory under
+# $RUNNER_TEMP, one file each, as install-smoke does; steps pass files, never values. The one
+# repository secret is SCRUB_DENYLIST, written to a 0600 file for the scrub step only (scrub.yml).
+
+name: site-shots
+
+on:
+  workflow_dispatch:
+
+# The OSS stack is compose project `atlas` with fixed host ports, like install-smoke's stack
+# jobs, so it runs on the same `<CI_RUNNER>-stack` runner, one at a time.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  SMOKE_HOST: atlas.example.com
+  SMOKE_URL: https://atlas.example.com
+
+jobs:
+  shots:
+    name: site screenshots (demo install, ATLAS_SEED=self)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            mcp/requirements.txt
+            tests/requirements.txt
+
+      - name: prepare the runner (client deps, Playwright's Chromium, the demo name)
+        run: |
+          set -euo pipefail
+          SMOKE_DIR="$RUNNER_TEMP/site-demo"; rm -rf "$SMOKE_DIR"; mkdir -m 0700 "$SMOKE_DIR"
+          echo "SMOKE_DIR=$SMOKE_DIR" >> "$GITHUB_ENV"
+          echo "SMOKE_CA=$GITHUB_WORKSPACE/deploy/oss/secrets/tls/ca.crt" >> "$GITHUB_ENV"
+          echo "SHOTS=$RUNNER_TEMP/site-shots" >> "$GITHUB_ENV"
+          rm -rf "$RUNNER_TEMP/site-shots"; mkdir -p "$RUNNER_TEMP/site-shots"
+          pip install -r mcp/requirements.txt -r tests/requirements.txt
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y --no-install-recommends libnss3-tools >/dev/null
+          # A self-hosted runner keeps /etc/hosts between runs: add the name once.
+          grep -q "[[:space:]]$SMOKE_HOST\$" /etc/hosts || echo "127.0.0.1 $SMOKE_HOST" | sudo tee -a /etc/hosts
+          python tools/site/demo_work.py --dry-run
+          python tools/site/capture.py --dry-run
+
+      - name: boot the demo install (.env.example, ATLAS_SEED=self, every service healthy)
+        working-directory: deploy/oss
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          # .env.example already names atlas.example.com. The one change: the self seed.
+          sed -i 's/^ATLAS_SEED=none$/ATLAS_SEED=self/' .env
+          grep -qx 'ATLAS_SEED=self' .env || { echo "ATLAS_SEED=self did not land in .env" >&2; exit 1; }
+          echo "--- .env against .env.example (the whole of what this install changed):"
+          diff .env.example .env || true
+          bash ../../scripts/init-secrets.sh
+          docker compose up -d --build --wait --wait-timeout 600
+          docker compose ps -a
+          bad=0
+          for svc in $(docker compose config --services); do
+            cid=$(docker compose ps -aq "$svc")
+            [ -n "$cid" ] || { echo "$svc: no container"; bad=1; continue; }
+            state=$(docker inspect -f '{{.State.Status}} exit={{.State.ExitCode}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$cid")
+            echo "$svc: $state"
+            case "$svc:$state" in
+              atlas-migrate:"exited exit=0 health=none") ;;
+              *:"running exit=0 health=healthy") ;;
+              *) bad=1 ;;
+            esac
+          done
+          [ "$bad" = 0 ] || { echo "a service is not healthy" >&2; exit 1; }
+          curl -sS --cacert secrets/tls/ca.crt -o /dev/null -w 'healthz %{http_code}\n' "$SMOKE_URL/healthz"
+
+      # Chromium trusts the install CA through the user's NSS database, as install-smoke's leg 7
+      # does (same nickname, so either workflow replaces the other's CA); nothing is ignored.
+      - name: trust the install CA in Chromium
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.pki/nssdb"
+          [ -f "$HOME/.pki/nssdb/cert9.db" ] || certutil -d "sql:$HOME/.pki/nssdb" -N --empty-password </dev/null
+          while certutil -d "sql:$HOME/.pki/nssdb" -D -n atlas-install-ca </dev/null 2>/dev/null; do :; done
+          certutil -d "sql:$HOME/.pki/nssdb" -A -t "C,," -n atlas-install-ca -i "$SMOKE_CA" </dev/null
+
+      - name: "accounts: Alex (owner) and alex-claude, linked to Alex"
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          umask 077
+          python tools/site/demo_work.py accounts --compose-dir deploy/oss
+          ls -l "$SMOKE_DIR"
+
+      - name: "seed shot: fresh-seed-graph, before any work"
+        timeout-minutes: 5
+        run: python tools/site/capture.py --phase seed --out "$SHOTS"
+
+      - name: "demo work: epics, stories, tasks, a proposal, comments, history by both"
+        timeout-minutes: 5
+        run: python tools/site/demo_work.py work --out "$SMOKE_DIR/demo-ids.json"
+
+      - name: "work shots: backlog-view, history-tab, proposal-overview, board-whole, my-tasks, docs-tab"
+        timeout-minutes: 10
+        run: python tools/site/capture.py --phase work --ids "$SMOKE_DIR/demo-ids.json" --out "$SHOTS"
+
+      - name: materialise the scrub denylist from its secret
+        id: denylist
+        if: ${{ !cancelled() }}
+        env:
+          SCRUB_DENYLIST: ${{ secrets.SCRUB_DENYLIST }}
+        run: |
+          if [ -z "$SCRUB_DENYLIST" ]; then
+            echo "::warning title=scrub::SCRUB_DENYLIST secret not available - scanning generic patterns only"
+            echo "file=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          f="$RUNNER_TEMP/scrub-denylist.txt"
+          ( umask 077; printf '%s\n' "$SCRUB_DENYLIST" > "$f" )
+          echo "file=$f" >> "$GITHUB_OUTPUT"
+
+      # The scanner walks every file under --root when that is not a git work tree, so the
+      # bundle holds exactly what is checked: the two scripts and each shot's page text.
+      - name: "scrub: demo_work.py, capture.py and the captured page text (enforce)"
+        if: ${{ !cancelled() }}
+        env:
+          SCRUB_DENYLIST_FILE: ${{ steps.denylist.outputs.file }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/site-scrub"; rm -rf "$bundle"; mkdir -p "$bundle/dom-text"
+          cp tools/site/demo_work.py tools/site/capture.py "$bundle/"
+          cp "$SHOTS"/dom-text/*.txt "$bundle/dom-text/" 2>/dev/null || true
+          ls -R "$bundle"
+          [ "$(ls "$bundle/dom-text" | wc -l)" -ge 1 ] || { echo "no page text was captured" >&2; exit 1; }
+          python tools/scrub/scan.py --mode enforce --root "$bundle"
+
+      - name: remove the denylist file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/scrub-denylist.txt"
+
+      # Only a run whose every step passed, the scrub included, uploads the pictures. The page
+      # text goes with them, for the reviewer; credentials never do (they are in SMOKE_DIR).
+      - name: upload the shots
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: site-shots
+          path: ${{ env.SHOTS }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: collect compose logs and the failed page (on failure)
+        if: failure()
+        working-directory: deploy/oss
+        run: |
+          mkdir -p "$RUNNER_TEMP/site-failure"
+          docker compose ps -a > "$RUNNER_TEMP/site-failure/compose-ps.txt" 2>&1 || true
+          docker compose logs --no-color --timestamps > "$RUNNER_TEMP/site-failure/compose-logs.txt" 2>&1 || true
+          tail -80 "$RUNNER_TEMP/site-failure/compose-logs.txt" || true
+          cp "$SHOTS"/failed-*.png "$RUNNER_TEMP/site-failure/" 2>/dev/null || true
+
+      # A failed page is demo data only, but it has not passed the scrub: kept for 3 days.
+      - name: upload the failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: site-shots-failure
+          path: ${{ runner.temp }}/site-failure
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: tear down
+        if: always()
+        working-directory: deploy/oss
+        run: |
+          docker compose down -v --remove-orphans || true
+          rm -rf .env secrets "$SMOKE_DIR"

@@ -1,0 +1,303 @@
+/* styles/overlays.css — the Settings and "File work" overlays.
+   Board v2 REUSES the legacy settings.js and compose.js as they are (TASK-1307),
+   so their styles are copied unchanged from legacy board.css (the "overlay"
+   through "File work" sections). The rules belong to those modules, so they are
+   not rewritten here: when legacy is retired, this sheet goes with the modules. */
+
+/* ------------------------------------------------------------- overlay -- */
+.settings-overlay { position: fixed; inset: 0; z-index: 200; display: flex;
+  align-items: flex-start; justify-content: center; padding: 6vh 16px;
+  background: rgba(16, 22, 30, .5); overflow: auto; }
+.settings-overlay[hidden] { display: none; }
+.settings-sheet { width: min(1080px, 100%); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+.settings-head { display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.settings-head h2 { margin: 0; font-size: calc(17px * var(--ui-scale)); color: var(--ink); }
+.settings-close { font: inherit; font-size: calc(20px * var(--ui-scale)); line-height: 1;
+  color: var(--ink-faint); background: transparent; border: 0; cursor: pointer;
+  padding: 2px 8px; border-radius: 7px; }
+.settings-close:hover { background: var(--panel-2); color: var(--ink); }
+.settings-body { padding: 4px 20px 20px; }
+
+/* ------------------------------------------------- the left-nav shell --- */
+/* Two panes: a vertical menu and the selected group's content (owner
+   decision, 2026-08-25: "a menu to the left of the main settings window, go from top to
+   bottom"). This lives ONLY inside `#settingsBody` as built by settings.js —
+   compose.js reuses the plain `.settings-body` for its own single-column
+   form and never emits `.settings-shell`, so nothing here touches it. */
+.settings-shell { display: flex; align-items: flex-start; gap: 22px;
+  min-height: calc(280px * var(--ui-scale)); }
+.settings-nav { flex: 0 0 168px; display: flex; flex-direction: column;
+  gap: 2px; border-right: 1px solid var(--line); padding-right: 14px; }
+.settings-nav-btn { display: block; width: 100%; text-align: left; font: inherit;
+  font-size: calc(13px * var(--ui-scale)); color: var(--ink-soft);
+  background: transparent; border: 0; border-radius: 7px; padding: 8px 10px;
+  cursor: pointer; transition: background .15s, color .15s; }
+.settings-nav-btn:hover { background: var(--panel-2); color: var(--ink); }
+.settings-nav-btn.is-active { background: var(--panel-2); color: var(--ink);
+  font-weight: 600; }
+.settings-nav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.settings-content { flex: 1 1 auto; min-width: 0; }
+.settings-pane[hidden] { display: none; }
+
+.settings-section { padding-top: 18px; }
+/* First section inside a pane needs no extra top-air — the pane itself is
+   already below the menu row's baseline, and the padding above exists for
+   STACKED sections (mobile keeps only one section per pane, see below). */
+.settings-pane > .settings-section:first-child { padding-top: 4px; }
+.settings-h3 { margin: 0 0 6px; font-size: calc(13px * var(--ui-scale));
+  font-family: var(--font-mono); letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-faint); }
+.settings-note { margin: 0 0 12px; font-size: calc(13px * var(--ui-scale));
+  color: var(--ink-soft); line-height: 1.55; max-width: 68ch; }
+.settings-warn { margin: 12px 0 0; font-size: calc(12.5px * var(--ui-scale));
+  color: var(--att-orange); line-height: 1.5; }
+.settings-dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px;
+  margin: 0 0 12px; font-size: calc(13px * var(--ui-scale)); }
+.settings-dl dt { color: var(--ink-faint); }
+.settings-dl dd { margin: 0; color: var(--ink); font-family: var(--font-mono); }
+.settings-link { display: block; width: fit-content; margin-top: 6px;
+  font-size: calc(13px * var(--ui-scale)); color: var(--accent); }
+
+/* -------------------------------------------------------- access grid --- */
+/* ACCOUNTS DOWN, PROJECTS ACROSS (2026-08-16). The axis was the other way and
+   it scrolled sideways at nine accounts, because accounts are the set that
+   grows — roughly two per contributor once each brings an agent — while
+   projects change only when a decision changes. The table still scrolls
+   inside its own container: letting it scroll the page body would drag the
+   map out from under the overlay. */
+.access-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.access-table { border-collapse: collapse; width: 100%;
+  font-size: calc(13px * var(--ui-scale)); }
+.access-table th, .access-table td { padding: 8px 12px; text-align: left;
+  border-bottom: 1px solid var(--line); vertical-align: middle; }
+.access-table thead th { background: var(--panel-2); color: var(--ink-faint);
+  font-weight: 600; font-size: calc(12px * var(--ui-scale)); white-space: nowrap;
+  position: sticky; top: 0; vertical-align: bottom; }
+.access-table tbody tr:last-child th, .access-table tbody tr:last-child td { border-bottom: 0; }
+
+/* The account column is a ROW HEADER now: left-aligned, and it stays put while
+   the project columns scroll under it. Without the sticky column you lose track
+   of whose row you are ticking the moment there are more projects than fit. */
+.access-th-acct, .access-td-acct { text-align: left; position: sticky; left: 0;
+  background: var(--panel); z-index: 1; white-space: nowrap; }
+.access-table thead .access-th-acct { background: var(--panel-2); z-index: 2; }
+.access-td-cell { text-align: center; }
+
+.access-acct-name { font-family: var(--font-mono); color: var(--ink); }
+.access-acct-tag { font-size: calc(10px * var(--ui-scale)); margin-left: 6px;
+  color: var(--ink-faint); letter-spacing: .04em; text-transform: uppercase; }
+.access-acct-tag.is-off { color: var(--att-red); }
+.access-acct-tag.is-bot { color: var(--att-purple); }
+.access-agent-count { font-size: calc(10.5px * var(--ui-scale)); margin-left: 8px;
+  color: var(--ink-faint); }
+
+/* The chevron. `is-empty` is a spacer for a person with no agents — without it
+   their name sits one chevron-width left of everyone else's and the column
+   reads as two columns. */
+.access-expand { display: inline-block; width: calc(16px * var(--ui-scale));
+  font: inherit; font-size: calc(12px * var(--ui-scale)); color: var(--ink-faint);
+  background: none; border: 0; padding: 0; margin-right: 4px; cursor: pointer;
+  text-align: center; }
+.access-expand:hover { color: var(--ink); }
+.access-expand.is-empty { cursor: default; }
+
+/* An agent's row is indented and quieter than its person's — the person is the
+   unit an owner administers, the agents are the detail under it. */
+.access-arow.is-agent .access-td-acct { padding-left: calc(30px * var(--ui-scale)); }
+.access-arow.is-agent .access-acct-name { color: var(--ink-soft); }
+.access-arow.is-sep .access-td-acct { font-size: calc(10.5px * var(--ui-scale));
+  color: var(--ink-faint); letter-spacing: .06em; text-transform: uppercase;
+  padding-top: 12px; }
+
+.access-proj-name { color: var(--ink); font-weight: 600; }
+.access-proj-id { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+  color: var(--ink-faint); margin-top: 1px; font-weight: 400; }
+.access-th-proj.is-private .access-proj-name { color: var(--att-purple); }
+.access-col-status { font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale));
+  color: var(--ink-faint); font-weight: 400; margin-top: 3px; min-height: 1em; }
+.access-col-status.is-bad { color: var(--att-red); }
+
+.access-vis { font: inherit; font-size: calc(12.5px * var(--ui-scale));
+  font-family: var(--font-mono); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 7px; padding: 4px 8px; cursor: pointer;
+  margin-top: 5px; }
+.access-box { width: 15px; height: 15px; cursor: pointer; accent-color: var(--accent); }
+.access-always { color: var(--ink-faint); font-size: calc(15px * var(--ui-scale)); }
+
+/* A shared project's checkboxes are live but inert — the grants are stored and
+   do nothing until it is private. Dimming says so without a tooltip. */
+.access-td-cell:not(.is-private) .access-box { opacity: .45; }
+
+/* AN INHERITED GRANT (ADR 0034 / TASK-1114): this agent sees the project
+   because its PERSON is granted it, and there is no row on the agent to
+   untick. The box is disabled and the arrow says where the grant lives, so
+   the one wrong outcome — clearing it, saving, and watching it come back —
+   is not reachable. Deliberately quieter than a direct tick: a stored grant
+   and an inherited one must not look identical. */
+.access-inherited { display: none; margin-left: 3px; color: var(--accent);
+  font-size: calc(12px * var(--ui-scale)); }
+.access-td-cell.is-inherited .access-inherited { display: inline; }
+.access-td-cell.is-inherited .access-box { opacity: .3; cursor: default; }
+
+/* THE DISAGREEMENT MARK: a collapsed person whose agents hold a different
+   answer for this project. Absolutely positioned beside the box rather than
+   replacing it — the box must stay operable, and the mark is a statement
+   ABOUT the row, not a third checkbox state. */
+.access-td-cell { position: relative; }
+.access-mixed { display: none; position: absolute; top: 50%; margin-left: 3px;
+  transform: translateY(-50%); color: var(--att-orange);
+  font-size: calc(11px * var(--ui-scale)); }
+.access-td-cell.is-mixed .access-mixed { display: inline; }
+
+.access-actions { display: flex; align-items: center; justify-content: flex-end;
+  gap: 8px; margin-top: 10px; }
+.access-save { font: inherit; font-size: calc(12px * var(--ui-scale));
+  font-family: var(--font-mono); color: var(--ink-soft); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 999px; padding: 5px 14px;
+  cursor: pointer; transition: border-color .2s, color .2s; }
+.access-save:hover:not([disabled]) { border-color: var(--line-strong); color: var(--ink); }
+.access-save[disabled] { opacity: .4; cursor: default; }
+.access-status { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+  color: var(--ink-faint); }
+.access-status.is-ok { color: var(--att-green); }
+.access-status.is-bad { color: var(--att-red); }
+
+/* -------------------------------------------------- agent credentials --- */
+/* TASK-1117. Every font size scales — a plain px here silently opts out of
+   the text-size control, which is the one house rule easiest to break by
+   copying a snippet from anywhere else. */
+.cred-agent { border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 10px; background: var(--panel); }
+.cred-agent-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.cred-agent-name { font-family: var(--font-mono); color: var(--ink);
+  font-size: calc(13.5px * var(--ui-scale)); }
+.cred-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 0; border-top: 1px solid var(--line);
+  font-size: calc(12.5px * var(--ui-scale)); }
+.cred-prefix { font-family: var(--font-mono); color: var(--ink-soft); }
+.cred-scopes-txt { font-family: var(--font-mono); color: var(--ink-faint); }
+.cred-when { color: var(--ink-faint); font-size: calc(11.5px * var(--ui-scale)); }
+.cred-state { font-size: calc(11px * var(--ui-scale)); letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-faint); }
+.cred-state.is-ok { color: var(--att-green); }
+.cred-state.is-warn { color: var(--att-orange); }
+.cred-state.is-off { color: var(--ink-faint); opacity: .7; }
+.cred-confirm { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.cred-btn { font: inherit; font-size: calc(12px * var(--ui-scale));
+  font-family: var(--font-mono); color: var(--ink-soft); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+  cursor: pointer; transition: border-color .2s, color .2s; }
+.cred-btn:hover:not([disabled]) { border-color: var(--line-strong); color: var(--ink); }
+.cred-btn[disabled] { opacity: .4; cursor: default; }
+.cred-btn.is-primary { color: var(--ink); border-color: var(--line-strong); }
+.cred-btn.is-danger { color: var(--att-red); border-color: var(--att-red); }
+.cred-btn.is-quiet { color: var(--ink-faint); }
+
+.cred-new, .cred-rotate { margin-top: 10px; }
+.cred-new > summary, .cred-rotate > summary { cursor: pointer; color: var(--ink-soft);
+  font-size: calc(12.5px * var(--ui-scale)); }
+.cred-form { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.cred-label { color: var(--ink-soft); font-size: calc(12px * var(--ui-scale));
+  margin-top: 8px; }
+.cred-input { font: inherit; font-size: calc(13px * var(--ui-scale));
+  font-family: var(--font-mono); color: var(--ink); background: var(--panel-2);
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; }
+.cred-scopes { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 2px; }
+.cred-scope { display: inline-flex; align-items: baseline; gap: 5px; cursor: pointer; }
+.cred-check { accent-color: var(--accent); }
+.cred-scope-name { font-family: var(--font-mono); color: var(--ink);
+  font-size: calc(12.5px * var(--ui-scale)); }
+.cred-scope-why { color: var(--ink-faint); font-size: calc(11px * var(--ui-scale)); }
+.cred-note { color: var(--ink-faint); font-size: calc(11.5px * var(--ui-scale));
+  margin: 2px 0 0; line-height: 1.45; }
+.cred-warn { color: var(--att-orange); font-size: calc(12px * var(--ui-scale));
+  margin: 10px 0 0; }
+.cred-form-actions { display: flex; align-items: center; justify-content: flex-end;
+  gap: 8px; margin-top: 12px; }
+.cred-status { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale));
+  color: var(--ink-faint); }
+.cred-status.is-bad { color: var(--att-red); }
+
+/* THE SECRET, SHOWN ONCE. Loud on purpose: it is the only moment this value
+   exists anywhere a person can read it, and the panel says so before it can
+   be dismissed. */
+.cred-secret { border: 1px solid var(--att-orange); border-radius: 10px;
+  padding: 12px 14px; margin: 12px 0; background: var(--panel-2); }
+.cred-secret-head { color: var(--att-orange); font-size: calc(12px * var(--ui-scale));
+  letter-spacing: .04em; text-transform: uppercase; margin-bottom: 8px; }
+.cred-secret-value { display: block; font-family: var(--font-mono);
+  font-size: calc(12.5px * var(--ui-scale)); color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+  padding: 8px 10px; word-break: break-all; user-select: all; }
+.cred-secret-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+
+/* Visually hidden but still announced — the save column's header. */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+@media (max-width: 760px) {
+  .settings-overlay { padding: 0; }
+  .settings-sheet { border-radius: 0; min-height: 100%; }
+
+  /* THE RAIL BECOMES A CHIP ROW (2026-08-25). A left rail has no room on a
+     360px sheet — it would squeeze the content pane to almost nothing.
+     Chose a horizontal scrollable row over a slide-over content view: a
+     slide-over needs a second navigation affordance (a back control) this
+     overlay does not otherwise have, and a chip row keeps every section one
+     tap away with no extra state to restore when the overlay reopens. */
+  .settings-shell { flex-direction: column; gap: 0; min-height: 0; }
+  .settings-nav { flex-direction: row; flex: none; width: 100%;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    border-right: 0; border-bottom: 1px solid var(--line);
+    padding: 0 0 10px; margin-bottom: 12px; }
+  .settings-nav-btn { flex: none; white-space: nowrap; border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 13px; margin-right: 6px; }
+  .settings-nav-btn.is-active { border-color: var(--line-strong); }
+}
+
+/* ------------------------------------------------- "File work" (compose.js)
+   Reuses .settings-overlay/.settings-sheet/.settings-head/.settings-close/
+   .settings-body for the modal shell and .cred-form/.cred-label/.cred-input/
+   .cred-btn/.cred-status for the fields — both already exist for settings.js's
+   own forms and are generic enough that a second near-identical block here
+   would be exactly the kind of drift AGENTS.md warns about ("one place to
+   fix ... rather than three that drift"). Only what neither block already
+   has lives below. */
+.composebtn { flex: none; font-family: var(--font-mono); font-size: calc(12px * var(--ui-scale));
+  color: var(--panel); background: var(--accent); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 7px 14px; cursor: pointer; letter-spacing: .04em;
+  transition: filter .2s; }
+.composebtn:hover:not(:disabled) { filter: brightness(1.08); }
+.composebtn:disabled { opacity: .5; cursor: not-allowed; }
+
+.compose-sheet { width: min(720px, 100%); }
+
+/* One row per field: label, control, optional note, optional inline error —
+   same stack every field uses, so a screen reader (and a skim) meets the
+   same shape from Type down to Status. display:flex needs its own [hidden]
+   override, same reason .settings-overlay/.acct-menu already carry one:
+   the UA default `[hidden]{display:none}` loses to an author `display`
+   declaration on the same element otherwise (used for the Id row, hidden
+   when Type is "task" — a task's id is minted, never entered). */
+.compose-picker { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.compose-picker[hidden] { display: none; }
+.compose-picker-filter { margin-top: 2px; }
+.compose-textarea { min-height: calc(90px * var(--ui-scale)); resize: vertical;
+  font-family: inherit; }
+
+.compose-acc-list { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+.compose-acc-row { display: flex; align-items: center; gap: 6px; }
+.compose-acc-row .cred-input { flex: 1; }
+.compose-acc-remove { flex: none; padding: 4px 9px; }
+
+.compose-banner { margin: 0 0 14px; padding: 8px 12px; border-radius: 8px;
+  border: 1px solid var(--att-red); background: var(--panel-2); color: var(--att-red);
+  font-size: calc(12.5px * var(--ui-scale)); }
+.compose-banner[hidden] { display: none; }
+
+@media (max-width: 760px) {
+  .compose-sheet { width: 100%; }
+}

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- The most exposed file in the repo (STORY-atlas-app-login): after the Cloudflare
+     Access application is retired this page is the first thing a hostile request on
+     the open internet touches. It therefore has, deliberately and permanently:
+       * NO script element of any kind — nothing here can be an execution
+         vehicle. The acceptance criterion greps for the literal opening tag, so
+         it is not written out even inside this comment;
+       * NO third-party request — not a font, not a CDN, not an analytics beacon,
+         so looking at Atlas is not observable by anyone but Atlas;
+       * NO asset request at all — the icon below is a data: URI, so this page does
+         not even need /favicon.ico, and /assets/* stays behind the gate;
+       * NO reflected input — see the substitution contract below.
+
+     SERVER SUBSTITUTION CONTRACT (backend/auth.py renders this by single-token
+     string replace; there is no template engine and there must not be one):
+       {{csrf}}  the CSRF token   — URL-safe base64 from a CSPRNG
+       {{next}}  a same-origin RELATIVE path already validated by _safe_next()
+       {{msg}}   a message chosen BY INDEX from a fixed server-side tuple
+     All three are attribute/text escaped by the renderer. NOTHING else is ever
+     substituted: no request header, no submitted username, no exception text.
+     {{msg}} sits in an element with .msg:empty { display: none }, so the empty
+     case needs no branch in the renderer — substitute "" and the block vanishes.
+
+     House rules that also apply here (AGENTS.md): every font-size is
+     calc(<N>px * var(--ui-scale)); no arrow function, no const/let, no template
+     literal — trivially satisfied by a page with no script. -->
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="same-origin">
+<title>Sign in &middot; Project Atlas</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%2335699f' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%2335699f'/%3E%3C/svg%3E">
+<style>
+  /* Same palette and pill language as board.html, copied rather than linked:
+     a stylesheet request would be an asset request, and this page must make none. */
+  :root {
+    --ground: #eef1f5; --panel: #ffffff; --panel-2: #f7f9fb;
+    --ink: #1b2531; --ink-soft: #56626f; --ink-faint: #8a94a1;
+    --line: #dde2e9; --line-strong: #cbd2dc;
+    --accent: #35699f; --accent-ink: #ffffff;
+    --bad: #ce4b44; --bad-bg: #fdf1f0; --bad-line: #f0c7c4;
+    --shadow: 0 1px 2px rgba(20,32,48,.04), 0 6px 20px rgba(20,32,48,.06);
+    --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, monospace;
+    /* board.html scales every font size off this knob; there is no script here to
+       restore a stored value, so the page is authored at the 1.0 baseline and the
+       calc() form is kept so the two files stay one house style. */
+    --ui-scale: 1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #10141a; --panel: #191f27; --panel-2: #151a21;
+      --ink: #e7ebf1; --ink-soft: #9aa5b3; --ink-faint: #6d7783;
+      --line: #29313b; --line-strong: #363f4a;
+      --accent: #6ea0dc; --accent-ink: #0d1218;
+      --bad: #e4665e; --bad-bg: #2a1a19; --bad-line: #5c2f2b;
+      --shadow: 0 1px 2px rgba(0,0,0,.30), 0 6px 20px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--font-sans); font-size: calc(15px * var(--ui-scale));
+    line-height: 1.55;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 380px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+    padding: 26px 26px 22px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 9px;
+    font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-scale));
+    letter-spacing: .10em; text-transform: uppercase; color: var(--ink-faint);
+    margin-bottom: 16px;
+  }
+  .brand .dot {
+    width: 10px; height: 10px; border-radius: 50%; flex: none;
+    background: var(--accent);
+  }
+  h1 { margin: 0; font-size: calc(21px * var(--ui-scale)); letter-spacing: -.01em; }
+  .sub { margin: 4px 0 18px; color: var(--ink-soft); font-size: calc(13px * var(--ui-scale)); }
+  /* The one server-injected message. Empty -> no box at all, which is why the
+     renderer never has to choose between two page variants. */
+  .msg {
+    margin: 0 0 16px; padding: 9px 11px; border-radius: 9px;
+    background: var(--bad-bg); border: 1px solid var(--bad-line); color: var(--bad);
+    font-size: calc(13px * var(--ui-scale));
+  }
+  .msg:empty { display: none; }
+  label {
+    display: block; margin: 13px 0 5px;
+    font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-scale));
+    letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft);
+  }
+  input[type="text"], input[type="password"] {
+    width: 100%; padding: 9px 11px; border-radius: 9px;
+    border: 1px solid var(--line-strong); background: var(--panel-2); color: var(--ink);
+    font-family: var(--font-sans); font-size: calc(15px * var(--ui-scale));
+  }
+  input[type="text"]:focus, input[type="password"]:focus {
+    outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent);
+  }
+  button {
+    margin-top: 20px; width: 100%; padding: 10px 14px; cursor: pointer;
+    border: 1px solid var(--accent); border-radius: 999px;
+    background: var(--accent); color: var(--accent-ink);
+    font-family: var(--font-sans); font-size: calc(14px * var(--ui-scale)); font-weight: 600;
+    letter-spacing: .02em;
+  }
+  button:hover { filter: brightness(1.06); }
+  button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .note {
+    margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--line);
+    color: var(--ink-faint); font-size: calc(12px * var(--ui-scale));
+  }
+  @media (max-width: 420px) {
+    body { padding: 0; align-items: flex-start; background: var(--panel); }
+    .card { max-width: none; border: 0; border-radius: 0; box-shadow: none; padding: 28px 20px; }
+  }
+</style>
+</head>
+<body>
+<main class="card">
+  <div class="brand"><span class="dot" aria-hidden="true"></span>Project Atlas</div>
+  <h1>Sign in</h1>
+  <p class="sub">A shared plan for people and agents.</p>
+
+  <p class="msg" role="alert">{{msg}}</p>
+
+  <form method="post" action="/auth/login">
+    <input type="hidden" name="csrf_token" value="{{csrf}}">
+    <input type="hidden" name="next" value="{{next}}">
+
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text"
+           autocomplete="username" autocapitalize="none" autocorrect="off"
+           spellcheck="false" maxlength="64" required autofocus>
+
+    <!-- autocomplete is a control, not decoration: NIST SP 800-63B rev 4 SHALL
+         allow password managers and paste. Nothing on this page blocks paste,
+         and with no script there is nothing that could. maxlength matches the
+         server's DoS bound (128) so the limit is visible at the field. -->
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password"
+           autocomplete="current-password" maxlength="128" required>
+
+    <button type="submit">Sign in</button>
+  </form>
+
+  <p class="note">
+    Atlas is invite-only. Accounts are created by the operator and handed over with a
+    one-time password that you replace on first sign-in. There is no sign-up and no
+    self-service reset &mdash; if you are locked out, ask your instance administrator.
+  </p>
+</main>
+</body>
+</html>

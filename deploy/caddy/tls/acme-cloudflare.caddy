@@ -1,0 +1,13 @@
+# CADDY_TLS_MODE=acme-cloudflare (the homelab default). A publicly-trusted certificate
+# by ACME DNS-01 through Cloudflare, exactly as caddy-lan gets the board's (see
+# Dockerfile: DNS-01 is the only challenge a private-IP name can pass). Clients need
+# no extra CA: the system trust store already has Let's Encrypt.
+#
+# The Cloudflare API token is read from a FILE mounted as a compose secret, never
+# from an environment variable (mcp/docker-compose.tls.yml, `secrets:`).
+tls {
+	dns cloudflare {file./run/secrets/cf_dns_api_token}
+	# Resolve the challenge against public resolvers: the LAN resolver answers for
+	# this zone itself and would fail Caddy's self-check on a correct record.
+	resolvers 1.1.1.1 8.8.8.8
+}

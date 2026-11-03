@@ -1,0 +1,14 @@
+{
+  "name": "atlas-client",
+  "description": "The Atlas client pack for Claude Code: the atlas plugin (retrieval, work-filing and setup-guide skills).",
+  "owner": {
+    "name": "Atlas contributors"
+  },
+  "plugins": [
+    {
+      "name": "atlas",
+      "source": "./plugin",
+      "description": "Read context out of Atlas cheaply, file workitems through atlas_file_work, and run the first-run setup guide."
+    }
+  ]
+}

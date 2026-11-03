@@ -1,0 +1,15 @@
+# The setup guide's CI/CD answers, as an EXAMPLE (STORY-atlas-first-cicd). Nothing reads this
+# file unless an operator names it:
+#
+#     atlas-admin cicd generate --platform github \
+#         --matrix data/guardrails/example-default.yaml \
+#         --answers data/cicd/example-answers.yaml --out ./generated
+#
+# Keys and values are the guide's own (data/setup_guide/questions.v1.json, topic `cicd`, plus
+# `environments.promotion`). `--from-guide` reads the same answers from the recorded guide.
+cicd:
+  checks: [build, unit_tests, lint, sast, secret_scan]
+  gates: [build, unit_tests, lint]
+  deploy_trigger: on_merge
+environments:
+  promotion: sequential

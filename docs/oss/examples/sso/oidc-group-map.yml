@@ -1,0 +1,16 @@
+# Example: the group allowlist for single sign-on (ATLAS_OIDC_GROUP_MAP_FILE in env/sso-rbac.env).
+# Only the provider groups listed here reach Atlas; every other group in the token is ignored.
+# A person's provider-group memberships are replaced from the token at every sign-in.
+# Keycloak names a group by its path; Entra ID by the group's object id.
+# Put this file at deploy/oss/secrets/oidc_group_map.yml; the shipped overlay deploy/oss/oidc.yml
+# mounts it at /run/secrets/oidc_group_map.
+# It holds no secret, only group names.
+
+# The one key: provider group value -> Atlas group name.
+groups:
+  # Everyone allowed to sign in (also ATLAS_OIDC_REQUIRED_GROUPS).
+  "/atlas/users": everyone
+  # The people who maintain the platform's projects.
+  "/atlas/maintainers": maintainers
+  # A delivery team; bind the Atlas group to its projects after the first sign-in.
+  "/teams/payments": team-payments

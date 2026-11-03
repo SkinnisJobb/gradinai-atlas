@@ -1,0 +1,210 @@
+# The OSS install package (EPIC-atlas-oss-installable): checks that need Docker but not the
+# backend suite.
+#
+# `tls-front` (OSS-24) runs the OSS TLS ingress for real: the repo's pinned Caddy image with
+# deploy/oss/caddy/Caddyfile and certificates from scripts/init-certs.sh, in front of a stub
+# upstream, and drives it with curl and with atlas-mcp's own client (mcp/app/client.py). It
+# proves the install CA path, fail-closed on another CA, plain HTTP never reaching the API,
+# and the optional mTLS leg. See tools/ci/oss_tls_front.sh.
+#
+# `config` (OSS-10) is a stranger's first two commands, `cp .env.example .env` and
+# `init-secrets.sh`, then `docker compose config` on deploy/oss/docker-compose.yml, and
+# tools/ci/check_env_example.py + tools/ci/check_oss_compose.py on the result.
+#
+# A separate workflow from verify.yml (whose jobs branch protection may name) so these can be
+# added to or removed from required checks on their own. Static TLS rules (check_tls.sh,
+# including R5 for deploy/oss/) run in verify.yml's `network` job; booting the whole OSS stack
+# is OSS-17's install smoke, not this file.
+
+name: oss
+
+on:
+  pull_request:
+    branches: [master]
+    # Path filter on pull requests only; master pushes and manual runs always run it.
+    # backend/*.py, backend/routers/** and mcp/app/** are here because check_env_example.py
+    # reads every variable those modules read; deploy/caddy/** because tls-front builds that image.
+    paths:
+      - "deploy/oss/**"
+      - "deploy/gateway/**"
+      - "deploy/caddy/**"
+      - "deploy/postgres/**"
+      - "scripts/**"
+      - "tools/ci/**"
+      - "mcp/app/**"
+      - "mcp/requirements.txt"
+      - "backend/*.py"
+      - "backend/routers/**"
+      # check_oss_headers.py hashes these pages' inline scripts against the Caddyfile's CSP.
+      - "frontend/board.html"
+      - "frontend/v2/index.html"
+      - ".github/workflows/oss.yml"
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE (2026-10-25, after the account ran out of Actions minutes; narrowed
+# 2026-10-26). A pull request runs on `pull_request` only, and its superseded runs are
+# cancelled. A master push does NOT run this workflow: it already ran on the pull request that
+# made the commit, and on the shared self-hosted runner pool every master run queues behind the PR runs.
+# Only verify.yml runs on a master push, because tools/deploy.sh gates on it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  tls-front:
+    name: OSS TLS front (Caddy, install CA, mTLS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"          # matches mcp/Dockerfile
+          cache: pip
+          cache-dependency-path: mcp/requirements.txt
+
+      - run: pip install -r mcp/requirements.txt
+
+      - name: run the TLS front
+        run: bash tools/ci/oss_tls_front.sh
+
+  config:
+    name: OSS compose file and .env.example
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # OSS-10 criterion 2: every variable the code reads is in deploy/oss/.env.example.
+      # The self-test first, so a check that stopped failing on its bad cases is red.
+      - name: check_env_example
+        run: |
+          python tools/ci/check_env_example.py --self-test
+          python tools/ci/check_env_example.py
+
+      # Criterion 1: `docker compose config` validates with only .env.example copied and
+      # init-secrets.sh run, nothing else. Then the rendered file is checked against its
+      # promises (criteria 4-7, OSS-24's layout): tools/ci/check_oss_compose.py.
+      - name: a stranger's first two commands, then compose config
+        working-directory: deploy/oss
+        run: |
+          cp .env.example .env
+          bash ../../scripts/init-secrets.sh
+          docker compose config --quiet
+          docker compose config --format json > "$RUNNER_TEMP/oss.json"
+          docker compose --profile retrieval config --format json > "$RUNNER_TEMP/oss-retrieval.json"
+          # STORY-oss-15 criterion 1: the gateway profile validates, before anything is rendered.
+          docker compose --profile gateway config --quiet
+          docker compose --profile gateway config --format json > "$RUNNER_TEMP/oss-gateway.json"
+          echo "services with --profile gateway: $(docker compose --profile gateway config --services | tr '\n' ' ')"
+          echo "services by default:            $(docker compose config --services | tr '\n' ' ')"
+          echo "services with --profile retrieval: $(docker compose --profile retrieval config --services | tr '\n' ' ')"
+          echo "published ports:"; docker compose config --format json | python -c "import json,sys; c=json.load(sys.stdin); [print('  ', n, p) for n,s in c['services'].items() for p in s.get('ports') or []]"
+      # OSS-26 E: the overlay release.yml. Without the image variables it must refuse (a missing
+      # one never falls back to a build); with them (placeholders shaped like release-images.env)
+      # every built service becomes a pinned pull, and check_oss_compose S3/S7 judge the result.
+      - name: "release.yml: refuses without images, renders with them"
+        working-directory: deploy/oss
+        run: |
+          if docker compose -f docker-compose.yml -f release.yml config --quiet 2> "$RUNNER_TEMP/rel.err"; then
+            echo "release.yml rendered with no ATLAS_IMAGE_* set" >&2; exit 1
+          fi
+          grep -q ATLAS_IMAGE_ "$RUNNER_TEMP/rel.err" || { cat "$RUNNER_TEMP/rel.err"; echo "refused, but not for ATLAS_IMAGE_*" >&2; exit 1; }
+          echo "refused without images: $(cat "$RUNNER_TEMP/rel.err")"
+          d=sha256:$(printf '%064d' 0)
+          for n in API MCP BACKUP POSTGRES TLS; do
+            echo "ATLAS_IMAGE_$n=ghcr.io/example/gradinai-atlas-${n,,}:v0.0.0@$d"
+          done > "$RUNNER_TEMP/release-images.env"
+          rel=(docker compose --env-file .env --env-file "$RUNNER_TEMP/release-images.env" -f docker-compose.yml -f release.yml)
+          "${rel[@]}" config --format json > "$RUNNER_TEMP/oss-release.json"
+          "${rel[@]}" --profile retrieval config --format json > "$RUNNER_TEMP/oss-release-retrieval.json"
+          "${rel[@]}" --profile backup --profile retrieval --profile gateway config --format json | python -c "
+          import json, sys
+          s = json.load(sys.stdin)['services']
+          built = sorted(n for n, v in s.items() if v.get('build'))
+          print('release.yml, every profile:', {n: v.get('image') for n, v in s.items()})
+          sys.exit(f'still built with release.yml: {built}' if built else 0)"
+
+      # TASK-1471: the overlay external-db.yml. It renders with no atlas-postgres and no
+      # dependency on it (`!reset`), with or without the backup profile and release.yml, and the
+      # base file alone still renders atlas-postgres. check_oss_compose --external-db (S9) judges
+      # the results below; .env.example's default leaves db_ca an empty /dev/null mount.
+      - name: "external-db.yml: renders without atlas-postgres"
+        working-directory: deploy/oss
+        run: |
+          ext=(docker compose -f docker-compose.yml -f external-db.yml)
+          "${ext[@]}" config --quiet
+          "${ext[@]}" --profile backup config --format json > "$RUNNER_TEMP/oss-external-db.json"
+          "${ext[@]}" --env-file .env --env-file "$RUNNER_TEMP/release-images.env" -f release.yml --profile backup \
+            config --format json > "$RUNNER_TEMP/oss-external-db-release.json"
+          echo "services with external-db.yml --profile backup: $("${ext[@]}" --profile backup config --services | tr '\n' ' ')"
+          if "${ext[@]}" --profile backup config --services | grep -qx atlas-postgres; then
+            echo "external-db.yml still starts atlas-postgres" >&2; exit 1
+          fi
+          docker compose config --services | grep -qx atlas-postgres || { echo "the base file lost atlas-postgres" >&2; exit 1; }
+
+      # The public door's browser security headers, and the legacy board's inline-script hashes
+      # in its CSP against frontend/board.html (LCM patch round 1).
+      - name: check_oss_headers
+        run: |
+          python tools/ci/check_oss_headers.py --self-test
+          python tools/ci/check_oss_headers.py
+
+      - name: check_oss_compose
+        run: |
+          python tools/ci/check_oss_compose.py --self-test
+          python tools/ci/check_oss_compose.py "$RUNNER_TEMP/oss.json"
+          python tools/ci/check_oss_compose.py "$RUNNER_TEMP/oss-retrieval.json" --expect-profile retrieval
+          python tools/ci/check_oss_compose.py "$RUNNER_TEMP/oss-gateway.json" --expect-profile gateway
+          python tools/ci/check_oss_compose.py "$RUNNER_TEMP/oss-release.json"
+          python tools/ci/check_oss_compose.py "$RUNNER_TEMP/oss-release-retrieval.json" --expect-profile retrieval
+          python tools/ci/check_oss_compose.py "$RUNNER_TEMP/oss-external-db.json" --external-db
+          python tools/ci/check_oss_compose.py "$RUNNER_TEMP/oss-external-db-release.json" --external-db
+          # Without the flag the overlay's render is refused (S3: no atlas-postgres): the base
+          # rules did not loosen.
+          if python tools/ci/check_oss_compose.py "$RUNNER_TEMP/oss-external-db.json"; then
+            echo "check_oss_compose accepted a render with no atlas-postgres without --external-db" >&2; exit 1
+          fi
+
+      # STORY-oss-15: the gateway configuration renderer refuses what it must (http:// with
+      # credentials, CORS "*", unknown options), then renders the shipped server list from
+      # the .env a stranger has; check_tls.sh's rules pass over the result.
+      - name: render-gateway
+        working-directory: deploy/oss
+        run: |
+          python ../../scripts/render-gateway.py --self-test
+          python ../../scripts/render-gateway.py
+          cat gateway/agentgateway.yaml
+          (cd ../.. && . tools/ci/check_tls.sh && check_refs deploy/oss/gateway/agentgateway.yaml && check_insecure deploy/oss/gateway/agentgateway.yaml)
+          echo "check_tls R1 + R4: clean over the rendered gateway config"
+
+      # TASK-1419 (OSS-26 F): init-certs.sh takes the public name from .env without --host, so
+      # a renewal with --force keeps it; --host, --client-only and the refusals are unchanged.
+      - name: init-certs reads ATLAS_PUBLIC_HOST from .env
+        run: |
+          bash -n tools/ci/test_init_certs.sh
+          bash tools/ci/test_init_certs.sh
+
+      # init-secrets.sh refuses to overwrite, and never prints a secret.
+      - name: init-secrets refuses a second run, and printed no secret
+        working-directory: deploy/oss
+        run: |
+          if bash ../../scripts/init-secrets.sh > "$RUNNER_TEMP/second.log" 2>&1; then
+            echo "a second run without --force succeeded" >&2; exit 1
+          fi
+          cat "$RUNNER_TEMP/second.log"
+          bash ../../scripts/init-secrets.sh --force > "$RUNNER_TEMP/force.log" 2>&1
+          for f in secrets/db_password secrets/password_pepper secrets/token_pepper; do
+            if grep -qF -f "$f" "$RUNNER_TEMP/second.log" "$RUNNER_TEMP/force.log"; then
+              echo "a secret value appeared in the script output: $f" >&2; exit 1
+            fi
+          done
+          git status --porcelain --ignored=no | grep -E 'secrets/' && { echo "secrets/ is not ignored" >&2; exit 1; } || echo "secrets/ ignored by git"
