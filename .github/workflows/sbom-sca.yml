@@ -21,9 +21,10 @@
 # `scan NAME`, and an image's repo basename-tag). --full-scan: this job scans everything, so an
 # acceptance whose artefact has no report here, or that matches no finding, fails as stale.
 #
-# WHEN. Every pull request except docs-only ones, master pushes, a weekly run (new CVEs land
-# against unchanged code; that run also compares tools/ci/eol.json with endoflife.date), a
-# published release (the SBOMs are attached to it), and by hand.
+# WHEN. Every pull request, docs-only ones included: the ruleset requires this check, and a
+# required check that never reports blocks the pull request for good. Also a weekly run (new
+# CVEs land against unchanged code; that run also compares tools/ci/eol.json with
+# endoflife.date), a published release (the SBOMs are attached to it), and by hand.
 #
 # MINUTES. One job. Image layers come from the GitHub Actions cache (buildx type=gha), the Trivy
 # binary and its vulnerability DB from actions/cache (the DB at most once a day). No SARIF:
@@ -34,11 +35,6 @@ name: sbom-sca
 on:
   pull_request:
     branches: [master]
-    paths-ignore:
-      - "docs/**"
-      - "notes/**"
-      - "research/**"
-      - "**/*.md"
   release:
     types: [published]
   schedule:
