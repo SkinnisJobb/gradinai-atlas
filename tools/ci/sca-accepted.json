@@ -2,16 +2,6 @@
   "//": "Fixable critical/high SCA findings accepted FOR A LIMITED TIME (tools/ci/sca_gate.py). Each entry: id, pkg, in (the artefacts it holds for, named as their report files: see sca_gate.py's docstring), until (YYYY-MM-DD, at most 30 days out), reason. After `until` the finding fails the sbom-sca job again. The same finding in an artefact not in `in` fails, and an entry that matches no finding fails as stale. Triage rules: SECURITY.md.",
   "accepted": [
     {
-      "id": "CVE-2026-103111",
-      "pkg": "libpcre2-8-0",
-      "until": "2026-11-24",
-      "severity": "HIGH",
-      "in": [
-        "atlas-postgres-pgvector"
-      ],
-      "reason": "atlas-postgres-pgvector (deploy/postgres/pgvector.Dockerfile, pgvector 0.8.7-pg16-trixie), deploy/oss only: the postgres binary does not link pcre2 (grep and libselinux do), and it needs an attacker-supplied regex. Checked 2026-10-26 (TASK-1381): pgvector/pgvector:0.8.7-pg16-trixie and pg16-trixie are still digest 40d828ed... (pushed 2026-10-01); postgres:16-trixie was rebuilt 2026-10-22 with the fixed pcre2 but pgvector has not rebuilt on it yet. Fixed by the next pgvector digest (Dependabot docker PR for /deploy/postgres), expected at the latest with the PostgreSQL minor release of 2026-11-12. The build stays offline (no apt upgrade) so a rebuild is reproducible."
-    },
-    {
       "id": "CVE-2026-78669",
       "pkg": "golang.org/x/net",
       "until": "2026-11-24",
