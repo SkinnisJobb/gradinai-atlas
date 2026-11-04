@@ -107,7 +107,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 # two references equal; verify_crunch_backup.py §A fails a change that moves only one.
 # /var/lib/atlas/backups exists in the image, group 0 and group-writable, so a named volume
 # mounted there starts with that ownership and any UID in group 0 can write it.
-FROM pgvector/pgvector:0.8.7-pg16-trixie@sha256:40d828eda66737aaacb934387a337babf1455ebd56e9bdd13fc08e211257c972 AS pgclient
+FROM pgvector/pgvector:0.8.7-pg16-trixie@sha256:9cf8b511f0e9a2c209b61430fc139f1ab9c75edbb31fb1751db6617b246a897a AS pgclient
 
 FROM hardened AS backup
 USER 0
