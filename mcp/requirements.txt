@@ -8,7 +8,7 @@ uvicorn[standard]==0.54.0
 # one environment, so the two must agree. mcp 1.30.0 accepts this stack: it needs
 # starlette>=0.27 (>=0.48 on Python 3.14; fastapi 0.162 brings starlette 1.x),
 # pydantic>=2.11,<3 (>=2.12 on 3.14), uvicorn>=0.31.1 and httpx>=0.27.1,<1.
-pydantic==2.14.1
+pydantic==2.14.2
 
 # MCP server (Anthropic Python SDK). PINNED EXACTLY, and it has to be.
 #
