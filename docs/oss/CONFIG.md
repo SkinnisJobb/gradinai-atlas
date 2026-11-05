@@ -1295,7 +1295,7 @@ atlas-mcp (mcp/Dockerfile, target hardened):
 
 ### `ATLAS_IMAGE_POSTGRES`
 
-atlas-postgres (deploy/postgres/pgvector.Dockerfile: pgvector on PostgreSQL 16, gosu replaced):
+atlas-postgres (deploy/postgres/pgvector.Dockerfile: pgvector on PostgreSQL 16, gosu replaced, no apt):
 
 - **Allowed:** see the description
 - **Default:** the compose file's; not read by the Atlas code

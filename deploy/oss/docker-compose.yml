@@ -112,7 +112,7 @@ x-api-secrets: &api-secrets
 services:
   atlas-postgres:
     # pgvector/pgvector 0.8.7 on PostgreSQL 16, Debian 13, with gosu replaced by a setpriv shim
-    # (deploy/postgres/pgvector.Dockerfile, base pinned tag@digest there). The extension is only
+    # and no apt (deploy/postgres/pgvector.Dockerfile, base pinned tag@digest there). The extension is only
     # CREATEd by the retrieval add-on; the base install does not use it. An install initialised
     # before 2026-10-26 ran the Debian 12 image: after upgrading, run
     # `bash tools/db_collation_check.sh "$(docker compose ps -q atlas-postgres)"` (SECURITY.md).

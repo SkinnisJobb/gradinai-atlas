@@ -38,7 +38,7 @@ TMP=$(mktemp -d)
 P=atlas-tlsfront-$$-$RANDOM
 PUB=  # host port of the public door (container :8443), set by start_front
 INT=  # host port of the internal door (container :9443), set by start_front
-PY_IMAGE="python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704"  # = backend/Dockerfile
+PY_IMAGE="python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54"  # = backend/Dockerfile
 fail=0
 
 cleanup() {

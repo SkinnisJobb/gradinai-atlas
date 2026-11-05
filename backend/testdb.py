@@ -59,7 +59,7 @@ POSTGRES_IMAGE = "postgres:16-alpine"
 # deploy/postgres/pgvector.Dockerfile (which deploy/oss and deploy/retrieval.override.yml build),
 # pulled as-is: the gosu shim that Dockerfile adds changes nothing a test can observe.
 PGVECTOR_IMAGE = ("pgvector/pgvector:0.8.7-pg16-trixie@sha256:"
-                  "40d828eda66737aaacb934387a337babf1455ebd56e9bdd13fc08e211257c972")
+                  "9cf8b511f0e9a2c209b61430fc139f1ab9c75edbb31fb1751db6617b246a897a")
 POSTGRES_PASSWORD = "test"
 POSTGRES_DB = "atlas_test"
 STARTUP_TIMEOUT_S = 30
