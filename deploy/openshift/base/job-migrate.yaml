@@ -1,0 +1,156 @@
+# The schema step of a release (TASK-1485; research question 5): `atlas-migrate upgrade`, once per
+# release, before the Deployments roll. It runs startup's schema steps and exits; it writes no row.
+#
+# ONE NAME PER RELEASE: atlas-migrate-<version>, the version in DNS-label form. A Job's pod
+# template cannot change once created, so each release must be a new object: the old one keeps
+# its log for the audit trail until ttlSecondsAfterFinished removes it, and `oc apply` never has
+# to update a Job. The base names it for the release its image belongs to; an overlay that moves
+# the image renames the Job in the same change (deploy/openshift/README.md, "Releases"). Forgetting
+# to is loud, not silent: re-applying a changed pod template under an existing name fails.
+#
+# The pipeline applies it, waits with `oc wait --for=condition=complete job/<name>`, and only then
+# rolls the Deployments. Starting atlas-api alongside it is also safe: the boot and this command
+# take the same Postgres advisory lock (backend/main.py boot_lock), so one waits for the other.
+#
+# It loads atlas-env and gets the database URL (through the same db-url init container as
+# atlas-api), its CA and the peppers (importing the gate needs the peppers), and nothing else: it drops the sign-in settings itself (backend/migrate_cli.py),
+# so no OIDC Secret is mounted. No probes: it serves nothing. Same security context as atlas-api.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: atlas-migrate-v0-0-1-alpha
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: migrate
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: atlas
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      serviceAccountName: atlas
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Rewrites CNPG's postgresql:// URL to the psycopg2 driver the image ships; db_url.py
+        # (the atlas-scripts ConfigMap) says why. Only this container mounts the CNPG Secret.
+        - name: db-url
+          # Always the same image as the main container.
+          image: ghcr.io/skinnisjobb/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-I", "/run/config/scripts/db_url.py"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: db
+              mountPath: /run/secrets/db
+              readOnly: true
+            - name: db-url
+              mountPath: /run/db-url
+            - name: scripts
+              mountPath: /run/config/scripts
+              readOnly: true
+      containers:
+        - name: atlas-migrate
+          # The same image as atlas-api (deployment-api.yaml); one `images:` entry moves both.
+          image: ghcr.io/skinnisjobb/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          imagePullPolicy: IfNotPresent
+          command: ["atlas-migrate", "upgrade"]
+          envFrom:
+            - configMapRef:
+                name: atlas-env
+          env:
+            - name: ATLAS_DB_URL_FILE
+              value: /run/db-url/url
+            - name: ATLAS_PASSWORD_PEPPER_FILE
+              value: /run/secrets/peppers/password_pepper
+            - name: ATLAS_TOKEN_PEPPER_FILE
+              value: /run/secrets/peppers/token_pepper
+            - name: PGSSLMODE
+              value: verify-full
+            - name: PGSSLROOTCERT
+              value: /run/secrets/db-ca/ca.crt
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: peppers
+              mountPath: /run/secrets/peppers
+              readOnly: true
+            - name: db-url
+              mountPath: /run/db-url
+              readOnly: true
+            - name: db-ca
+              mountPath: /run/secrets/db-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: peppers
+          secret:
+            secretName: atlas-peppers
+            defaultMode: 0440
+            items:
+              - key: password_pepper
+                path: password_pepper
+              - key: token_pepper
+                path: token_pepper
+        - name: db
+          secret:
+            secretName: atlas-db-app
+            defaultMode: 0440
+            items:
+              - key: fqdn-uri
+                path: fqdn-uri
+        - name: db-ca
+          secret:
+            secretName: atlas-db-ca
+            defaultMode: 0440
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: db-url
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: scripts
+          configMap:
+            name: atlas-scripts
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

@@ -49,7 +49,7 @@ ROOT = Path(__file__).resolve().parents[2]
 #: The plan's allowlist: "Include" plus "Overlay". Keep in step with the plan's manifest.
 DEFAULT_INCLUDE = [
     "backend/", "frontend/", "mcp/", "clients/",
-    "deploy/oss/", "deploy/gateway/", "deploy/caddy/", "deploy/postgres/",
+    "deploy/oss/", "deploy/openshift/", "deploy/gateway/", "deploy/caddy/", "deploy/postgres/",
     "docs/oss/", "scripts/", "tests/",
     "tools/scrub/", "tools/ci/", "tools/self_seed/", "tools/site/", "tools/baseload/",
     "tools/export_self_seed.py", "tools/docs_site.py", "tools/gen_api_ref.py",

@@ -1,0 +1,55 @@
+# The OpenShift base (TASK-1485, ARO 3.1; design: docs/oss/research/openshift-aro.md). Always-on
+# objects only: what every install runs whatever components it adds. deploy/openshift/README.md
+# describes the layout, what each later task adds, and what an overlay must change.
+#
+# Not deployable on its own: the database Secrets (atlas-db-app, atlas-db-ca) come from the
+# CloudNativePG Cluster of the `cnpg` component (task 3.5), the peppers from
+# scripts/openshift/new-secrets.py or the External Secrets Operator, and the public host from the
+# overlay.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# On every object and pod template, never in a selector (a selector cannot change after create).
+# `version` is the release the base's image and migrate Job name belong to; an overlay that moves
+# the image moves all three together (README, "Releases").
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: atlas
+      app.kubernetes.io/version: v0.0.1-alpha
+    includeSelectors: false
+    includeTemplates: true
+
+resources:
+  - serviceaccount.yaml
+  - configmap-service-ca.yaml
+  - service-api.yaml
+  - deployment-api.yaml
+  - pdb-api.yaml
+  - job-migrate.yaml
+
+configMapGenerator:
+  # atlas-env keeps its plain name (no content hash). The migrate Job loads it, and a Job's pod
+  # template cannot change under the same name: with a hash, any config change inside a release
+  # would make `oc apply` of the Job fail. A config change therefore needs
+  # `oc rollout restart deploy/atlas-api` (the deploy pipeline runs one after applying).
+  - name: atlas-env
+    envs:
+      - atlas.env
+    options:
+      disableNameSuffixHash: true
+      labels:
+        app.kubernetes.io/name: atlas
+        app.kubernetes.io/component: config
+  # Two small standard-library scripts the pods run with the image's own Python, mounted at
+  # /run/config/scripts/: the exec probe (https_probe.py says why it is not httpGet) and the
+  # init container that hands the CNPG URL to the driver the image ships (db_url.py). Hashed: a
+  # changed script rolls atlas-api. (The Job keeps its name per release, so it picks up a change
+  # with the next release.)
+  - name: atlas-scripts
+    files:
+      - https_probe.py
+      - db_url.py
+    options:
+      labels:
+        app.kubernetes.io/name: atlas
+        app.kubernetes.io/component: config

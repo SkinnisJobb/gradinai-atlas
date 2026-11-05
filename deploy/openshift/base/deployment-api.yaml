@@ -1,0 +1,271 @@
+# atlas-api: the API and the board (TASK-1485; research questions 3, 7, 8 and 9).
+#
+# TLS: uvicorn's own listener on :8443 with the service-CA certificate of Service atlas-api
+# (Secret atlas-api-tls), as the compose install's command does with its origin certificate. No
+# plain HTTP is served (the image's CMD on :8000 is replaced).
+#
+# SECRETS ARE FILES. Every secret is a `secret` volume, read through a *_FILE setting, and
+# ATLAS_REQUIRE_SECRET_FILES=1 (in atlas-env) makes atlas-api refuse the plain variables:
+#   /run/secrets/peppers/{password_pepper,token_pepper}  Secret atlas-peppers
+#                                                        (scripts/openshift/new-secrets.py)
+#   /run/secrets/db/fqdn-uri                             the CloudNativePG app Secret, ONLY the
+#                                                        `fqdn-uri` item, mounted in the db-url
+#                                                        init container only
+#   /run/db-url/url                                      that URL with the psycopg2 driver named,
+#                                                        written by the init container to a
+#                                                        memory emptyDir (db_url.py says why)
+#   /run/secrets/db-ca/ca.crt                            the CloudNativePG CA Secret, ONLY
+#                                                        `ca.crt` (the Secret also holds ca.key)
+#   /run/secrets/api-tls/{tls.crt,tls.key}               Secret atlas-api-tls (service CA)
+# The database Secrets are named for a Cluster called `atlas-db` (atlas-db-app, atlas-db-ca), the
+# name the `cnpg` component (task 3.5) creates; an install whose database is named otherwise
+# patches the two secretName fields here and in job-migrate.yaml. libpq takes the TLS settings
+# from PGSSLMODE / PGSSLROOTCERT (not secrets), so the URL needs no query string and no Secret of
+# ours repeats the password.
+#
+# PROBES are exec probes, not httpGet: https_probe.py (the atlas-scripts ConfigMap) says why.
+#
+# SECURITY CONTEXT: the restricted profile, stated on the pod and the container. No runAsUser or
+# fsGroup: OpenShift's restricted-v2 SCC assigns both from the namespace's range (the image runs
+# under any UID in group 0). Read-only root filesystem; /tmp is an emptyDir.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-api
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: atlas
+        app.kubernetes.io/component: api
+    spec:
+      serviceAccountName: atlas
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # The two replicas on different zones when the cluster has them (ARO spreads its workers
+      # over availability zones), and on different nodes in any case if the scheduler can.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: api
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: atlas
+                    app.kubernetes.io/component: api
+      initContainers:
+        # Rewrites CNPG's postgresql:// URL to the psycopg2 driver the image ships; db_url.py
+        # (the atlas-scripts ConfigMap) says why. Only this container mounts the CNPG Secret.
+        - name: db-url
+          # Always the same image as the main container.
+          image: ghcr.io/skinnisjobb/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          imagePullPolicy: IfNotPresent
+          command: ["python", "-I", "/run/config/scripts/db_url.py"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: db
+              mountPath: /run/secrets/db
+              readOnly: true
+            - name: db-url
+              mountPath: /run/db-url
+            - name: scripts
+              mountPath: /run/config/scripts
+              readOnly: true
+      containers:
+        - name: atlas-api
+          # The published Debian-based hardened image of the v0.0.1-alpha release, by tag and
+          # digest. Task 1.4 publishes the UBI build (gradinai-atlas-api-ubi); an overlay moves
+          # to it, or to its own mirror, with a Kustomize `images:` entry (name, newName, newTag,
+          # digest) matching this name. See deploy/openshift/README.md, "Images".
+          image: ghcr.io/skinnisjobb/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          imagePullPolicy: IfNotPresent
+          command:
+            - uvicorn
+            - app:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8443"
+            - --ssl-certfile
+            - /run/secrets/api-tls/tls.crt
+            - --ssl-keyfile
+            - /run/secrets/api-tls/tls.key
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: atlas-env
+          # Fixed values win over atlas-env (as compose's `environment:` wins over `.env`).
+          env:
+            # For the exec probe's TLS server name, and the internal Host below.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: ATLAS_DB_URL_FILE
+              value: /run/db-url/url
+            - name: ATLAS_PASSWORD_PEPPER_FILE
+              value: /run/secrets/peppers/password_pepper
+            - name: ATLAS_TOKEN_PEPPER_FILE
+              value: /run/secrets/peppers/token_pepper
+            - name: PGSSLMODE
+              value: verify-full
+            - name: PGSSLROOTCERT
+              value: /run/secrets/db-ca/ca.crt
+            # The Host atlas-mcp sends to atlas-tls's :9443 front (task 3.3), matched exactly,
+            # port included: the one Host on which Bearer is admitted without a cookie.
+            - name: ATLAS_INTERNAL_HOSTS
+              value: atlas-tls.$(POD_NAMESPACE).svc:9443
+            # Whose CF-Connecting-IP to believe: the peer must be in this list. On a cluster it is
+            # the pod network CIDR (`oc get network.config cluster -o
+            # jsonpath='{.spec.clusterNetwork[*].cidr}'`), narrowed to atlas-tls by the
+            # NetworkPolicies (task 3.4). The base carries a documentation range, which trusts no
+            # real peer: it fails safe (the sign-in throttle sees the proxy's address) until the
+            # overlay sets the real value.
+            - name: ATLAS_TRUSTED_PROXY_CIDRS
+              value: 198.51.100.0/24
+          startupProbe:
+            exec:
+              command: ["python", "-I", "/run/config/scripts/https_probe.py", "8443", "/healthz", "atlas-api", "public"]
+            periodSeconds: 2
+            timeoutSeconds: 5
+            # The boot loop retries the database for up to 60 s (backend/main.py).
+            failureThreshold: 60
+          livenessProbe:
+            # /healthz needs no database: an outage makes the pod unready, not restarted.
+            exec:
+              command: ["python", "-I", "/run/config/scripts/https_probe.py", "8443", "/healthz", "atlas-api", "public"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            # /readyz runs one SELECT 1.
+            exec:
+              command: ["python", "-I", "/run/config/scripts/https_probe.py", "8443", "/readyz", "atlas-api", "public"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: peppers
+              mountPath: /run/secrets/peppers
+              readOnly: true
+            - name: db-url
+              mountPath: /run/db-url
+              readOnly: true
+            - name: db-ca
+              mountPath: /run/secrets/db-ca
+              readOnly: true
+            - name: api-tls
+              mountPath: /run/secrets/api-tls
+              readOnly: true
+            - name: service-ca
+              mountPath: /run/config/service-ca
+              readOnly: true
+            - name: scripts
+              mountPath: /run/config/scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: peppers
+          secret:
+            secretName: atlas-peppers
+            defaultMode: 0440
+            items:
+              - key: password_pepper
+                path: password_pepper
+              - key: token_pepper
+                path: token_pepper
+        - name: db
+          secret:
+            secretName: atlas-db-app
+            defaultMode: 0440
+            items:
+              - key: fqdn-uri
+                path: fqdn-uri
+        - name: db-ca
+          secret:
+            secretName: atlas-db-ca
+            defaultMode: 0440
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: api-tls
+          secret:
+            secretName: atlas-api-tls
+            defaultMode: 0440
+        - name: service-ca
+          configMap:
+            name: atlas-service-ca
+            items:
+              - key: service-ca.crt
+                path: service-ca.crt
+        - name: scripts
+          configMap:
+            name: atlas-scripts
+        - name: db-url
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

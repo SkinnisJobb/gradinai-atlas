@@ -1,0 +1,18 @@
+# The OpenShift service CA's bundle (TASK-1485; research question 3). The service-ca operator
+# writes the CA that signs every Service's serving certificate into this ConfigMap as
+# `service-ca.crt`, because of the annotation. It owns this ConfigMap's data and removes any other
+# key, so the object carries no `data` here and gets no other use. A CA certificate is not a
+# secret, which is why this is a ConfigMap.
+#
+# Mounted at /run/config/service-ca/ by every pod that verifies an in-namespace TLS hop: atlas-api
+# (its own exec probe), and later atlas-mcp (ATLAS_CA_BUNDLE, task 3.2) and atlas-tls (Caddy's
+# trust pool, task 3.3).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: atlas-service-ca
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: config
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
