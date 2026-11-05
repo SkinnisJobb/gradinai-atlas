@@ -91,19 +91,22 @@ the Job.
 | the namespace | `namespace:` |
 | the public host | `configMapGenerator` named `atlas-env` with `behavior: merge`, from the overlay's own env file: `ATLAS_PUBLIC_HOST`, `ATLAS_PUBLIC_URL`, `ATLAS_MCP_ALLOWED_HOSTS`, `ATLAS_MCP_ALLOWED_ORIGINS`, `ATLAS_PRIVACY_CONTACT`, `ATLAS_PRIVACY_HOSTING` |
 | the trusted proxy range | a patch on the `atlas-api` container's `ATLAS_TRUSTED_PROXY_CIDRS` env entry: the pod network CIDR (`oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'`) |
-| the images and the release | see the next section |
+| the images and the release | see the next section; the base's registry is a placeholder |
 | one replica instead of two | a `replicas` patch, and delete the PDB (a `minAvailable: 1` on one replica blocks node drains) |
 
 ### Images and releases
 
-The base runs the published Debian-based image of release `v0.0.1-alpha`,
-`ghcr.io/skinnisjobb/gradinai-atlas-api`, by tag and digest. Task 1.4 publishes the UBI build
-(`gradinai-atlas-api-ubi`), which is the one to run on OpenShift. Three things belong to one
-release and move together in the overlay:
+The base names the Debian-based hardened API image of release `v0.0.1-alpha` by tag and by the
+digest that release published (`ghcr.io/<owner>/gradinai-atlas-api`, listed in the release's
+`release-images.env`; see [Releases](../../docs/oss/RELEASES.md)). Its registry,
+`registry.example.com/gradinai-atlas`, is a placeholder, because the repository names no
+account: **every overlay sets the image**, to GHCR or to the organisation's mirror of the same
+digest. Task 1.4 publishes the UBI build (`gradinai-atlas-api-ubi`), which is the one to run on
+OpenShift. Three things belong to one release and move together in the overlay:
 
 ```yaml
 images:
-  - name: ghcr.io/skinnisjobb/gradinai-atlas-api    # matches the base, the Job and the init containers
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-api    # matches the base, the Job and the init containers
     newName: registry.example.com/atlas/gradinai-atlas-api-ubi
     newTag: v0.2.0
     digest: sha256:<the release's digest>

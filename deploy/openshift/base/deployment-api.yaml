@@ -85,7 +85,7 @@ spec:
         # (the atlas-scripts ConfigMap) says why. Only this container mounts the CNPG Secret.
         - name: db-url
           # Always the same image as the main container.
-          image: ghcr.io/skinnisjobb/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
           imagePullPolicy: IfNotPresent
           command: ["python", "-I", "/run/config/scripts/db_url.py"]
           resources:
@@ -114,11 +114,16 @@ spec:
               readOnly: true
       containers:
         - name: atlas-api
-          # The published Debian-based hardened image of the v0.0.1-alpha release, by tag and
-          # digest. Task 1.4 publishes the UBI build (gradinai-atlas-api-ubi); an overlay moves
-          # to it, or to its own mirror, with a Kustomize `images:` entry (name, newName, newTag,
-          # digest) matching this name. See deploy/openshift/README.md, "Images".
-          image: ghcr.io/skinnisjobb/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          # The hardened API image of release v0.0.1-alpha, by tag and digest: the digest is the
+          # one the release published to GitHub's container registry (ghcr.io/<owner>/
+          # gradinai-atlas-api, the release's release-images.env; docs/oss/RELEASES.md). The
+          # registry is a placeholder, because the repository names no account: the overlay
+          # names the registry it pulls from (GHCR, or the organisation's mirror of the same
+          # digest) with a Kustomize `images:` entry matching this name, which moves this
+          # container, the init container and the Job together. Task 1.4 publishes the UBI build
+          # (gradinai-atlas-api-ubi), the one to run on OpenShift. deploy/openshift/README.md,
+          # "Images and releases".
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn

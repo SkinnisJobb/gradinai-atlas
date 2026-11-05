@@ -45,7 +45,7 @@ spec:
         # (the atlas-scripts ConfigMap) says why. Only this container mounts the CNPG Secret.
         - name: db-url
           # Always the same image as the main container.
-          image: ghcr.io/skinnisjobb/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
           imagePullPolicy: IfNotPresent
           command: ["python", "-I", "/run/config/scripts/db_url.py"]
           resources:
@@ -75,7 +75,7 @@ spec:
       containers:
         - name: atlas-migrate
           # The same image as atlas-api (deployment-api.yaml); one `images:` entry moves both.
-          image: ghcr.io/skinnisjobb/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
           imagePullPolicy: IfNotPresent
           command: ["atlas-migrate", "upgrade"]
           envFrom:
