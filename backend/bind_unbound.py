@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import models_graph  # noqa: E402
 from models_graph import Edge as GraphEdge, Node as GraphNode  # noqa: E402
+import dsn  # noqa: E402
 import settings  # noqa: E402
 
 MAP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "world_v2_bind.tsv")
@@ -73,6 +74,12 @@ def main() -> int:
         except settings.SecretError as exc:
             print(f"no database: pass --db, or {exc}", file=sys.stderr)
             return 2
+
+    try:
+        args.db = dsn.with_default_driver(args.db)  # TASK-1501: no driver named -> psycopg2
+    except dsn.DsnError as exc:
+        print(f"no database: {exc}", file=sys.stderr)
+        return 2
 
     rows = load_map()
     engine = create_engine(args.db, future=True)

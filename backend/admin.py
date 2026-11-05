@@ -168,6 +168,7 @@ try:  # noqa: E402 - the path shim above has to run first
     import passwords
     import auth
     import identity
+    import dsn
     import settings
     from models_auth import (
         AuthServiceToken,
@@ -238,10 +239,12 @@ def _db_url() -> str:
     a password on staging and wonders why live still refuses the old one.
     """
     try:
-        return settings.read_secret(
+        url = settings.read_secret(
             "ATLAS_DB_URL", default="postgresql+psycopg2://atlas:atlas@atlas-postgres:5432/atlas"
         )
-    except settings.SecretError as exc:
+        # TASK-1501: a URL with no driver (`postgresql://`) gets psycopg2; see dsn.py.
+        return dsn.with_default_driver(url)
+    except (settings.SecretError, dsn.DsnError) as exc:
         # Configured but refused or unreadable: say so, never fall back to the default.
         raise SystemExit(str(exc)) from None
 

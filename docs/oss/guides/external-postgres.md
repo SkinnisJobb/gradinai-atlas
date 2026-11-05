@@ -154,7 +154,10 @@ The URL has this form:
 postgresql+psycopg2://ROLE:PASSWORD@HOST:5432/DATABASE?sslmode=verify-full&sslrootcert=/run/secrets/db_ca
 ```
 
-- Keep the `postgresql+psycopg2://` scheme: it names the driver Atlas ships.
+- The `postgresql+psycopg2://` scheme names the driver Atlas ships. A URL with **no driver**,
+  `postgresql://` or `postgres://` (such as CloudNativePG's `fqdn-uri`, or what a managed service
+  hands you), works as it is: Atlas reads it as `postgresql+psycopg2://` (`backend/dsn.py`). A URL
+  that names another driver is used unchanged, and that driver is not in the image.
 - **Percent-encode** any character in the role or password that has a meaning in a URL (`@ : / ? #
   % &` and others). `init-secrets.sh` uses a hex password for exactly that reason. A long random
   password made only of letters and digits needs no encoding.
@@ -430,6 +433,7 @@ What the statements above rest on, in the code:
 
 - the URL from `ATLAS_DB_URL_FILE`, with the plain form refused in strict mode:
   `backend/settings.py` (`read_secret`), `backend/db.py`;
+- a URL with no driver read as psycopg2, by every reader of it: `backend/dsn.py`;
 - the URL's query parameters reaching the backup tools: `backend/crunch_backup.py` (`_conninfo`);
 - the rights the backup and restore need: the headers of `backend/crunch_backup.py` and
   `backend/backup_restore.py`;
