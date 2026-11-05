@@ -1,0 +1,208 @@
+# atlas-mcp: the MCP server agents use (TASK-1489; research questions 3, 8 and 9).
+#
+# TLS: uvicorn's own listener on :8493 with the service-CA certificate of Service atlas-mcp
+# (Secret atlas-mcp-tls), as the compose install's command does with its origin certificate. No
+# plain HTTP is served (the image's CMD on :8092 is replaced). atlas-tls (task 3.3) is the only
+# client: it proxies `/mcp` from the public door here, verifying `atlas-mcp.<namespace>.svc`.
+#
+# THE ONE WAY TO THE API is atlas-tls's :9443 front, never atlas-api:8443 directly, as in Compose:
+#   ATLAS_BASE_URL  https://atlas-tls.<namespace>.svc:9443. The Host it sends is exactly the
+#                   value atlas-api's ATLAS_INTERNAL_HOSTS names (deployment-api.yaml), the one
+#                   Host on which a Bearer request needs no cookie; the two must stay equal.
+#   ATLAS_CA_BUNDLE the service-CA bundle, and ONLY it (mcp/app/tls.py): the certificate of
+#                   atlas-tls's :9443 front is a service-CA certificate for that name.
+# The NetworkPolicies (task 3.4) make that the only egress it has: no route to the database or to
+# atlas-api.
+#
+# NO SECRET. atlas-mcp holds no credential of its own: each tool call forwards its caller's own
+# Bearer token (mcp/app/client.py). So the pod mounts no pepper, no database Secret and no
+# database CA, only its own serving certificate, the CA bundle, the probe script and /tmp.
+# ATLAS_MCP_ALLOW_SHARED_TOKEN and ATLAS_TOKEN are never set here (homelab history). The optional
+# mTLS client certificate for the :9443 hop is the `mtls` component's (task 3.6).
+#
+# ONE REPLICA, and the stateful transport. atlas-mcp keeps each MCP session in the memory of the
+# pod that answered `initialize` (research F6), so a second replica would refuse every request
+# that lands on it with another pod's session id. ATLAS_MCP_STATELESS_HTTP=1 (TASK-1480) lifts
+# that, but the release this base names (v0.0.1-alpha) predates it and ignores the switch, so the
+# base cannot turn it on safely. An overlay on a release that has it moves to two replicas in one
+# change: the switch, `replicas: 2` and a PodDisruptionBudget (deploy/openshift/README.md, "Two
+# atlas-mcp replicas"). With one replica there is no PDB: a minAvailable of 1 would block every
+# node drain. A rolling update briefly runs two pods, and a session on the old pod ends with it:
+# the client starts a new one (`initialize`), as after any atlas-mcp restart.
+#
+# PROBES are exec probes, not httpGet: base/https_probe.py says why. /health is outside the MCP
+# transport's Host check (research F8), so the probe sends the service name, not the public host.
+#
+# SECURITY CONTEXT: the restricted profile, stated on the pod and the container, as atlas-api. No
+# runAsUser or fsGroup: the SCC assigns both (the image runs under any UID in group 0). Read-only
+# root filesystem; /tmp is a memory emptyDir.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-mcp
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: mcp
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: atlas
+        app.kubernetes.io/component: mcp
+    spec:
+      serviceAccountName: atlas
+      automountServiceAccountToken: false
+      # Kubernetes would otherwise inject ATLAS_API_PORT and the like for the Services atlas-api
+      # and atlas-mcp, inside Atlas's own ATLAS_ namespace.
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # Inert with one replica; spreads the two of an overlay that runs the stateless transport.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: mcp
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: atlas
+                    app.kubernetes.io/component: mcp
+      containers:
+        - name: atlas-mcp
+          # The hardened MCP image of release v0.0.1-alpha, by tag and digest: the digest is the
+          # one the release published to GitHub's container registry (ghcr.io/<owner>/
+          # gradinai-atlas-mcp, ATLAS_IMAGE_MCP in the release's release-images.env;
+          # docs/oss/RELEASES.md). The registry is a placeholder, as for atlas-api: the overlay
+          # names the registry it pulls from with a Kustomize `images:` entry matching this name.
+          # Task 1.4 publishes the UBI build (gradinai-atlas-mcp-ubi), the one to run on
+          # OpenShift. deploy/openshift/README.md, "Images and releases".
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-mcp:v0.0.1-alpha@sha256:fa24d32824eb485b77c672e845fdcddc994aaf09dfde5c8304cc4a91272a905b
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - uvicorn
+            - app.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8493"
+            - --ssl-certfile
+            - /run/secrets/mcp-tls/tls.crt
+            - --ssl-keyfile
+            - /run/secrets/mcp-tls/tls.key
+          ports:
+            - name: https
+              containerPort: 8493
+              protocol: TCP
+          # The same atlas-env as atlas-api: ATLAS_MCP_ALLOWED_HOSTS / _ORIGINS (the public host,
+          # which atlas-tls forwards unchanged), ATLAS_DISABLED_FEATURES, ATLAS_MCP_AUTH_CACHE_S,
+          # ATLAS_REQUIRE_SECRET_FILES. Keys meant for atlas-api are ignored here.
+          envFrom:
+            - configMapRef:
+                name: atlas-env
+          # Fixed values win over atlas-env (as compose's `environment:` wins over `.env`).
+          env:
+            # For ATLAS_BASE_URL and the exec probe's TLS server name.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # atlas-tls's :9443 front (task 3.3); must equal atlas-api's ATLAS_INTERNAL_HOSTS.
+            - name: ATLAS_BASE_URL
+              value: https://atlas-tls.$(POD_NAMESPACE).svc:9443
+            - name: ATLAS_CA_BUNDLE
+              value: /run/config/service-ca/service-ca.crt
+            # The stateful transport, which one replica needs no more than; see the header before
+            # changing it, and the replica count with it.
+            - name: ATLAS_MCP_STATELESS_HTTP
+              value: "0"
+          startupProbe:
+            exec:
+              command: ["python", "-I", "/run/config/scripts/https_probe.py", "8493", "/health", "atlas-mcp"]
+            periodSeconds: 2
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            # /health needs nothing else: atlas-api being down does not restart atlas-mcp.
+            exec:
+              command: ["python", "-I", "/run/config/scripts/https_probe.py", "8493", "/health", "atlas-mcp"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["python", "-I", "/run/config/scripts/https_probe.py", "8493", "/health", "atlas-mcp"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: mcp-tls
+              mountPath: /run/secrets/mcp-tls
+              readOnly: true
+            - name: service-ca
+              mountPath: /run/config/service-ca
+              readOnly: true
+            - name: scripts
+              mountPath: /run/config/scripts
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: mcp-tls
+          secret:
+            secretName: atlas-mcp-tls
+            defaultMode: 0440
+        - name: service-ca
+          configMap:
+            name: atlas-service-ca
+            items:
+              - key: service-ca.crt
+                path: service-ca.crt
+        - name: scripts
+          configMap:
+            name: atlas-scripts
+            items:
+              - key: https_probe.py
+                path: https_probe.py
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
