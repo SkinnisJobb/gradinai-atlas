@@ -193,6 +193,11 @@ jobs:
           bash -n tools/ci/test_init_certs.sh
           bash tools/ci/test_init_certs.sh
 
+      # ARO task 4.1: scripts/openshift/new-secrets.py against a fake `oc` shows no pepper on
+      # stdout, stderr, oc's argv or oc's environment, and refuses a second run.
+      - name: "openshift new-secrets.py: no secret shown, refuses a second run"
+        run: python tools/ci/test_new_secrets.py
+
       # init-secrets.sh refuses to overwrite, and never prints a secret.
       - name: init-secrets refuses a second run, and printed no secret
         working-directory: deploy/oss
