@@ -68,7 +68,7 @@ oc get storageclass
 One line should say `(default)` (on ARO usually `managed-csi`). If the command is refused,
 ask the platform team which class is the default.
 
-**The pod network** (for step 5):
+**The pod network** (for step 5, values 4 and 4b):
 
 ```powershell
 oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'
@@ -144,7 +144,7 @@ Copy-Item -Recurse deploy\openshift\overlays\example deploy\openshift\overlays\o
 (In the full template the overlay will live in your own GitLab repository and point at this one
 by release; for a first try a copy in the checkout is enough.)
 
-## 5. Fill in the four values
+## 5. Fill in the values
 
 Every value to change says `change-me`. All of them are in `deploy\openshift\overlays\ours\`:
 
@@ -153,16 +153,26 @@ Every value to change says `change-me`. All of them are in `deploy\openshift\ove
 | 1 | `kustomization.yaml` | `namespace: change-me-namespace` | your project, step 2 |
 | 2 | `kustomization.yaml` | `change-me-owner` in the three `newName` lines | the GitHub account in lower case, as in the pull test |
 | 3 | `atlas.env` | `atlas.change-me.example.com`, four times | `atlas.` followed by the apps domain from step 1, for example `atlas.apps.<cluster domain>` |
-| 4 | `patch-trusted-proxy.yaml` | `change-me-pod-network-cidr` | the pod network from step 1, exactly as printed (several: comma-separated, no spaces) |
+| 4 | `patch-trusted-proxy.yaml` (atlas-api) | `change-me-pod-network-cidr` | the pod network from step 1; several: comma-separated, no spaces |
+| 4b | `patch-tls-trusted-proxy.yaml` (atlas-tls, Caddy) | `change-me-pod-network-cidr` | the same pod network; several: separated by spaces |
 
-Values 2 and 3 can be replaced in one go; put your own values in the first two lines:
+Both 4 and 4b are the pod network because both peers live on it: atlas-api believes the
+client address only from atlas-tls, and atlas-tls believes the router's `X-Forwarded-For` only
+from the router pods. If the platform team says the router runs on the host network, add the
+machine network to 4b as well; if a gateway sits in front of the router, see assumption 5.
+
+All of them can be replaced in one go; put your own values in the first two lines (the third
+reads the pod network from the cluster):
 
 ```powershell
 $owner = 'yourowner'                   # lower case
 $hostname = 'atlas.apps.example.com'   # atlas.<apps domain>
+$podnet = oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'
 $dir = 'deploy\openshift\overlays\ours'
 (Get-Content "$dir\kustomization.yaml") -replace 'change-me-owner', $owner | Set-Content "$dir\kustomization.yaml"
 (Get-Content "$dir\atlas.env") -replace 'atlas\.change-me\.example\.com', $hostname | Set-Content "$dir\atlas.env"
+(Get-Content "$dir\patch-trusted-proxy.yaml") -replace 'change-me-pod-network-cidr', ($podnet -replace ' ', ',') | Set-Content "$dir\patch-trusted-proxy.yaml"
+(Get-Content "$dir\patch-tls-trusted-proxy.yaml") -replace 'change-me-pod-network-cidr', $podnet | Set-Content "$dir\patch-tls-trusted-proxy.yaml"
 ```
 
 Also read the two privacy lines and `ATLAS_SEED` in `atlas.env`. `ATLAS_SEED=demo` puts one
@@ -296,6 +306,8 @@ Start with `oc get pods -n atlas` and `oc get events -n atlas --sort-by=.lastTim
 | Pods `CreateContainerConfigError` or stuck in `ContainerCreating` on a missing Secret | `atlas-peppers` was created in another project, or a TLS Secret is not issued yet | `oc get secrets -n atlas`. `atlas-peppers`: rerun step 3 with the right `-n`. The `*-tls` Secrets come from the service CA within a minute of the Service; if they never appear, ask the platform team whether the service CA operator is healthy |
 | Route answers `503` "Application is not available" | the router has no ready `atlas-tls` endpoint, or cannot complete the re-encrypt leg | `oc get endpoints atlas-tls -n atlas` must list addresses. If it does: `oc get route -n atlas -o yaml` must have `termination: reencrypt` and **no** `destinationCACertificate` (left empty, the router verifies `atlas-tls` against the service CA, including its name); `oc logs deploy/atlas-tls -n atlas` shows a TLS handshake error if not |
 | `unparseable entry` in the `atlas-api` log | value 4 is not a CIDR | fix `patch-trusted-proxy.yaml`, `oc apply -k`; the Deployment rolls by itself |
+| `atlas-tls` fails to start with a Caddyfile error about `trusted_proxies` | value 4b is not a CIDR list (Caddy wants spaces, not commas) | fix `patch-tls-trusted-proxy.yaml`, `oc apply -k` |
+| Every sign-in in the audit trail shows the same pod address | 4b does not cover the router's address (router on the host network, or a gateway in front) | assumption 5 |
 | Pods `Pending` with `exceeded quota` or a `LimitRange` message | the project's quota or limits are tighter than the manifests' requests (assumption 3) | `oc describe quota -n atlas`, `oc describe limitrange -n atlas`; ask for more, or patch the resources (assumption 3) |
 
 ## The assumptions and what to change if one is wrong
@@ -307,9 +319,9 @@ overlay, without touching the base.
 |---|---|---|---|
 | 1 | The cluster pulls straight from ghcr.io, without a pull secret | step 1, pull test | Mirror each image to the registry the cluster may use, by digest (`oc image mirror ghcr.io/<owner>/gradinai-atlas-api@sha256:<digest> <registry>/atlas/gradinai-atlas-api:v0.0.1-alpha`, likewise for `-mcp` and `-tls`), and change only `newName` in `images:` (the digest stays: same bytes). If that registry needs credentials: `oc create secret docker-registry` with them, then `oc secrets link atlas <that secret> --for=pull -n atlas` (every Atlas pod runs as ServiceAccount `atlas`). The database image too: a patch on `Cluster` `atlas-db` setting `spec.imageName` to the mirrored `ghcr.io/cloudnative-pg/postgresql` digest |
 | 2 | The cluster is not in FIPS mode | ask the platform team | Stop: these images are not built for FIPS (task 1.6 is the FIPS build, not started). Tell the Atlas maintainers |
-| 3 | OpenShift 4.20 or 4.21, `restricted-v2` SCC, no tight LimitRange | `oc version`; the dry run in step 5 | Tighter limits: a patch on `resources` of the Deployment or Job concerned, or on `spec.resources` of `Cluster` `atlas-db`. A smaller quota: `replicas: 1` on `atlas-api` and delete its PodDisruptionBudget, and `spec.instances: 1` on the Cluster (no standby: test installs only); [`README.md`](README.md), "What an overlay must set" |
+| 3 | OpenShift 4.20 or 4.21, `restricted-v2` SCC, no tight LimitRange | `oc version`; the dry run in step 5 | Tighter limits: a patch on `resources` of the Deployment or Job concerned, or on `spec.resources` of `Cluster` `atlas-db`. A smaller quota: `replicas: 1` on `atlas-api` and on `atlas-tls`, and delete each one's PodDisruptionBudget (`minAvailable: 1` on one replica blocks every node drain), and `spec.instances: 1` on the Cluster (no standby: test installs only); [`README.md`](README.md), "What an overlay must set" |
 | 4 | Re-encrypt Routes are allowed, with our own host under the apps domain, on the router's default certificate | step 6, the Route is admitted; step 8 | A host outside the apps domain: the platform's certificate for it goes on the Route (`spec.tls.certificate`, `key`, `caCertificate`, by a patch on the Route), or the platform team provides it. Re-encrypt refused: tell the Atlas maintainers; edge or passthrough loses the client address (the design, question 3) |
-| 5 | Nothing sits in front of the router (no Application Gateway or Front Door), and the router keeps the client address | after step 8: one deliberately wrong password, then the sign-in events (`GET /api/audit/export` as owner) must show your own address, not a pod's | With a gateway in front: its subnet is added to the trusted proxies of `atlas-tls` and the Route's forwarded-headers policy becomes `append` (the design, question 3). Value 4 itself stays the pod network |
+| 5 | Nothing sits in front of the router (no Application Gateway or Front Door), and the router keeps the client address | after step 8: one deliberately wrong password, then the sign-in events (`GET /api/audit/export` as owner) must show your own address, not a pod's | Router on the host network: add the machine network to 4b. A gateway in front: add its range to 4b, and set the Route `atlas`'s annotation `haproxy.router.openshift.io/set-forwarded-headers` to `append` with a patch, so the router keeps the client address the gateway put in the header (the design, question 3). Value 4 stays the pod network |
 | 6 | Community CloudNativePG 1.25 or later (`postgresql.cnpg.io/v1`), the default storage class | step 1 | **EDB Postgres for Kubernetes**: add `- ../../components/cnpg-edb` after `../../components/cnpg` in `components:`. **No default class or another one wanted**: a patch on `Cluster` `atlas-db` setting `spec.storage.storageClass` and `spec.walStorage.storageClass`. **Operator older than 1.25** (no `databases`): a patch deleting the `Database` `atlas-db-atlas` (`$patch: delete`); the `atlas` database is still created by the Cluster's `initdb` |
 | 7 | No backup at first install | | Before real work is stored: replace `../../components/cnpg` with `../../components/cnpg-objectstore-plugin` in `components:` (it needs the Barman Cloud plugin on the cluster and a storage account); [`README.md`](README.md), "The database". Until then the standby is the only copy |
 | 8 | No External Secrets Operator: plain Secrets from `new-secrets.py` | step 3 | The `external-secrets` component (task 3.6, not built yet) delivers `atlas-peppers` from Key Vault instead; the Secret's name and keys stay the same, so nothing else changes |

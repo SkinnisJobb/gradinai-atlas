@@ -12,7 +12,8 @@
 #   1. `namespace:` below                    your project
 #   2. `change-me-owner` in `images:` below   the GitHub account that publishes the images
 #   3. atlas.env                              the public host, in four lines (and the privacy text)
-#   4. patch-trusted-proxy.yaml               the cluster's pod network CIDR
+#   4. patch-trusted-proxy.yaml and           the cluster's pod network CIDR, in both (atlas-api
+#      patch-tls-trusted-proxy.yaml           comma-separated, atlas-tls space-separated)
 # The Route's host is copied from ATLAS_PUBLIC_HOST in atlas.env (`replacements:` below), so the
 # host is typed in one file only.
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -81,6 +82,12 @@ patches:
     target:
       kind: Deployment
       name: atlas-api
+  # 4b. Whose X-Forwarded-For atlas-tls (Caddy) believes: the same network
+  # (patch-tls-trusted-proxy.yaml).
+  - path: patch-tls-trusted-proxy.yaml
+    target:
+      kind: Deployment
+      name: atlas-tls
   # The migrate Job is named per release (deploy/openshift/README.md, "Images and releases"). On
   # v0.0.1-alpha the base's name is already right, so this replaces it with itself; on the next
   # release change `value` to atlas-migrate-<version, dots as dashes> together with the images.
@@ -93,7 +100,8 @@ patches:
         value: atlas-migrate-v0-0-1-alpha
 
 # The Route's host is ATLAS_PUBLIC_HOST, copied, so the two can never differ (a request whose
-# Host is not ATLAS_PUBLIC_HOST is refused with 421).
+# Host is not ATLAS_PUBLIC_HOST is refused with 421). The base's Route `atlas` carries
+# atlas.example.com; atlas-tls reads the same key from atlas-env as CADDY_PUBLIC_HOST.
 replacements:
   - source:
       kind: ConfigMap
