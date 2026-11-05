@@ -260,6 +260,13 @@ echo "-- origin-ca.crt of another CA --"
 start_front off "$OTHER/origin-ca.crt"
 if hc; then bad "TASK-1470: the healthcheck passes while the proxy refuses the origins' certificates"
 else ok "TASK-1470: with another CA's origin-ca.crt the healthcheck fails"; fi
+# Caddy's log, read whole into a variable before grepping. Never `docker logs | grep -q` under
+# pipefail: grep -q exits at its first match, docker logs dies of SIGPIPE writing the rest, and
+# the pipeline's status turns the match into a miss (TASK-1502). The readiness probe and the
+# healthcheck above have already logged verification failures of their own, so the log check
+# below reads only the lines written after this marker, taken just before its request.
+caddy_log() { docker logs "$P-tls" 2>&1; }
+mark=$(caddy_log | wc -l)
 code=$(curl -s -o "$TMP/wrongca" -w '%{http_code}' --max-time 5 --cacert "$PKI/ca.crt" -H "Authorization: Bearer x" \
        "https://localhost:$PUB/api/health" || true)
 if grep -q atlas-api-origin "$TMP/wrongca" 2>/dev/null; then
@@ -269,11 +276,20 @@ elif [ "$code" = 502 ]; then
 else
     bad "OSS-26 D: with another CA's origin-ca.crt, HTTP $code (want 502)"
 fi
-if docker logs "$P-tls" 2>&1 | grep -qiE 'x509|certificate signed by unknown authority|tls: '; then
-    ok "OSS-26 D: Caddy logged the verification failure ($(docker logs "$P-tls" 2>&1 | grep -oiE 'x509: [^"]{0,60}|certificate signed by unknown authority' | head -1))"
+# Caddy can write the request's error line just after the 502 reaches curl, and docker copies the
+# log asynchronously, so poll for it (up to 5 s) rather than read once.
+cert_err='x509|certificate signed by unknown authority|tls: '
+new=
+for _ in $(seq 1 25); do
+    new=$(caddy_log | tail -n +"$((mark + 1))")
+    if grep -qiE "$cert_err" <<<"$new"; then break; fi
+    sleep 0.2
+done
+if grep -qiE "$cert_err" <<<"$new"; then
+    ok "OSS-26 D: Caddy logged that request's verification failure ($(grep -oiE 'x509: [^"]{0,60}|certificate signed by unknown authority' <<<"$new" | head -1))"
 else
-    bad "OSS-26 D: no certificate error in Caddy's log"
-    docker logs "$P-tls" 2>&1 | tail -n 12 | cut -c1-400 | sed 's/^/    caddy: /'
+    bad "OSS-26 D: no certificate error in Caddy's log after that request"
+    caddy_log | tail -n 12 | cut -c1-400 | sed 's/^/    caddy: /'
 fi
 
 # --- client auth require (the mTLS leg) -----------------------------------------------------
