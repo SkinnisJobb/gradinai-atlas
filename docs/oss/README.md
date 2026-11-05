@@ -81,6 +81,9 @@ Design research that is not yet built. These pages propose; the pages above desc
 - [Atlas on Azure Red Hat OpenShift](research/openshift-aro.md) - how Atlas would run on ARO in
   one namespace under the restricted SCC, with CloudNativePG: a recommendation per question, the
   target architecture, the secrets and settings, and a proposed breakdown into tasks.
+- [OpenShift: creating the peppers and backing them up](guides/openshift-secrets.md) - the first
+  built piece of that design: `scripts/openshift/new-secrets.py` makes the peppers and the Secrets
+  without showing a value, and the peppers are backed up to and restored from Azure Key Vault.
 
 ### Configuration examples
 
