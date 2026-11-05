@@ -38,10 +38,13 @@ FIXED = {
 }
 # `sha256sum` of these exact bytes, computed once and pinned, so a change to the definition
 # (stripping the newline, hashing the decoded bytes) fails here even where sha256sum is absent.
-KNOWN = {
-    "password_pepper": "7d3a1c8c0fb3f26a4cb1cd78f37751d39dd8d37addb78103d8a346d010eeccdc",
-    "token_pepper": "7669622d81b3d9dadbda12e4bef64a4b190d3a8da24e71a1dd67e10de0f0a792",
-}
+# Listed in FIXED's order, as bare digests (with a key name beside them they look like an API
+# key to gitleaks; they are hashes of public test input).
+_PINNED = (
+    "7d3a1c8c0fb3f26a4cb1cd78f37751d39dd8d37addb78103d8a346d010eeccdc",
+    "7669622d81b3d9dadbda12e4bef64a4b190d3a8da24e71a1dd67e10de0f0a792",
+)
+KNOWN = dict(zip(FIXED, _PINNED))
 
 
 class PepperFingerprint(unittest.TestCase):
