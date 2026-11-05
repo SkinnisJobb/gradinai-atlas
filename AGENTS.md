@@ -74,5 +74,6 @@ checked.
 | `mcp/` | `atlas-mcp`, the MCP server, its own compose project |
 | `clients/` | client packs, such as the one for Claude Code |
 | `deploy/oss/` | the install: compose file, ingress, `.env.example` |
+| `deploy/openshift/` | the OpenShift manifests (Kustomize), being built; its `README.md` is the map |
 | `tools/` | the reference generators, the scrub gate and the CI checks |
 | `docs/oss/` | the product documentation and the ADRs |

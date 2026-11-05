@@ -1,0 +1,25 @@
+# atlas-api's Service (TASK-1485; research question 3). TLS only: uvicorn serves :8443 with the
+# certificate the service CA issues for this Service because of the annotation, into the
+# `kubernetes.io/tls` Secret atlas-api-tls (`tls.crt`, `tls.key`), for the names
+# `atlas-api.<namespace>.svc` and its cluster-domain form. Only atlas-tls (task
+# 3.3) reaches it, verifying that name against atlas-service-ca; the NetworkPolicies (task 3.4)
+# admit nothing else. No plain-HTTP port exists.
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-api
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: api
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: atlas-api-tls
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: api
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+      protocol: TCP

@@ -1,0 +1,18 @@
+# Keep one atlas-api serving through a node drain (TASK-1485; research question 9). With two
+# replicas this lets the platform drain one node at a time. An overlay that runs one replica must
+# delete this PDB (a minAvailable of 1 on one replica blocks every drain).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: atlas-api
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: api
+spec:
+  minAvailable: 1
+  # A pod that is not Ready protects nothing: let a drain evict it rather than block on it.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: api
