@@ -55,7 +55,9 @@ oc api-resources --api-group=postgresql.cnpg.io
 oc api-resources --api-group=postgresql.k8s.enterprisedb.io
 ```
 
-The first should list `clusters` and `databases`. If only the second lists anything, the
+The first should list `clusters` and `databases`. If you may read CRDs, the same answer
+comes from `oc get crd clusters.postgresql.cnpg.io databases.postgresql.cnpg.io` (or the
+`postgresql.k8s.enterprisedb.io` names for EDB); `oc api-resources` needs no extra right. If only the second lists anything, the
 cluster runs EDB Postgres for Kubernetes: see assumption 6. If `clusters` is there but
 `databases` is not, the operator is older than 1.25: see assumption 6 too.
 
@@ -214,6 +216,8 @@ oc rollout status deploy/atlas-tls -n atlas --timeout=5m
 oc get route -n atlas
 ```
 
+- `clusters.postgresql.cnpg.io/atlas-db` is the long form of `cluster/atlas-db`; it avoids any
+  other resource called `cluster`. Under EDB it is `clusters.postgresql.k8s.enterprisedb.io/atlas-db`.
 - The database takes a few minutes: the operator creates the volumes, the first instance, then
   the standby. `oc get clusters.postgresql.cnpg.io -n atlas` shows its phase meanwhile.
 - The migrate Job's log ends with an `[atlas-migrate] upgrade:` line saying what it created.
@@ -322,7 +326,7 @@ overlay, without touching the base.
 | 3 | OpenShift 4.20 or 4.21, `restricted-v2` SCC, no tight LimitRange | `oc version`; the dry run in step 5 | Tighter limits: a patch on `resources` of the Deployment or Job concerned, or on `spec.resources` of `Cluster` `atlas-db`. A smaller quota: `replicas: 1` on `atlas-api` and on `atlas-tls`, and delete each one's PodDisruptionBudget (`minAvailable: 1` on one replica blocks every node drain), and `spec.instances: 1` on the Cluster (no standby: test installs only); [`README.md`](README.md), "What an overlay must set" |
 | 4 | Re-encrypt Routes are allowed, with our own host under the apps domain, on the router's default certificate | step 6, the Route is admitted; step 8 | A host outside the apps domain: the platform's certificate for it goes on the Route (`spec.tls.certificate`, `key`, `caCertificate`, by a patch on the Route), or the platform team provides it. Re-encrypt refused: tell the Atlas maintainers; edge or passthrough loses the client address (the design, question 3) |
 | 5 | Nothing sits in front of the router (no Application Gateway or Front Door), and the router keeps the client address | after step 8: one deliberately wrong password, then the sign-in events (`GET /api/audit/export` as owner) must show your own address, not a pod's | Router on the host network: add the machine network to 4b. A gateway in front: add its range to 4b, and set the Route `atlas`'s annotation `haproxy.router.openshift.io/set-forwarded-headers` to `append` with a patch, so the router keeps the client address the gateway put in the header (the design, question 3). Value 4 stays the pod network |
-| 6 | Community CloudNativePG 1.25 or later (`postgresql.cnpg.io/v1`), the default storage class | step 1 | **EDB Postgres for Kubernetes**: add `- ../../components/cnpg-edb` after `../../components/cnpg` in `components:`. **No default class or another one wanted**: a patch on `Cluster` `atlas-db` setting `spec.storage.storageClass` and `spec.walStorage.storageClass`. **Operator older than 1.25** (no `databases`): a patch deleting the `Database` `atlas-db-atlas` (`$patch: delete`); the `atlas` database is still created by the Cluster's `initdb` |
+| 6 | Community CloudNativePG 1.25 or later (`postgresql.cnpg.io/v1`), the default storage class | step 1 | **EDB Postgres for Kubernetes**: add `- ../../components/cnpg-edb` after `../../components/cnpg` in `components:` (an overlay with it applies fine, but the repository's kubeconform lint has no EDB schemas and refuses it, so keep that change in your own copy). **No default class or another one wanted**: a patch on `Cluster` `atlas-db` setting `spec.storage.storageClass` and `spec.walStorage.storageClass`. **Operator older than 1.25** (no `databases`): a patch deleting the `Database` `atlas-db-atlas` (`$patch: delete`); the `atlas` database is still created by the Cluster's `initdb` |
 | 7 | No backup at first install | | Before real work is stored: replace `../../components/cnpg` with `../../components/cnpg-objectstore-plugin` in `components:` (it needs the Barman Cloud plugin on the cluster and a storage account); [`README.md`](README.md), "The database". Until then the standby is the only copy |
 | 8 | No External Secrets Operator: plain Secrets from `new-secrets.py` | step 3 | The `external-secrets` component (task 3.6, not built yet) delivers `atlas-peppers` from Key Vault instead; the Secret's name and keys stay the same, so nothing else changes |
 | 9 | `oc apply -k` by hand (later from GitLab), no GitOps | | Argo CD renders the same overlay; the `gitops` component (task 3.6) adds what it needs |
