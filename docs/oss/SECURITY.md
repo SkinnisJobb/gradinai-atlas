@@ -209,7 +209,8 @@ the ingress's own legs to `atlas-api` and `atlas-mcp` are TLS too.
   - any switch that disables verification (`verify=False`, `CERT_NONE`, `curl -k` and similar).
 
   In the OSS layout, any plain-HTTP token port published at all is a failure, and so is an ingress
-  upstream that is not `https://` with the origin-CA transport (rule R6).
+  upstream that is not `https://` with the origin-CA transport (rule R6). R6 also covers the
+  OpenShift front (`deploy/openshift/base/caddy/Caddyfile`), whose legs use the service CA.
   `tools/ci/check_oss_compose.py` (rule S8) fails a compose file in which `atlas-api` or `atlas-mcp`
   does not serve TLS itself. Install smoke leg 6 checks every hop on the running install: the
   ingress, `atlas-mcp` to the API, the gateway, and both ingress legs (TLS verified against the
@@ -230,7 +231,8 @@ every response from the public door:
 
 `tools/ci/check_oss_headers.py` fails the build if any of these headers changes, if a CSP allows
 `'unsafe-inline'` or `'unsafe-eval'` in `script-src`, or if the legacy board's hashes no longer
-match its scripts. The public handbook pages also carry their own CSP from the API, with no script
+match its scripts. The OpenShift front (`deploy/openshift/base/caddy/Caddyfile`) carries the same
+snippet, and the check fails if the two copies differ. The public handbook pages also carry their own CSP from the API, with no script
 source at all, so they stay locked down behind a front that sets no headers.
 
 No CORS middleware is installed: every browser caller is same-origin.

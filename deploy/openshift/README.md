@@ -32,7 +32,7 @@ no `http://` URL). `tools/ci/check_pins.py` also checks every `image:` here for 
 
 | File | Object | What it is |
 |---|---|---|
-| `kustomization.yaml` | | the resource list, the common labels, the two ConfigMap generators |
+| `kustomization.yaml` | | the resource list, the common labels, the ConfigMap generators |
 | `serviceaccount.yaml` | ServiceAccount `atlas` | no token mounted, no Role bound: Atlas never calls the Kubernetes API |
 | `atlas.env` | ConfigMap `atlas-env` | the non-secret settings, loaded with `envFrom` (the counterpart of `.env`) |
 | `https_probe.py`, `db_url.py` | ConfigMap `atlas-scripts` | the exec probe and the database-URL init container, mounted at `/run/config/scripts/` |
@@ -44,9 +44,14 @@ no `http://` URL). `tools/ci/check_pins.py` also checks every `image:` here for 
 | `cronjob-audit-purge.yaml` | CronJob `atlas-audit-purge` | `atlas-admin audit purge` daily at 03:00 UTC (task 3.8) |
 | `service-mcp.yaml` | Service `atlas-mcp` | `:8493`, TLS only; its annotation makes the service CA issue Secret `atlas-mcp-tls` (task 3.2) |
 | `deployment-mcp.yaml` | Deployment `atlas-mcp` | 1 replica, uvicorn TLS on `:8493`, reaches the API only through `atlas-tls`'s `:9443` front, no secret mounted (task 3.2) |
+| `caddy/Caddyfile`, `caddy/client-auth-*.caddy` | ConfigMap `atlas-caddy` | atlas-tls's configuration, mounted at `/etc/caddy/` (task 3.3) |
+| `service-tls.yaml` | Service `atlas-tls` | `:8443` (the public door) and `:9443` (atlas-mcp's door to the API); its annotation makes the service CA issue Secret `atlas-tls-tls` (task 3.3) |
+| `deployment-tls.yaml` | Deployment `atlas-tls` | Caddy, 2 replicas, read-only root filesystem (task 3.3) |
+| `pdb-tls.yaml` | PodDisruptionBudget `atlas-tls` | `minAvailable: 1` (task 3.3) |
+| `route-atlas.yaml` | Route `atlas` | re-encrypt to `atlas-tls:8443`, the only way in from outside (task 3.3) |
 
 Every object carries `app.kubernetes.io/name: atlas`, `app.kubernetes.io/part-of: atlas`,
-`app.kubernetes.io/version` and an `app.kubernetes.io/component` (`api`, `mcp`, `migrate`,
+`app.kubernetes.io/version` and an `app.kubernetes.io/component` (`api`, `mcp`, `tls`, `migrate`,
 `audit-purge`, `config`);
 the selectors use `name` and `component`, which the NetworkPolicies (task 3.4) will select on.
 
@@ -59,6 +64,7 @@ the selectors use `name` and `component`, which the NetworkPolicies (task 3.4) w
 | `atlas-db-ca` | `ca.crt` only (never `ca.key`) | the same `Cluster` |
 | `atlas-api-tls` | `tls.crt`, `tls.key` | the service CA, from the annotation on Service `atlas-api` |
 | `atlas-mcp-tls` | `tls.crt`, `tls.key` | the service CA, from the annotation on Service `atlas-mcp` |
+| `atlas-tls-tls` | `tls.crt`, `tls.key` | the service CA, from the annotation on Service `atlas-tls` |
 
 A database named other than `atlas-db` means patching the two `secretName`s in the Deployment, the
 Job and the CronJob.
@@ -133,15 +139,55 @@ owner, so the CronJob's history limits (three successful, three failed) remove i
 `oc delete job/atlas-audit-purge-manual` before running it by hand again. To pause it, `oc patch cronjob/atlas-audit-purge -p
 '{"spec":{"suspend":true}}'`; an overlay that wants another time patches `spec.schedule`.
 
+### The front door: atlas-tls and the Route (task 3.3)
+
+```text
+client --https--> router --re-encrypt--> atlas-tls:8443 --https--> atlas-api:8443 / atlas-mcp:8493
+                                          atlas-mcp --https--> atlas-tls:9443 --https--> atlas-api:8443
+```
+
+`base/caddy/Caddyfile` is the OpenShift counterpart of `deploy/oss/caddy/Caddyfile` and explains
+every door and leg; the decisions:
+
+- **Re-encrypt, `destinationCACertificate` left empty.** The router terminates the public TLS
+  with the platform's certificate and verifies Caddy's service-CA certificate and its name
+  `atlas-tls.<namespace>.svc`. It sends no SNI on that leg, so the Caddyfile sets `default_sni`.
+  A plain-HTTP request gets the router's redirect (`insecureEdgeTerminationPolicy: Redirect`).
+- **The client's address survives.** The Route sets
+  `haproxy.router.openshift.io/set-forwarded-headers: replace`, so X-Forwarded-For holds exactly
+  the address the router saw. Caddy believes it only from `CADDY_TRUSTED_PROXIES` and sets
+  `CF-Connecting-IP` from it, replacing any value a client sent; atlas-api believes
+  `CF-Connecting-IP` only from `ATLAS_TRUSTED_PROXY_CIDRS`. Both are documentation ranges in the
+  base (they fail safe: the sign-in throttle then counts the proxy) and both are set by the
+  overlay.
+- **The security headers and HSTS come from Caddy**, the same snippet as Compose, checked by
+  `tools/ci/check_oss_headers.py` (which fails if the two copies differ). The Route has no
+  `hsts_header` annotation, so the header is sent once.
+- **No ACME.** `auto_https off`: every certificate is a file, and Caddy has no `:80` listener.
+- **The image.** No release has published the UBI build of Caddy (`deploy/caddy/Dockerfile.ubi`)
+  yet, so the base names the released Compose Caddy (`gradinai-atlas-tls`, Alpine, with an
+  unused Cloudflare DNS plugin), which runs this Caddyfile unchanged under an arbitrary UID. The
+  overlay moves it to `gradinai-atlas-tls-ubi` once a release carries it.
+- **Probes are not exec probes**: the image has no shell, Python or HTTP client. Startup and
+  liveness are `tcpSocket :8443`; readiness is an HTTPS `httpGet` of `/healthz`, which the
+  Caddyfile's catch-all `:8443` site sends through its verified leg to atlas-api, so a front that
+  cannot reach atlas-api leaves the Route. These probes come from the node over the network.
+- **mTLS on `:9443` stays optional**: `CADDY_CLIENT_AUTH=off` here; the `mtls` component (task
+  3.6) sets `require` and mounts the client CA at `/run/secrets/client-ca/ca.crt`.
+- **The MCP timeout.** The router's default is 30 s of silence; the Route allows 5 minutes
+  (`haproxy.router.openshift.io/timeout`) for long tool calls and event streams.
+- **No gateway leg** (Compose's `:9444`): no gateway on OpenShift in v1.
+
 ## What an overlay must set
 
 | What | How |
 |---|---|
 | the namespace | `namespace:` |
 | the public host | `configMapGenerator` named `atlas-env` with `behavior: merge`, from the overlay's own env file: `ATLAS_PUBLIC_HOST`, `ATLAS_PUBLIC_URL`, `ATLAS_MCP_ALLOWED_HOSTS`, `ATLAS_MCP_ALLOWED_ORIGINS`, `ATLAS_PRIVACY_CONTACT`, `ATLAS_PRIVACY_HOSTING` |
-| the trusted proxy range | a patch on the `atlas-api` container's `ATLAS_TRUSTED_PROXY_CIDRS` env entry: the pod network CIDR (`oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'`) |
+| the Route's host | a patch on Route `atlas`: `spec.host` is `ATLAS_PUBLIC_HOST`. A certificate of the organisation's own goes on the Route too (`spec.tls.certificate`, `key`); without one the router serves the platform's default |
+| the trusted proxy ranges | two env patches, usually the same value: `CADDY_TRUSTED_PROXIES` on the `atlas-tls` container (the router's range, space-separated) and `ATLAS_TRUSTED_PROXY_CIDRS` on the `atlas-api` container (atlas-tls's range, comma-separated). On ARO the router and atlas-tls are both on the pod network, so both are the pod network CIDR (`oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'`; ARO's default is the /14 that starts the 10.128 block). A router on the host network (`HostNetwork` strategy) is seen from the node's address: add the machine network. A gateway in front of the router (Application Gateway, Front Door): set the Route's `set-forwarded-headers` to `append` and add the gateway's range to `CADDY_TRUSTED_PROXIES` |
 | the images and the release | see the next section; the base's registry is a placeholder |
-| one replica instead of two | a `replicas` patch, and delete the PDB (a `minAvailable: 1` on one replica blocks node drains) |
+| one replica instead of two | a `replicas` patch on `atlas-api` or `atlas-tls`, and delete its PDB (a `minAvailable: 1` on one replica blocks node drains) |
 | two `atlas-mcp` replicas (optional) | only on a release that has `ATLAS_MCP_STATELESS_HTTP`; see "Two atlas-mcp replicas" |
 
 ### Images and releases
@@ -162,6 +208,10 @@ images:
     digest: sha256:<the release's digest>
   - name: registry.example.com/gradinai-atlas/gradinai-atlas-mcp    # matches the atlas-mcp Deployment
     newName: registry.example.com/atlas/gradinai-atlas-mcp-ubi
+    newTag: v0.2.0
+    digest: sha256:<the release's digest>
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-tls    # matches the atlas-tls Deployment
+    newName: registry.example.com/atlas/gradinai-atlas-tls-ubi
     newTag: v0.2.0
     digest: sha256:<the release's digest>
 labels:

@@ -1,0 +1,33 @@
+# atlas-tls's Service (TASK-1490; research question 3). Two TLS ports, both served by Caddy with
+# the certificate the service CA issues for this Service because of the annotation, into the
+# `kubernetes.io/tls` Secret atlas-tls-tls, for `atlas-tls.<namespace>.svc` and its cluster-domain
+# form:
+#   https           :8443  the public door, behind the re-encrypt Route (route-atlas.yaml); the
+#                          router verifies that name against the service CA
+#   https-internal  :9443  atlas-api's front for atlas-mcp (ATLAS_BASE_URL on atlas-mcp,
+#                          ATLAS_INTERNAL_HOSTS on atlas-api)
+# The NetworkPolicies (task 3.4) admit the router's namespace to :8443 and atlas-mcp to :9443,
+# nothing else.
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-tls
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: tls
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: atlas-tls-tls
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: tls
+  ports:
+    - name: https
+      port: 8443
+      targetPort: https
+      protocol: TCP
+    - name: https-internal
+      port: 9443
+      targetPort: https-internal
+      protocol: TCP

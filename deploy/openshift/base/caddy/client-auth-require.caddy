@@ -1,0 +1,13 @@
+# CADDY_CLIENT_AUTH=require: the optional mTLS leg on :9443 (research question 3), switched on by
+# the `mtls` component (task 3.6), which sets the variable and mounts the client CA at
+# /run/secrets/client-ca/ca.crt. A connection to :9443 without a client certificate issued by that
+# CA is refused in the handshake, before any request is read. The service CA issues server
+# certificates only, so the client CA and atlas-mcp's client pair come from the organisation's PKI
+# (or init-certs.sh). It is a network-level identity beside the Bearer token, not instead of it.
+# Imported inside the `tls` block of the atlas-tls.<ns>.svc:9443 site in Caddyfile (the OpenShift
+# copy of deploy/oss/caddy/client-auth-require.caddy).
+protocols tls1.2 tls1.3
+client_auth {
+	mode require_and_verify
+	trust_pool file /run/secrets/client-ca/ca.crt
+}

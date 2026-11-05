@@ -1,0 +1,176 @@
+# The OpenShift install's TLS front, atlas-tls (TASK-1490, ARO 3.3; design:
+# docs/oss/research/openshift-aro.md, question 3). The counterpart of deploy/oss/caddy/Caddyfile:
+# the same doors, the same security headers, the same verified legs, with the certificates of the
+# OpenShift service CA and the platform's router in front. Mounted from the `atlas-caddy`
+# ConfigMap (base/kustomization.yaml) at /etc/caddy/, with the two client-auth-*.caddy files
+# beside it.
+#
+#   router   --https--> :8443  {$CADDY_PUBLIC_HOST}   board + API, and /mcp -> atlas-mcp
+#                                (re-encrypt Route; the router verifies atlas-tls.<ns>.svc
+#                                against the service CA and sends NO SNI)
+#   atlas-mcp --https--> :9443 atlas-tls.<ns>.svc     the API, for atlas-mcp only
+#   kubelet  --https--> :8443  any other Host         /healthz only: the readiness probe
+#   this proxy --https--> atlas-api.<ns>.svc:8443 / atlas-mcp.<ns>.svc:8493, each verified
+#                         against the service-CA bundle under that name
+#
+# No gateway leg (:9444): there is no gateway on OpenShift in v1. No loopback health site: the
+# kubelet probes over the pod network (deployment-tls.yaml says why).
+#
+# Configured from the environment (deployment-tls.yaml sets every one):
+#   CADDY_PUBLIC_HOST      the Route's host (ATLAS_PUBLIC_HOST from atlas-env)
+#   POD_NAMESPACE          the namespace, for the service names (*.<ns>.svc)
+#   CADDY_TRUSTED_PROXIES  whose X-Forwarded-For to believe on :8443: the router's address range
+#                          (the pod network). Space-separated CIDRs. The base's value is a
+#                          documentation range, which trusts no real peer; the overlay sets it.
+#   CADDY_CLIENT_AUTH      the mTLS leg on :9443: off (default) | require
+#                          (client-auth-<mode>.caddy beside this file; the `mtls` component
+#                          mounts the trust pool at /run/secrets/client-ca/ca.crt)
+#
+# Certificates, all files, none issued by Caddy:
+#   /run/secrets/tls/tls.{crt,key}        Secret atlas-tls-tls, issued by the service CA for
+#                                         atlas-tls.<ns>.svc (the Service's annotation)
+#   /run/config/service-ca/service-ca.crt the service-CA bundle (ConfigMap atlas-service-ca)
+{
+	# No admin API: unauthenticated on localhost by default, and this container's whole job is to
+	# sit in front of an authenticated app.
+	admin off
+	# No automatic HTTPS at all. Every certificate is a file named in a `tls` directive, so there
+	# is nothing to manage, and with automation on Caddy would order a certificate for the public
+	# host from Let's Encrypt (TASK-1478). `off` also drops the :80 redirect listener, which a
+	# restricted pod (no NET_BIND_SERVICE) could not bind.
+	auto_https off
+	# The router connects to the pod with NO server name (TASK-1500, verified against the
+	# OpenShift router's source): without this Caddy would have no certificate to choose. It
+	# picks the service-CA certificate, whose name is what the router verifies.
+	default_sni atlas-tls.{$POD_NAMESPACE}.svc
+	# The client's address, on the public door only. The Route sets
+	# `haproxy.router.openshift.io/set-forwarded-headers: replace`, so X-Forwarded-For arrives
+	# holding exactly the address the router saw, never a value the client sent. Caddy believes it
+	# only from CADDY_TRUSTED_PROXIES and otherwise uses the socket peer; {client_ip} below is the
+	# result. `trusted_proxies_strict` reads the header right to left, so that an extra hop in
+	# front of the router (Application Gateway, with `append`) cannot be skipped by a forged entry.
+	#
+	# HTTP/1.1 and HTTP/2 only on both listeners: the Service carries TCP, so an HTTP/3 (UDP)
+	# listener would only advertise a door nothing reaches.
+	servers :8443 {
+		trusted_proxies static {$CADDY_TRUSTED_PROXIES}
+		client_ip_headers X-Forwarded-For
+		trusted_proxies_strict
+		protocols h1 h2
+	}
+	servers :9443 {
+		protocols h1 h2
+	}
+}
+
+# The TLS transport of every upstream, as in Compose (OSS-26 D), with the service CA as the only
+# trust pool. NOTE: for an https:// upstream Caddy sets Host to the upstream's own name unless
+# told otherwise, so every block below sets Host itself. There is no switch to turn verification
+# off (tools/ci/check_tls.sh R4, R6).
+(origin_tls) {
+	transport http {
+		tls_trust_pool file /run/config/service-ca/service-ca.crt
+		tls_server_name {args[0]}
+	}
+}
+
+# Applied to every upstream. CF-Connecting-IP is the one client-address header atlas-api reads
+# (backend/passwords.py, client_ip: only from a peer in ATLAS_TRUSTED_PROXY_CIDRS, never
+# X-Forwarded-For). It is SET here, replacing anything a client sent, to {client_ip}: on :8443 the
+# router's X-Forwarded-For when the peer is a trusted proxy, and on every other door the socket
+# peer. The Cloudflare Access identity headers are dropped as in Compose.
+(upstream_headers) {
+	header_up -Cf-Access-Jwt-Assertion
+	header_up -Cf-Access-Authenticated-User-Email
+	header_up -Cf-Access-Client-Id
+	header_up -Cf-Access-Client-Secret
+	header_up CF-Connecting-IP {client_ip}
+}
+
+# Browser security headers on the public door: a copy of deploy/oss/caddy/Caddyfile's snippet,
+# whose comment argues each value. tools/ci/check_oss_headers.py checks this file as it checks that
+# one, and fails if the two snippets differ. HSTS comes from here, not from the Route's
+# `haproxy.router.openshift.io/hsts_header` annotation (route-atlas.yaml), so the static check
+# covers it. The localhost exception never matches on a cluster; it is kept so the copy stays
+# exact.
+(security_headers) {
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+	}
+	@board_legacy path /board/legacy
+	@not_board_legacy not path /board/legacy
+	header @not_board_legacy Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	header @board_legacy Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-uqEYzVErqOU/i8hkErbH8GXAj2kpteGxdE5qc0/DX4E=' 'sha256-XDXTAAqAHycihZ+oMbHNywZ2abo5pKOL+n6K4FTsIyk='; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	@hsts not host localhost 127.0.0.1 ::1
+	header @hsts Strict-Transport-Security "max-age=31536000"
+}
+
+# The public door, behind the Route. The Host header is forwarded unchanged: atlas-api matches it
+# against the origins derived from ATLAS_PUBLIC_URL, atlas-mcp against ATLAS_MCP_ALLOWED_HOSTS.
+{$CADDY_PUBLIC_HOST}:8443 {
+	tls /run/secrets/tls/tls.crt /run/secrets/tls/tls.key {
+		protocols tls1.2 tls1.3
+	}
+	import security_headers
+
+	# The OAuth protected-resource metadata (RFC 9728, STORY-oss-25) is atlas-mcp's: it is served
+	# only while ATLAS_OAUTH_RESOURCE is set, and is atlas-mcp's 404 otherwise.
+	@mcp path /mcp /mcp/ /mcp/* /.well-known/oauth-protected-resource /.well-known/oauth-protected-resource/*
+	handle @mcp {
+		reverse_proxy https://atlas-mcp.{$POD_NAMESPACE}.svc:8493 {
+			import origin_tls atlas-mcp.{$POD_NAMESPACE}.svc
+			# The client's Host is what atlas-mcp checks (a 421 otherwise).
+			header_up Host {hostport}
+			# Streamable HTTP answers with server-sent events: flush each one at once.
+			flush_interval -1
+			import upstream_headers
+		}
+	}
+	handle {
+		reverse_proxy https://atlas-api.{$POD_NAMESPACE}.svc:8443 {
+			import origin_tls atlas-api.{$POD_NAMESPACE}.svc
+			# The client's Host is what atlas-api checks (a 421 otherwise).
+			header_up Host {hostport}
+			import upstream_headers
+		}
+	}
+}
+
+# atlas-api's TLS front for atlas-mcp (ATLAS_BASE_URL=https://atlas-tls.<ns>.svc:9443 on
+# atlas-mcp). atlas-api admits Bearer on this Host only because ATLAS_INTERNAL_HOSTS names
+# atlas-tls.<ns>.svc:9443, with the port: the Host is forwarded unchanged, and any other internal
+# Host is a 421. The NetworkPolicies (task 3.4) admit only atlas-mcp to this port.
+atlas-tls.{$POD_NAMESPACE}.svc:9443 {
+	tls /run/secrets/tls/tls.crt /run/secrets/tls/tls.key {
+		import /etc/caddy/client-auth-{$CADDY_CLIENT_AUTH:off}.caddy
+	}
+	reverse_proxy https://atlas-api.{$POD_NAMESPACE}.svc:8443 {
+		import origin_tls atlas-api.{$POD_NAMESPACE}.svc
+		header_up Host {hostport}
+		import upstream_headers
+	}
+}
+
+# The readiness probe's door (the counterpart of the compose healthcheck site, TASK-1470): any Host
+# on :8443 other than the public one. The kubelet's HTTPS probe sends the pod's address as Host, so
+# it lands here, and /healthz goes through the same verified leg to atlas-api as the public door,
+# with the public Host (atlas-api's Host check). A front whose leg to atlas-api is broken (a
+# NetworkPolicy, the trust pool) is therefore unready instead of serving 502s. Nothing else is
+# served here, and /healthz carries no token and is public on the door anyway.
+:8443 {
+	tls /run/secrets/tls/tls.crt /run/secrets/tls/tls.key {
+		protocols tls1.2 tls1.3
+	}
+	handle /healthz {
+		reverse_proxy https://atlas-api.{$POD_NAMESPACE}.svc:8443 {
+			import origin_tls atlas-api.{$POD_NAMESPACE}.svc
+			header_up Host {$CADDY_PUBLIC_HOST}
+			import upstream_headers
+		}
+	}
+	handle {
+		respond 404
+	}
+}

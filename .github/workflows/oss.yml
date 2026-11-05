@@ -28,6 +28,8 @@ on:
       - "deploy/oss/**"
       - "deploy/gateway/**"
       - "deploy/caddy/**"
+      # the OpenShift front: check_oss_headers.py and check_tls.sh R6 read its Caddyfile.
+      - "deploy/openshift/base/caddy/**"
       - "deploy/postgres/**"
       - "scripts/**"
       - "tools/ci/**"

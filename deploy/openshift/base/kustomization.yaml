@@ -29,6 +29,10 @@ resources:
   - cronjob-audit-purge.yaml
   - service-mcp.yaml
   - deployment-mcp.yaml
+  - service-tls.yaml
+  - deployment-tls.yaml
+  - pdb-tls.yaml
+  - route-atlas.yaml
 
 configMapGenerator:
   # atlas-env keeps its plain name (no content hash). The migrate Job loads it, and a Job's pod
@@ -52,6 +56,19 @@ configMapGenerator:
     files:
       - https_probe.py
       - db_url.py
+    options:
+      labels:
+        app.kubernetes.io/name: atlas
+        app.kubernetes.io/component: config
+  # atlas-tls's Caddy configuration (task 3.3), mounted at /etc/caddy/: the Caddyfile and the two
+  # client-auth snippets it imports (CADDY_CLIENT_AUTH). Hashed: a changed Caddyfile rolls
+  # atlas-tls. The files live in base/caddy/ because Kustomize reads a generator's files only from
+  # inside the kustomization's own directory.
+  - name: atlas-caddy
+    files:
+      - caddy/Caddyfile
+      - caddy/client-auth-off.caddy
+      - caddy/client-auth-require.caddy
     options:
       labels:
         app.kubernetes.io/name: atlas

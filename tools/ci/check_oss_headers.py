@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""check_oss_headers.py: the OSS public door's browser security headers (LCM patch round 1).
+"""check_oss_headers.py: the public door's browser security headers (LCM patch round 1).
 
 deploy/oss/caddy/Caddyfile's `(security_headers)` snippet sets the CSP, X-Frame-Options,
-X-Content-Type-Options, Referrer-Policy and HSTS for every response of the public door. This
-checks, without Docker:
+X-Content-Type-Options, Referrer-Policy and HSTS for every response of the public door. The
+OpenShift front, deploy/openshift/base/caddy/Caddyfile (TASK-1490), carries a copy of it. This
+checks both files, without Docker (H1-H4 on each):
 
   H1  the snippet exists and the public-door site imports it;
   H2  each header is set, with the value the Caddyfile's comment argues for;
@@ -12,9 +13,12 @@ checks, without Docker:
   H4  the legacy board's CSP lists exactly the sha256 of each inline <script> in
       frontend/board.html (computed here, CRLF normalised to LF as the HTML parser does),
       so an edit to that file cannot silently break /board/legacy behind this proxy;
-  H5  board v2 (frontend/v2/index.html) has no inline script, which its CSP relies on.
+  H5  board v2 (frontend/v2/index.html) has no inline script, which its CSP relies on;
+  H6  the OpenShift Caddyfile's snippet is the OSS one, line for line, so a header changed in
+      one file cannot be forgotten in the other.
 
-tools/ci/oss_tls_front.sh reads the same headers off a live response.
+tools/ci/oss_tls_front.sh reads the same headers off a live response (the OSS door), and the
+atlas-tls:ubi check in .github/workflows/images.yml off the OpenShift one.
 
   python tools/ci/check_oss_headers.py
   python tools/ci/check_oss_headers.py --self-test
@@ -31,6 +35,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 CADDYFILE = ROOT / "deploy" / "oss" / "caddy" / "Caddyfile"
+OPENSHIFT = ROOT / "deploy" / "openshift" / "base" / "caddy" / "Caddyfile"
 LEGACY = ROOT / "frontend" / "board.html"
 V2 = ROOT / "frontend" / "v2" / "index.html"
 
@@ -67,7 +72,7 @@ def check(caddy: str, legacy_html: str, v2_html: str) -> list[str]:
     bad = []
     body = snippet(caddy)
     if body is None:
-        return ["H1 no (security_headers) snippet in deploy/oss/caddy/Caddyfile"]
+        return ["H1 no (security_headers) snippet"]
     door = re.search(r"^\{\$CADDY_PUBLIC_HOST\}:8443\s*\{\n(.*?)^\}", caddy, re.S | re.M)
     if not door or not re.search(r"^\s*import security_headers\s*$", door.group(1), re.M):
         bad.append("H1 the public-door site ({$CADDY_PUBLIC_HOST}:8443) does not import security_headers")
@@ -124,20 +129,37 @@ def self_test() -> int:
               .replace('"DENY"', '"SAMEORIGIN"').replace("\timport security_headers\n", ""), page, "")
     ok = ok and {x[:2] for x in r} == {"H1", "H2", "H3"}
     ok = ok and check("{$CADDY_PUBLIC_HOST}:8443 {\n}\n", page, "")[0].startswith("H1")
+    ok = ok and same_snippet(good, "# another file\n" + good) == []
+    ok = ok and same_snippet(good, good.replace("max-age=31536000", "max-age=60"))[0].startswith("H6")
     print("self-test", "passed" if ok else f"FAILED {r}")
     return 0 if ok else 1
+
+
+def same_snippet(oss: str, openshift: str) -> list[str]:
+    a, b = snippet(oss), snippet(openshift)
+    if a is None or b is None or a.replace("\r\n", "\n") != b.replace("\r\n", "\n"):
+        return ["H6 the (security_headers) snippet differs from deploy/oss/caddy/Caddyfile's: "
+                "copy it over unchanged"]
+    return []
 
 
 def main() -> int:
     if "--self-test" in sys.argv:
         return self_test()
-    bad = check(CADDYFILE.read_text(encoding="utf-8"), LEGACY.read_text(encoding="utf-8"),
-                V2.read_text(encoding="utf-8"))
-    for b in bad:
-        print(f"::error file=deploy/oss/caddy/Caddyfile::{b}")
-    if not bad:
-        print("check_oss_headers: the OSS public door sets every security header; legacy script hashes match")
-    return 1 if bad else 0
+    legacy = LEGACY.read_text(encoding="utf-8")
+    v2 = V2.read_text(encoding="utf-8")
+    oss = CADDYFILE.read_text(encoding="utf-8")
+    openshift = OPENSHIFT.read_text(encoding="utf-8")
+    rc = 0
+    for path, text, extra in ((CADDYFILE, oss, []), (OPENSHIFT, openshift, same_snippet(oss, openshift))):
+        bad = check(text, legacy, v2) + extra
+        for b in bad:
+            print(f"::error file={path.relative_to(ROOT).as_posix()}::{b}")
+        rc = rc or (1 if bad else 0)
+    if not rc:
+        print("check_oss_headers: the OSS and OpenShift public doors set every security header; "
+              "legacy script hashes match")
+    return rc
 
 
 if __name__ == "__main__":

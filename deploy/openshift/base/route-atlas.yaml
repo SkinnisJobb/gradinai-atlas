@@ -1,0 +1,51 @@
+# The public door (TASK-1490; research question 3): a re-encrypt Route to atlas-tls's :8443.
+#
+#   client --https (the router's certificate)--> router --https (re-encrypt)--> atlas-tls:8443
+#
+# The router terminates the public TLS with the platform's certificate: the IngressController's
+# default (wildcard) certificate unless the overlay puts the organisation's own on this Route
+# (`spec.tls.certificate` / `key`, or the platform's cert tooling). It then opens a new TLS
+# connection to the pod and, because `destinationCACertificate` is LEFT EMPTY, verifies Caddy's
+# service-CA certificate and its name `atlas-tls.<namespace>.svc` against the service CA. (With a
+# destinationCACertificate set, the router checks the chain but not the name: never set it.) The
+# router sends no SNI on that leg; the Caddyfile's `default_sni` answers it.
+#
+# THE CLIENT ADDRESS: `set-forwarded-headers: replace` makes the router overwrite X-Forwarded-For
+# with the address it saw (`%[src]`), so a client cannot prepend a forged one; Caddy believes that
+# header only from its trusted proxies and passes it on as CF-Connecting-IP. If the organisation
+# puts a gateway (Application Gateway, Front Door) in front of the router, the overlay changes this
+# to `append` and adds the gateway's range to CADDY_TRUSTED_PROXIES (README).
+#
+# HSTS comes from Caddy (the Caddyfile's security_headers, checked by
+# tools/ci/check_oss_headers.py), so there is no `haproxy.router.openshift.io/hsts_header`
+# annotation here. A platform whose ingress policy demands that annotation can add it in the
+# overlay with the same value: the router sets the header, replacing Caddy's, so it is still sent
+# once.
+#
+# The host is a placeholder: the overlay sets `spec.host` to ATLAS_PUBLIC_HOST.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: atlas
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: tls
+  annotations:
+    haproxy.router.openshift.io/set-forwarded-headers: replace
+    # The router's default server timeout is 30 s of silence. An MCP tool call can run longer, and
+    # a Streamable HTTP response is a server-sent event stream: allow five minutes.
+    haproxy.router.openshift.io/timeout: 5m
+spec:
+  host: atlas.example.com
+  to:
+    kind: Service
+    name: atlas-tls
+    weight: 100
+  port:
+    targetPort: https
+  tls:
+    termination: reencrypt
+    # A plain-HTTP request to the host gets the router's redirect to https://; nothing is served
+    # or proxied over http://.
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

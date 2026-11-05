@@ -28,9 +28,10 @@
 #                  atlas-mcp calls the API at https://. R2 still applies to every other file.
 #                    - "127.0.0.1:8095:8000"   under deploy/oss/                    FAIL
 #                    ATLAS_BASE_URL: http://atlas-api:8000                         FAIL (R1)
-#   R6 OSS ingress The OSS ingress's own legs (OSS-26 D): in a Caddy file under deploy/oss/,
-#                  every `reverse_proxy` names an https:// upstream and its block imports
-#                  `origin_tls` (the transport verified against /certs/origin-ca.crt). A bare
+#   R6 OSS ingress The OSS ingress's own legs (OSS-26 D): in a Caddy file under deploy/oss/ or
+#                  deploy/openshift/ (atlas-tls on OpenShift, TASK-1490), every `reverse_proxy`
+#                  names an https:// upstream and its block imports `origin_tls` (the transport
+#                  verified against /certs/origin-ca.crt, on OpenShift the service CA). A bare
 #                  `host:port` upstream is plain HTTP to Caddy, and R1 cannot see it, since it
 #                  has no `http://` in it. The homelab's Caddy files (deploy/caddy/) proxy to
 #                  loopback and are not under this rule.
@@ -168,7 +169,7 @@ check_insecure() {  # check_insecure <file>
 }
 
 # R6 ----------------------------------------------------------------------------------------
-check_oss_upstreams() {  # check_oss_upstreams <Caddy file under deploy/oss/>
+check_oss_upstreams() {  # check_oss_upstreams <Caddy file under deploy/oss/ or deploy/openshift/>
     local f=$1 bad=0 n=0 line code target open=0 opened=0 tls=0 depth=0
     while IFS= read -r line || [ -n "$line" ]; do
         n=$((n + 1))
@@ -230,7 +231,7 @@ list_files() {  # list_files <rule>
         insecure)  printf '%s\n' "$all" | grep -E '^(mcp|backend|deploy|tools|agent|scripts)/.*\.(py|ya?ml|env|sh|json|caddy)$|^deploy/(.*/)?Caddyfile|(^|/)(docker-)?compose[^/]*\.ya?ml$|(^|/)\.mcp\.json$' \
                        | grep -v -E '^tools/ci/check_tls\.sh$|^tools/seed-node-docs/|^backend/baseload_data\.py$' ;;
         oss)       printf '%s\n' "$all" | grep -E '^deploy/oss/.*\.ya?ml$' ;;
-        osscaddy)  printf '%s\n' "$all" | grep -E '^deploy/oss/.*/(Caddyfile[^/]*|[^/]*\.caddy)$' ;;
+        osscaddy)  printf '%s\n' "$all" | grep -E '^deploy/(oss|openshift)/.*/(Caddyfile[^/]*|[^/]*\.caddy)$' ;;
     esac
 }
 
@@ -310,13 +311,17 @@ self_test() {
     t 1 check_oss_upstreams deploy/oss/caddy/u5 $'a:8443 {\n\treverse_proxy https://atlas-api-origin:8443\n}'
     t 1 check_oss_upstreams deploy/oss/caddy/u6 $'a:8443 {\n\treverse_proxy http://atlas-api-origin:8000 {\n\t\timport origin_tls x\n\t}\n}'
     t 0 check_oss_upstreams deploy/oss/caddy/u7 $'# reverse_proxy atlas-api-origin:8000 in a comment is prose\na:8443 {\n\trespond 404\n}'
+    # R6 on the OpenShift front (TASK-1490): the service names carry the namespace placeholder.
+    mkdir -p "$tmp/deploy/openshift/base/caddy"
+    t 0 check_oss_upstreams deploy/openshift/base/caddy/u8 $'a:8443 {\n\treverse_proxy https://atlas-api.{$POD_NAMESPACE}.svc:8443 {\n\t\timport origin_tls atlas-api.{$POD_NAMESPACE}.svc\n\t}\n}'
+    t 1 check_oss_upstreams deploy/openshift/base/caddy/u9 $'a:8443 {\n\treverse_proxy atlas-api.{$POD_NAMESPACE}.svc:8443 {\n\t\timport upstream_headers\n\t}\n}'
     return $rc
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     case "${1:-}" in
         --self-test) self_test; exit $? ;;
-        -h|--help) sed -n '2,54p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,55p' "$0"; exit 0 ;;
         "") ;;
         *) echo "usage: $0 [--self-test]" >&2; exit 2 ;;
     esac
