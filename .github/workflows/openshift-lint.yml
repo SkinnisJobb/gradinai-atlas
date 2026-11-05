@@ -1,0 +1,97 @@
+# OpenShift manifest lint (TASK-1487, ARO 6.1; design: docs/oss/research/openshift-aro.md,
+# question 11). tools/ci/openshift/lint.sh does the work; this file pins the tools and runs it:
+#
+#   kustomize    builds deploy/openshift/base, base plus each component, and each overlay;
+#   kubeconform  strict, against the Kubernetes 1.33 schemas (OpenShift 4.20), OpenShift's Route
+#                schema and the CloudNativePG CRDs, each schema source pinned to a commit;
+#   kube-linter  its default checks;
+#   conftest     Atlas's policies in tools/ci/openshift/policy/: no secret in the environment,
+#                the restricted security context, images by digest, no ServiceAccount token,
+#                https:// URLs, and no pinned runAsUser in the base.
+#
+# The self-test runs first: a fixture tree must pass all four, and each negative fixture must fail
+# (every policy rule has one, and each fails only its own rule), so a policy or a tool that
+# stopped refusing anything is a red check. The manifests themselves land in later tasks; until
+# then deploy/openshift/ is absent and the lint step says so and passes.
+#
+# No database, no secret, no network beyond the pinned downloads and the pinned schemas.
+
+name: openshift-lint
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "deploy/openshift/**"
+      - "tools/ci/openshift/**"
+      - ".github/workflows/openshift-lint.yml"
+  workflow_dispatch:
+
+# ONE RUN PER CHANGE, as the other workflows: a pull request runs on `pull_request` only, and its
+# superseded runs are cancelled. A master push does not run this workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  KUSTOMIZE_VERSION: 5.8.3
+  # sha256 of kustomize_v5.8.3_linux_amd64.tar.gz, from the release's checksums.txt.
+  KUSTOMIZE_SHA256: cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61
+  KUBECONFORM_VERSION: 0.8.0
+  # sha256 of kubeconform-linux-amd64.tar.gz, from the release's CHECKSUMS.
+  KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+  KUBE_LINTER_VERSION: 0.8.3
+  # sha256 of the kube-linter-linux binary. The release publishes no checksums file; this is the
+  # digest its sigstore bundle (kube-linter-linux.sigstore.json) signs.
+  KUBE_LINTER_SHA256: 618d299a3e2839c8ca9d86fce0db617be0fba41f0fecbbbfb7fbf1c04299fae1
+  CONFTEST_VERSION: 0.71.1
+  # sha256 of conftest_0.71.1_Linux_x86_64.tar.gz, from the release's checksums.txt.
+  CONFTEST_SHA256: c3f6b2a753bd56e377a1e51a95ae3e057f926f2e9139f7d5b5dfbbaf810f7985
+
+jobs:
+  lint:
+    name: OpenShift manifests (kustomize, kubeconform, kube-linter, conftest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: download the tools (checksum verified)
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/bin"
+          mkdir -p "$bin"
+          cd "$RUNNER_TEMP"
+          get() {  # url file sha256
+            curl -fsSL --retry 3 -o "$2" "$1"
+            echo "$3  $2" | sha256sum -c -
+          }
+          get "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv${KUSTOMIZE_VERSION}/kustomize_v${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" \
+            kustomize.tar.gz "$KUSTOMIZE_SHA256"
+          tar -xzf kustomize.tar.gz -C "$bin" kustomize
+          get "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            kubeconform.tar.gz "$KUBECONFORM_SHA256"
+          tar -xzf kubeconform.tar.gz -C "$bin" kubeconform
+          get "https://github.com/stackrox/kube-linter/releases/download/v${KUBE_LINTER_VERSION}/kube-linter-linux" \
+            "$bin/kube-linter" "$KUBE_LINTER_SHA256"
+          chmod +x "$bin/kube-linter"
+          get "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            conftest.tar.gz "$CONFTEST_SHA256"
+          tar -xzf conftest.tar.gz -C "$bin" conftest
+          echo "$bin" >> "$GITHUB_PATH"
+          "$bin/kustomize" version
+          "$bin/kubeconform" -v
+          "$bin/kube-linter" version
+          "$bin/conftest" --version
+
+      - name: self-test (the fixtures pass and fail as they must)
+        run: bash tools/ci/openshift/lint.sh --self-test
+
+      - name: lint deploy/openshift
+        run: bash tools/ci/openshift/lint.sh deploy/openshift

@@ -1,0 +1,7 @@
+# Fails insecure-url only: a URL key in a ConfigMap over plain http.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: atlas-env
+data:
+  ATLAS_EMBED_URL: http://embeddings.example.com/v1

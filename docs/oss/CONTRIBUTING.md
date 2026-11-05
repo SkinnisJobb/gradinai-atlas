@@ -134,6 +134,7 @@ older run.
 | `pins` | pins, dependabot schema | an invalid `dependabot.yml`. Unpinned images and actions are reported, not failed. |
 | `tools` | tool tests | the shell tools, the licence and NOTICE files, or the client pack |
 | `cicd-lint` | generated pipelines | a generated CI pipeline that fails actionlint or its schema. Runs only when its inputs change. |
+| `openshift-lint` | OpenShift manifests | a manifest under `deploy/openshift/` that fails `kustomize build`, kubeconform, kube-linter or a policy in `tools/ci/openshift/policy/` (a secret in the environment, a container outside the restricted security context, an image without a digest, a mounted ServiceAccount token, a plain-HTTP URL, a pinned `runAsUser` in the base), or a policy fixture that no longer fails. Runs only when those files change. |
 
 A workflow reports; it does not block a merge on its own. Which checks are required is set by the
 branch protection on `master`. Treat every red check as a blocker unless a maintainer says

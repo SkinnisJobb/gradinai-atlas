@@ -1,0 +1,28 @@
+# Fails run-as-user only: the pod pins a UID.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-api
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: atlas-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: atlas-api
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000770000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: registry.example.com/atlas/atlas-api:1.0.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

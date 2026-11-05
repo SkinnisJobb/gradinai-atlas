@@ -1,0 +1,9 @@
+# A stand-in for deploy/openshift/overlays/example/ (TASK-1487): the base, one component and a
+# namespace, as an organisation's overlay would put them together.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: atlas
+resources:
+  - ../../base
+components:
+  - ../../components/cnpg

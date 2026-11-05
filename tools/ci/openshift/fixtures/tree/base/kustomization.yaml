@@ -1,0 +1,13 @@
+# A stand-in for deploy/openshift/base/ (TASK-1487): small, but every object the lint has to
+# handle, so the self-test proves the whole chain on manifests that pass. Not deployable.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: atlas
+resources:
+  - serviceaccount.yaml
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - route.yaml

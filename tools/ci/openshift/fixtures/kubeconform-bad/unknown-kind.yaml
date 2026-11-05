@@ -1,0 +1,7 @@
+# kubeconform must refuse this: no schema exists for the kind, and a missing schema is an error,
+# not a skip (a typo in apiVersion would otherwise pass unchecked).
+apiVersion: widgets.example.com/v1
+kind: Widget
+metadata:
+  name: atlas
+spec: {}
