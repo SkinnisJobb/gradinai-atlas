@@ -1,0 +1,170 @@
+# The read-audit retention (TASK-1492, ARO 3.8; research question 12): `atlas-admin audit purge`,
+# once a day. It deletes `audit_read` rows older than ATLAS_AUDIT_RETENTION_DAYS (atlas-env) and
+# nothing else; with the setting unset it deletes nothing and says so (backend/admin.py,
+# cmd_audit_purge, which also says why retention is a scheduled command and not a loop in the API).
+#
+# The Compose install ships no scheduler for it: the operator adds a cron line on the VM
+# (docs/oss/guides/operations.md, "Audit export"; deploy/oss/.env.example), and the documented
+# line is `0 3 * * *  docker compose exec -T atlas-api atlas-admin audit purge`. This is that
+# line: the same command and schedule, in UTC (`timeZone`), since a cluster has no host clock to
+# follow. Run it once by hand: `oc create job --from=cronjob/atlas-audit-purge
+# atlas-audit-purge-manual` (deploy/openshift/README.md, "The audit purge").
+#
+# Same image, database wiring and security context as the migrate Job (job-migrate.yaml): atlas-env,
+# the database URL through the db-url init container, the database CA, and the peppers (importing
+# the gate needs them). Nothing else: no TLS Secret, no service CA, no probes (it serves nothing).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: atlas-audit-purge
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: audit-purge
+spec:
+  schedule: "0 3 * * *"
+  timeZone: Etc/UTC
+  # One DELETE; a second run alongside would only race the first for the same rows.
+  concurrencyPolicy: Forbid
+  # A run missed by up to an hour (controller restart, cluster upgrade) still starts; a later one
+  # waits for tomorrow. Either way a missed day is caught up by the next: the purge is idempotent.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: atlas
+        app.kubernetes.io/component: audit-purge
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      # No ttlSecondsAfterFinished: the history limits above remove finished Jobs, and keep the
+      # last three of each outcome with their logs (kube-linter's job-ttl-seconds-after-finished).
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: atlas
+            app.kubernetes.io/component: audit-purge
+        spec:
+          restartPolicy: Never
+          serviceAccountName: atlas
+          automountServiceAccountToken: false
+          enableServiceLinks: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            # Rewrites CNPG's postgresql:// URL to the psycopg2 driver the image ships; db_url.py
+            # (the atlas-scripts ConfigMap) says why. Only this container mounts the CNPG Secret.
+            - name: db-url
+              # Always the same image as the main container.
+              image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+              imagePullPolicy: IfNotPresent
+              command: ["python", "-I", "/run/config/scripts/db_url.py"]
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 128Mi
+              securityContext:
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+              volumeMounts:
+                - name: db
+                  mountPath: /run/secrets/db
+                  readOnly: true
+                - name: db-url
+                  mountPath: /run/db-url
+                - name: scripts
+                  mountPath: /run/config/scripts
+                  readOnly: true
+          containers:
+            - name: atlas-audit-purge
+              # The same image as atlas-api (deployment-api.yaml); one `images:` entry moves both.
+              image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+              imagePullPolicy: IfNotPresent
+              command: ["atlas-admin", "audit", "purge"]
+              envFrom:
+                - configMapRef:
+                    name: atlas-env
+              env:
+                - name: ATLAS_DB_URL_FILE
+                  value: /run/db-url/url
+                - name: ATLAS_PASSWORD_PEPPER_FILE
+                  value: /run/secrets/peppers/password_pepper
+                - name: ATLAS_TOKEN_PEPPER_FILE
+                  value: /run/secrets/peppers/token_pepper
+                - name: PGSSLMODE
+                  value: verify-full
+                - name: PGSSLROOTCERT
+                  value: /run/secrets/db-ca/ca.crt
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+              securityContext:
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+              volumeMounts:
+                - name: peppers
+                  mountPath: /run/secrets/peppers
+                  readOnly: true
+                - name: db-url
+                  mountPath: /run/db-url
+                  readOnly: true
+                - name: db-ca
+                  mountPath: /run/secrets/db-ca
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: peppers
+              secret:
+                secretName: atlas-peppers
+                defaultMode: 0440
+                items:
+                  - key: password_pepper
+                    path: password_pepper
+                  - key: token_pepper
+                    path: token_pepper
+            - name: db
+              secret:
+                secretName: atlas-db-app
+                defaultMode: 0440
+                items:
+                  - key: fqdn-uri
+                    path: fqdn-uri
+            - name: db-ca
+              secret:
+                secretName: atlas-db-ca
+                defaultMode: 0440
+                items:
+                  - key: ca.crt
+                    path: ca.crt
+            - name: db-url
+              emptyDir:
+                medium: Memory
+                sizeLimit: 1Mi
+            - name: scripts
+              configMap:
+                name: atlas-scripts
+            - name: tmp
+              emptyDir:
+                medium: Memory
+                sizeLimit: 64Mi

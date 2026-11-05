@@ -26,6 +26,7 @@ resources:
   - deployment-api.yaml
   - pdb-api.yaml
   - job-migrate.yaml
+  - cronjob-audit-purge.yaml
 
 configMapGenerator:
   # atlas-env keeps its plain name (no content hash). The migrate Job loads it, and a Job's pod

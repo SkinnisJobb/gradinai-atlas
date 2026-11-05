@@ -41,9 +41,11 @@ no `http://` URL). `tools/ci/check_pins.py` also checks every `image:` here for 
 | `deployment-api.yaml` | Deployment `atlas-api` | 2 replicas, uvicorn TLS on `:8443`, every secret a file, read-only root filesystem |
 | `pdb-api.yaml` | PodDisruptionBudget `atlas-api` | `minAvailable: 1` |
 | `job-migrate.yaml` | Job `atlas-migrate-<version>` | `atlas-migrate upgrade`, once per release |
+| `cronjob-audit-purge.yaml` | CronJob `atlas-audit-purge` | `atlas-admin audit purge` daily at 03:00 UTC (task 3.8) |
 
 Every object carries `app.kubernetes.io/name: atlas`, `app.kubernetes.io/part-of: atlas`,
-`app.kubernetes.io/version` and an `app.kubernetes.io/component` (`api`, `migrate`, `config`);
+`app.kubernetes.io/version` and an `app.kubernetes.io/component` (`api`, `migrate`,
+`audit-purge`, `config`);
 the selectors use `name` and `component`, which the NetworkPolicies (task 3.4) will select on.
 
 ### What the pods need that the base does not create
@@ -55,8 +57,8 @@ the selectors use `name` and `component`, which the NetworkPolicies (task 3.4) w
 | `atlas-db-ca` | `ca.crt` only (never `ca.key`) | the same `Cluster` |
 | `atlas-api-tls` | `tls.crt`, `tls.key` | the service CA, from the annotation on Service `atlas-api` |
 
-A database named other than `atlas-db` means patching the two `secretName`s in the Deployment and
-the Job.
+A database named other than `atlas-db` means patching the two `secretName`s in the Deployment, the
+Job and the CronJob.
 
 ### Decisions made in the base
 
@@ -83,6 +85,28 @@ the Job.
   `oc rollout restart deploy/atlas-api`.
 - **`ATLAS_TRUSTED_PROXY_CIDRS` is a documentation range** (`198.51.100.0/24`) in the base, which
   trusts no real peer and so fails safe. The overlay sets the cluster's pod network CIDR.
+
+### The audit purge (task 3.8)
+
+CronJob `atlas-audit-purge` enforces `ATLAS_AUDIT_RETENTION_DAYS` (365 in `atlas-env`): it runs
+`atlas-admin audit purge`, which deletes `audit_read` rows older than that and never touches
+`graph_event` or `auth_event`. With the setting removed it deletes nothing. It is the cron line the
+Compose install documents (`0 3 * * *`, see
+[Operations](../../docs/oss/guides/operations.md#8-audit-export)), at 03:00 UTC, with
+`concurrencyPolicy: Forbid`. It has the migrate Job's wiring: `atlas-env`, the `db-url` init
+container, the database CA and the peppers. To run it once now, for example to check the
+retention after changing it:
+
+```sh
+oc create job --from=cronjob/atlas-audit-purge atlas-audit-purge-manual
+oc wait --for=condition=complete job/atlas-audit-purge-manual --timeout=15m
+oc logs job/atlas-audit-purge-manual
+```
+
+The log line says how many rows it purged. `oc create job --from` makes the CronJob the Job's
+owner, so the CronJob's history limits (three successful, three failed) remove it in time;
+`oc delete job/atlas-audit-purge-manual` before running it by hand again. To pause it, `oc patch cronjob/atlas-audit-purge -p
+'{"spec":{"suspend":true}}'`; an overlay that wants another time patches `spec.schedule`.
 
 ## What an overlay must set
 
