@@ -20,6 +20,8 @@
 #   kube-linter  its default checks (tools/ci/openshift/kube-linter.yaml).
 #   conftest     Atlas's policies (tools/ci/openshift/policy/): namespace `main` on every render,
 #                and namespace `base` (no pinned runAsUser) on the base and component renders only.
+#                The kustomization files themselves go through namespace `kustomization` (every
+#                `images:` entry carries a digest).
 #
 # --self-test proves the tools and the policies refuse what they must: the fixture tree under
 # fixtures/tree/ (base, a component, an overlay) passes the whole chain; every file in
@@ -87,9 +89,10 @@ lint() {
   root="$(cd "$root" && pwd)"
 
   # Find every kustomization and refuse one outside the layout.
-  local found=0 stray=0 f dir rel
+  local found=0 stray=0 f dir rel kfiles=()
   while IFS= read -r f; do
     found=1
+    kfiles+=("$f")
     dir="$(dirname "$f")"
     rel="${dir#"$root"/}"
     case "$rel" in
@@ -139,6 +142,11 @@ lint() {
   done
 
   local rc=0 l ns
+  # The kustomization files themselves: an `images:` entry must carry a digest (namespace
+  # `kustomization`). The render check would miss one that matches no container today.
+  echo "--- conftest (${#kfiles[@]} kustomization file(s): --namespace kustomization)"
+  "$CONFTEST" test --no-color --parser yaml --policy "$POLICY" --namespace kustomization \
+    "${kfiles[@]}" || rc=1
   for l in "${labels[@]}"; do
     echo "::group::lint $l"
     echo "--- kubeconform ($l)"

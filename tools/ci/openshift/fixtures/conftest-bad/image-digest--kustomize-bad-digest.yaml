@@ -1,0 +1,8 @@
+# Fails image-digest only: a digest field that is not sha256 and 64 hex characters.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: registry.example.com/atlas/atlas-api
+    digest: sha256:1234

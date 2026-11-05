@@ -7,3 +7,9 @@ resources:
   - ../../base
 components:
   - ../../components/cnpg
+# The passing case for the kustomization images rule: newName, newTag and digest together.
+images:
+  - name: registry.example.com/atlas/atlas-api
+    newName: mirror.example.com/atlas/atlas-api
+    newTag: 1.0.1
+    digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

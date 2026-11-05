@@ -1,0 +1,9 @@
+# Fails image-digest only: a kustomization images entry that moves the tag without a digest.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+images:
+  - name: registry.example.com/atlas/atlas-api
+    newName: mirror.example.com/atlas/atlas-api
+    newTag: 1.0.1
