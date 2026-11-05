@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import contextmanager
 
 from fastapi import FastAPI
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 import models_graph  # Atlas v2 object-graph schema (ADR 0019); coexists with Component below
 import models_auth   # auth_* + node_visibility, own Bases (ADR 0025/0026, TASK-966/973)
@@ -57,6 +58,57 @@ app.add_middleware(NulGuard)
 auth.install(app, engine, FRONTEND)
 
 
+#: The advisory lock key every boot and `atlas-migrate upgrade` hold (TASK-1479): 'ATLB', for
+#: "Atlas boot". It must differ from every other advisory lock key taken on this database; the
+#: only other one is the retrieval reconciler's 'ATLR' (`retrieval/reconciler.py`, LOCK_KEY).
+#: `verify_boot_lock.py` checks the two differ.
+BOOT_LOCK_KEY = 0x41544C42
+
+
+@contextmanager
+def boot_lock(eng):
+    """Hold the boot advisory lock for the body: one schema reconcile and boot seed at a time.
+
+    WHY (TASK-1479, docs/oss/research/openshift-aro.md question 5). The schema reconcile reads the
+    catalogue and then issues `ALTER TABLE ... ADD COLUMN` / `CREATE INDEX`, and boot then upserts
+    the type registries and seeds an empty graph. Two processes doing that at once (two
+    `atlas-api` replicas, or a replica and `atlas-migrate`) can both decide something is missing;
+    the loser got a duplicate-object or unique-key error and converged only through startup's
+    retry loop, which was written for "Postgres is not up yet". Under this lock the second
+    process waits, then finds everything already there.
+
+    NO SWITCH (owner decision, 2026-11-05). With one process the lock is never contended: it is
+    one round trip at boot and nothing else changes.
+
+    HOW. A session-level `pg_advisory_lock` on a connection of its own, released in `finally`
+    and, should the process die instead, by Postgres when that connection closes. Blocking, not
+    `pg_try_advisory_lock` like the retrieval reconciler: a boot that skipped its turn would
+    serve before its schema exists. It tries once without blocking only to log that it waits.
+    The body uses other connections from the pool; nothing in it takes this key, so it cannot
+    wait on itself. A database that is not Postgres has no advisory locks and gets no lock.
+    """
+    if eng.dialect.name != "postgresql":
+        yield
+        return
+    conn = eng.connect()
+    try:
+        got = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": BOOT_LOCK_KEY}).scalar()
+        if not got:
+            print("[atlas] boot lock: another process is booting or migrating this database; waiting")
+            conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": BOOT_LOCK_KEY})
+        conn.commit()  # the lock is session-level; do not sit idle in a transaction holding it
+        try:
+            yield
+        finally:
+            try:
+                conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": BOOT_LOCK_KEY})
+                conn.commit()
+            except Exception:  # noqa: BLE001 — a dead session holds no lock; never mask the body's error
+                conn.invalidate()
+    finally:
+        conn.close()
+
+
 @app.on_event("startup")
 def startup() -> None:
     """Boot is now a READ against the graph (TASK-1058,
@@ -81,76 +133,82 @@ def startup() -> None:
     """
     reseed = os.environ.get("ATLAS_RESEED", "").lower() in ("1", "true", "yes")
     last_err = None
-    for _ in range(30):
+    for attempt in range(1, 31):
         try:
-            if reseed:
-                # DELIBERATELY ASYMMETRIC — DO NOT "FIX" THIS (TASK-966).
-                # ATLAS_RESEED wipes the GRAPH, never the ACCOUNTS. models_auth's
-                # Bases are not dropped: dropping them destroys every account and
-                # every service token, which freezes the ingest.
-                Base.metadata.drop_all(engine)
-                models_graph.Base.metadata.drop_all(engine)
-            Base.metadata.create_all(engine)
-            models_graph.Base.metadata.create_all(engine)  # node/edge/node_type/probe (ADR 0019, TASK-850)
-            models_auth.create_all(engine)  # auth_* + node_visibility (TASK-966/973)
-            _reconcile_graph_schema()  # add columns create_all can't (e.g. node_type.family on an existing DB)
-            if _CONFIG_WRITES_ON:
-                # STORY-atlas-config-panel phase 2: its own table, only with the flag on, so an
-                # install with it off keeps today's schema exactly (models_config.py).
-                import models_config
-                models_config.Base.metadata.create_all(engine)
-                _reconcile_graph_schema([models_config.Base.metadata])
-            models_graph.ensure_search_indexes(engine)  # TASK-1050 full-text GIN indexes — Postgres-only, see its docstring
-            _backfill_graph_origin()  # NULL -> 'git' for node/edge.origin (legacy rows only — see docstring)
-            # FAIL CLOSED: if the gate cannot read the tables it enforces from,
-            # this raises and the retry loop eventually takes uvicorn down. An
-            # app that cannot authenticate must refuse to start, never serve open.
-            print(f"[atlas] auth: {auth.verify_ready(engine)}")
-            with session() as s:
-                # ATLAS_SEED (STORY-oss-07): `homelab`, the default, is exactly the branch
-                # below as it always was; `demo` seeds after the registries; `none` seeds no data;
-                # `self` (TASK-1461) seeds Atlas's own world model, also after the registries.
-                seed_profile = settings.load().seed
-                if seed_profile == "homelab" and (reseed or not s.scalar(select(Component).limit(1))):
-                    from seed import seed_all
-                    seed_all(s)
-                # Type-registry seeding (TASK-1058) — schema, not data ingest.
-                # Unconditional, every boot, unlike the v0 Component seed just
-                # above: a fresh, empty database must get a usable node_type
-                # registry even when it already has Component rows (or none at
-                # all yet). See node_types.py's own docstring for why this
-                # lives there and not in seed.py.
-                from node_types import ensure_backlog_node_types, ensure_edge_types, ensure_world_node_types
-                ensure_backlog_node_types(s)
-                ensure_world_node_types(s)
-                ensure_edge_types(s)  # edge_type registry (TASK-edge-type-registry) — schema, not enforcement
-                # STORY-atlas-system-node-handbook: asked BEFORE the demo seed writes anything.
-                fresh_graph = s.scalar(select(models_graph.Node.id).limit(1)) is None
-                if seed_profile == "demo":
-                    import demo_seed  # only into a graph with no node at all; see its docstring
-                    demo_seed.seed_if_empty(s)
-                if seed_profile == "self":
-                    import self_seed  # TASK-1461: Atlas's own world model; see its docstring
-                    self_seed.seed_if_empty(s)
-                if fresh_graph and seed_profile in ("none", "demo", "self"):
-                    import system_node  # the install's own node set + handbook; see its docstring
-                    system_node.seed(s)
-                s.commit()
-            if _CONFIG_WRITES_ON:
-                # Board-set settings take effect at boot: a READ of config_value (no row written,
-                # no file opened), applied where the real environment does not set the name.
-                import models_config
+            # TASK-1479: one boot at a time per database. See `boot_lock` for the why.
+            with boot_lock(engine):
+                if reseed:
+                    # DELIBERATELY ASYMMETRIC — DO NOT "FIX" THIS (TASK-966).
+                    # ATLAS_RESEED wipes the GRAPH, never the ACCOUNTS. models_auth's
+                    # Bases are not dropped: dropping them destroys every account and
+                    # every service token, which freezes the ingest.
+                    Base.metadata.drop_all(engine)
+                    models_graph.Base.metadata.drop_all(engine)
+                Base.metadata.create_all(engine)
+                models_graph.Base.metadata.create_all(engine)  # node/edge/node_type/probe (ADR 0019, TASK-850)
+                models_auth.create_all(engine)  # auth_* + node_visibility (TASK-966/973)
+                _reconcile_graph_schema()  # add columns create_all can't (e.g. node_type.family on an existing DB)
+                if _CONFIG_WRITES_ON:
+                    # STORY-atlas-config-panel phase 2: its own table, only with the flag on, so an
+                    # install with it off keeps today's schema exactly (models_config.py).
+                    import models_config
+                    models_config.Base.metadata.create_all(engine)
+                    _reconcile_graph_schema([models_config.Base.metadata])
+                models_graph.ensure_search_indexes(engine)  # TASK-1050 full-text GIN indexes — Postgres-only, see its docstring
+                _backfill_graph_origin()  # NULL -> 'git' for node/edge.origin (legacy rows only — see docstring)
+                # FAIL CLOSED: if the gate cannot read the tables it enforces from,
+                # this raises and the retry loop eventually takes uvicorn down. An
+                # app that cannot authenticate must refuse to start, never serve open.
+                print(f"[atlas] auth: {auth.verify_ready(engine)}")
                 with session() as s:
-                    print(f"[atlas] config: board values {models_config.apply_at_boot(s)}")
-            _seed_task_id_sequence()  # TASK-1047, see its docstring
-            if _RETRIEVAL_ON:
-                # ADR 0044: the opt-in add-on's own tables and loop, after the core schema.
-                # `boot` never raises; a broken add-on reports `unavailable`, never stops Atlas.
-                from retrieval import service as _retrieval_service
-                _retrieval_service.boot(engine)
-            return
-        except Exception as e:  # noqa: BLE001 — startup race on Postgres
+                    # ATLAS_SEED (STORY-oss-07): `homelab`, the default, is exactly the branch
+                    # below as it always was; `demo` seeds after the registries; `none` seeds no data;
+                    # `self` (TASK-1461) seeds Atlas's own world model, also after the registries.
+                    seed_profile = settings.load().seed
+                    if seed_profile == "homelab" and (reseed or not s.scalar(select(Component).limit(1))):
+                        from seed import seed_all
+                        seed_all(s)
+                    # Type-registry seeding (TASK-1058) — schema, not data ingest.
+                    # Unconditional, every boot, unlike the v0 Component seed just
+                    # above: a fresh, empty database must get a usable node_type
+                    # registry even when it already has Component rows (or none at
+                    # all yet). See node_types.py's own docstring for why this
+                    # lives there and not in seed.py.
+                    from node_types import ensure_backlog_node_types, ensure_edge_types, ensure_world_node_types
+                    ensure_backlog_node_types(s)
+                    ensure_world_node_types(s)
+                    ensure_edge_types(s)  # edge_type registry (TASK-edge-type-registry) — schema, not enforcement
+                    # STORY-atlas-system-node-handbook: asked BEFORE the demo seed writes anything.
+                    fresh_graph = s.scalar(select(models_graph.Node.id).limit(1)) is None
+                    if seed_profile == "demo":
+                        import demo_seed  # only into a graph with no node at all; see its docstring
+                        demo_seed.seed_if_empty(s)
+                    if seed_profile == "self":
+                        import self_seed  # TASK-1461: Atlas's own world model; see its docstring
+                        self_seed.seed_if_empty(s)
+                    if fresh_graph and seed_profile in ("none", "demo", "self"):
+                        import system_node  # the install's own node set + handbook; see its docstring
+                        system_node.seed(s)
+                    s.commit()
+                if _CONFIG_WRITES_ON:
+                    # Board-set settings take effect at boot: a READ of config_value (no row written,
+                    # no file opened), applied where the real environment does not set the name.
+                    import models_config
+                    with session() as s:
+                        print(f"[atlas] config: board values {models_config.apply_at_boot(s)}")
+                _seed_task_id_sequence()  # TASK-1047, see its docstring
+                if _RETRIEVAL_ON:
+                    # ADR 0044: the opt-in add-on's own tables and loop, after the core schema.
+                    # `boot` never raises; a broken add-on reports `unavailable`, never stops Atlas.
+                    from retrieval import service as _retrieval_service
+                    _retrieval_service.boot(engine)
+                return
+        except Exception as e:  # noqa: BLE001 — Postgres not up yet, or a real failure
             last_err = e
+            # Logged since TASK-1479: a retry used to be silent, so a log could not tell a boot
+            # that waited for Postgres from one that lost a race and tried again.
+            print(f"[atlas] startup: attempt {attempt} failed ({type(e).__name__}: "
+                  f"{(str(e).splitlines() or [''])[0][:200]}); retrying in 2 s")
             time.sleep(2)
     raise RuntimeError(f"DB not ready after retries: {last_err}")
 
