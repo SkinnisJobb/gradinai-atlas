@@ -44,7 +44,8 @@ except testdb.TestDatabaseUnavailable as e:
     print(f"FATAL: {e}")
     sys.exit(1)
 
-from sqlalchemy import create_engine, text  # noqa: E402
+from psycopg2 import sql  # noqa: E402
+from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
 
 import dsn  # noqa: E402
@@ -155,12 +156,22 @@ CONNECT = (
 )
 
 
+def _admin_sql(engine, statement: "sql.Composed") -> None:
+    """DDL with a quoted identifier and literal (CREATE ROLE takes no bind parameters)."""
+    raw = engine.raw_connection()
+    try:
+        with raw.cursor() as cur:
+            cur.execute(statement)
+    finally:
+        raw.close()
+
+
 def section_e() -> None:
     print("\n== E. end to end: db.py connects with a bare URL, through psycopg2")
     role = "dsn_" + secrets.token_hex(4)
     admin = create_engine(DB.url, isolation_level="AUTOCOMMIT")
-    with admin.connect() as c:
-        c.execute(text(f"CREATE ROLE {role} LOGIN PASSWORD '{SECRET_PW}'"))
+    _admin_sql(admin, sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+        sql.Identifier(role), sql.Literal(SECRET_PW)))
     try:
         r = _child(CONNECT, {"ATLAS_DB_URL": _role_url("postgresql", role)})
         out = r.stdout + r.stderr
@@ -186,8 +197,7 @@ def section_e() -> None:
         check("E ... naming the variable", "ATLAS_DB_URL" in out)
         check("E ... without the password", SECRET_PW not in out)
     finally:
-        with admin.connect() as c:
-            c.execute(text(f"DROP ROLE IF EXISTS {role}"))
+        _admin_sql(admin, sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
         admin.dispose()
 
 
