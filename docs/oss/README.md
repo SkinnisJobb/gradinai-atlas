@@ -74,6 +74,14 @@ Audience: `operations-security`.
 - [Agent tokens and read audit](guides/tokens-and-audit.md) - self-minted and operator-minted agent
   tokens, IdP access tokens, and recording and exporting what agents read.
 
+### Research and proposals
+
+Design research that is not yet built. These pages propose; the pages above describe what exists.
+
+- [Atlas on Azure Red Hat OpenShift](research/openshift-aro.md) - how Atlas would run on ARO in
+  one namespace under the restricted SCC, with CloudNativePG: a recommendation per question, the
+  target architecture, the secrets and settings, and a proposed breakdown into tasks.
+
 ### Configuration examples
 
 - [Configuration examples](examples/README.md) - ready-made `.env` profiles layered over
