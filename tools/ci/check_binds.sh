@@ -18,6 +18,11 @@
 #   # bind-ok: <reason>
 # marker, so a LAN publish is always a reviewed, greppable decision.
 #
+# Compose files only. A YAML file without a top-level `services:` key is not a compose file and
+# is skipped (and says so): a Kubernetes manifest under deploy/openshift/ has `ports:` lists of
+# its own (`- containerPort: 8443`, a Service's `- port: 8443`) that publish nothing on a host and
+# would read here as long syntax. tools/ci/check_pins.py tells compose files apart the same way.
+#
 # Usage:
 #   tools/ci/check_binds.sh               check every tracked compose file in the repo
 #   tools/ci/check_binds.sh FILE...       check these files (a path under deploy/ is an overlay)
@@ -56,10 +61,16 @@ extract() {
     }' "$1"
 }
 
+# A compose file has a top-level `services:` key (the test tools/ci/check_pins.py uses).
+is_compose() { grep -qE '^services:[[:space:]]*(#.*)?$' "$1"; }
+
 is_overlay() { case "$1" in deploy/*|./deploy/*|*/deploy/*) return 0 ;; *) return 1 ;; esac; }
 
 check_file() {
     local f=$1 bad=0 lineno raw entry marker resolved fields host
+    if ! is_compose "$f"; then
+        echo "skip $f  (no top-level services:, not a compose file)"; return 0
+    fi
     while IFS=$'\t' read -r lineno raw; do
         marker=
         case "$raw" in *"# bind-ok:"*) marker=1 ;; esac
@@ -113,7 +124,7 @@ self_test() {
     local tmp rc=0
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' RETURN
-    mkdir -p "$tmp/deploy"
+    mkdir -p "$tmp/deploy/openshift"
     expect() {  # expect <0|1> <path relative to tmp> <yaml>
         printf '%s\n' "$3" > "$tmp/$2"
         local got=0
@@ -135,6 +146,12 @@ self_test() {
     expect 0 envloop.yml        $'services:\n  a:\n    ports:\n      # 0.0.0.0 in a comment is fine\n      - "${ATLAS_BIND:-127.0.0.1}:${ATLAS_PORT:-8095}:8000"'
     expect 0 nested.yml         $'services:\n  a:\n    ports:\n      - "${ATLAS_MCP_BIND:-${ATLAS_BIND:-127.0.0.1}}:8092:8092"\n    environment:\n      - X=1'
     expect 0 noports.yml        $'services:\n  a:\n    image: postgres:16'
+    # A Kubernetes manifest (no top-level services:) is not a compose file: its ports lists pass.
+    expect 0 deploy/openshift/deploy.yaml $'apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n        - name: atlas-api\n          ports:\n            - containerPort: 8443\n              name: https'
+    expect 0 deploy/openshift/svc.yaml    $'apiVersion: v1\nkind: Service\nspec:\n  ports:\n    - name: https\n      port: 8443\n      targetPort: 8443'
+    # The same list in a compose file still fails, also when services: is not the first key.
+    expect 1 deploy/kshape.yml  $'services:\n  a:\n    ports:\n      - containerPort: 8443\n        name: https'
+    expect 1 deploy/named.yml   $'name: atlas\nservices:  # c\n  a:\n    ports:\n      - "8443:8443"'
     return $rc
 }
 
@@ -142,7 +159,7 @@ self_test() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     case "${1:-}" in
         --self-test) self_test; exit $? ;;
-        -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,32p' "$0"; exit 0 ;;
     esac
 
     if [ $# -gt 0 ]; then

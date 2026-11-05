@@ -22,6 +22,9 @@ WHAT IS SCANNED. Every tracked file (git ls-files; a directory walk outside a ch
   - compose files: any tracked .yml/.yaml outside .github/ with a top-level `services:` key,
     so `docker-compose*.yml`, `mcp/docker-compose*.yml` and the `deploy/*.yml` overrides alike;
     each `image:` line (a `build:`-only service has no reference to pin);
+  - OpenShift manifests: every .yml/.yaml under deploy/openshift/, with or without a top-level
+    `services:` key (a Kubernetes manifest has none); each `image:` line, containers and
+    initContainers alike, read the same way as in a compose file (TASK-1481);
   - workflows: each `uses:` in .github/workflows/*.yml (`./local` actions skipped).
 
 STATUSES.
@@ -81,6 +84,8 @@ PATTERNS_RE = re.compile(r"^\s*patterns:\s*\[(.*)\]\s*(#.*)?$")
 EXCLUDE_PATTERNS_RE = re.compile(r"^\s*exclude-patterns:\s*\[(.*)\]\s*(#.*)?$")
 
 DEPENDABOT_FILE = ".github/dependabot.yml"
+# Kubernetes manifests have no top-level `services:`; every YAML here is scanned for `image:`.
+OPENSHIFT_DIR = "deploy/openshift/"
 ZEROVER_GROUP = "pip-zerover-minor-maybe-breaking"
 EXCLUDING_GROUPS = ("pip-minor-patch", "pip-major")
 
@@ -303,7 +308,7 @@ def scan(root: Path) -> list[Ref]:
         elif rel.startswith(".github/workflows/") and name.endswith((".yml", ".yaml")):
             refs += scan_workflow(rel, text)
         elif name.endswith((".yml", ".yaml")) and not rel.startswith(".github/"):
-            if TOP_SERVICES_RE.search(text):
+            if TOP_SERVICES_RE.search(text) or rel.startswith(OPENSHIFT_DIR):
                 refs += scan_compose(rel, text)
     return refs + check_zerover(pins, patterns, exclusions)
 
@@ -444,11 +449,24 @@ def self_test() -> int:
             {"docker-compose.yml": "services:\n  db:\n    image: postgres\n"}, 1),
         "third-party action tag": (
             {".github/workflows/w.yml": "steps:\n  - uses: docker/login-action@v4\n"}, 1),
+        "unpinned openshift image": (
+            {"deploy/openshift/base/deployment.yaml": (
+                "apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n"
+                "      containers:\n        - name: atlas-api\n"
+                "          image: ghcr.io/example/atlas-api:1.0\n")}, 1),
+        "unpinned openshift init image": (
+            {"deploy/openshift/base/job.yml": (
+                "kind: Job\nspec:\n  template:\n    spec:\n      initContainers:\n"
+                "        - image: busybox:1.36\n      containers:\n"
+                f"        - image: ghcr.io/example/atlas-api:1.0@{d}\n")}, 1),
         "third-party action branch": (
             {".github/workflows/w.yml": "steps:\n  - uses: docker/login-action@master\n"}, 1),
         "pinned": ({
             "Dockerfile": f"FROM python:3.12-slim@{d}\n",
             "docker-compose.yml": f"services:\n  db:\n    image: postgres:16@{d}\n",
+            "deploy/openshift/base/deployment.yaml": (
+                "kind: Deployment\nspec:\n  template:\n    spec:\n      containers:\n"
+                f"        - name: atlas-api\n          image: ghcr.io/example/atlas-api:1.0@{d}\n"),
             ".github/workflows/w.yml": (
                 "steps:\n  - uses: actions/checkout@v7\n"
                 f"  - uses: docker/login-action@{sha} # v4.6.0\n"),
