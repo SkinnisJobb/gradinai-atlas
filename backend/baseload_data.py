@@ -7766,7 +7766,7 @@ NODES = [
                     "| `ghcr.io/<owner>/gradinai-atlas-api` | `backend/Dockerfile`, target `hardened` | `atlas-api`, `atlas-migrate`, `atlas-retrieval` |\n"
                     "| `ghcr.io/<owner>/gradinai-atlas-mcp` | `mcp/Dockerfile`, target `hardened` | `atlas-mcp` |\n"
                     "| `ghcr.io/<owner>/gradinai-atlas-backup` | `backend/Dockerfile`, target `backup` (`hardened` plus `pg_dump` 16) | `atlas-backup` (profile `backup`) |\n"
-                    "| `ghcr.io/<owner>/gradinai-atlas-postgres` | `deploy/postgres/pgvector.Dockerfile` (pgvector on PostgreSQL 16, `gosu` replaced) | `atlas-postgres` |\n"
+                    "| `ghcr.io/<owner>/gradinai-atlas-postgres` | `deploy/postgres/pgvector.Dockerfile` (pgvector on PostgreSQL 16, `gosu` replaced, no `apt`) | `atlas-postgres` |\n"
                     "| `ghcr.io/<owner>/gradinai-atlas-tls` | `deploy/caddy/Dockerfile` (Caddy with the Cloudflare DNS plugin) | `atlas-tls` |\n"
                     "\n"
                     "**Not republished:** the gateway profile's `atlas-gateway` runs the upstream AgentGateway image,\n"

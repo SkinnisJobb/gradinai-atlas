@@ -19,3 +19,16 @@ COPY gosu /usr/local/bin/gosu
 RUN chmod 0755 /usr/local/bin/gosu \
  && gosu nobody true \
  && [ "$(gosu postgres id -un)" = postgres ]
+
+# No package manager in the running image. CVE-2026-109518 (HIGH, apt/libapt-pkg7.0 3.0.3,
+# fixed in 3.0.4, 2026-11-05) is in this base and pgvector had not published a fixed digest of
+# the tag; postgres:16-trixie and python:3.12-slim had (./Dockerfile, backend/Dockerfile). Nothing
+# in this image uses apt at runtime: the entrypoint, pg_isready, the gosu shim and the vector
+# extension don't. Purging it (dpkg, offline, so the same base digest still gives the same files)
+# closes this finding and every later one in apt; upgrading from trixie-security instead would
+# need the network at build time and a version pin that disappears from the mirror. Neither
+# package is Essential or Protected, and dpkg refuses if anything installed still depends on them.
+RUN dpkg --purge apt libapt-pkg7.0 \
+ && ! dpkg -s apt >/dev/null 2>&1 \
+ && ! dpkg -s libapt-pkg7.0 >/dev/null 2>&1 \
+ && pg_config --version | grep -q ' 16\.'
