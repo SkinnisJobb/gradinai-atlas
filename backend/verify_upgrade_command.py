@@ -284,8 +284,15 @@ print("=" * 78)
 
 
 def _calls(body: list[ast.stmt]) -> list[str]:
-    return [ast.unparse(st.value) for st in body
-            if isinstance(st, ast.Expr) and isinstance(st.value, ast.Call)]
+    """The bare calls of a body, in order. A `with` block's body counts as the body it sits in:
+    both paths run their steps inside `with boot_lock(engine):` (TASK-1479)."""
+    out: list[str] = []
+    for st in body:
+        if isinstance(st, ast.With):
+            out.extend(_calls(st.body))
+        elif isinstance(st, ast.Expr) and isinstance(st.value, ast.Call):
+            out.append(ast.unparse(st.value))
+    return out
 
 
 def _func(path: Path, name: str) -> ast.FunctionDef:

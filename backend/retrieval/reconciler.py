@@ -42,7 +42,7 @@ from retrieval.embedder import EmbedError, embed, vector_literal
 log = logging.getLogger("atlas.retrieval")
 
 #: 'ATLR'. Any constant works; it only has to differ from every other advisory lock taken on
-#: this database, and nothing else in Atlas takes one.
+#: this database. The only other one is the boot lock, 'ATLB' (`main.BOOT_LOCK_KEY`, TASK-1479).
 LOCK_KEY = 0x41544C52
 WORLD_FAMILIES = ("object", "bridge")
 

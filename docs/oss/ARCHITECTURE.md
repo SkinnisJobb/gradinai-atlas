@@ -326,6 +326,11 @@ framework.
 - **`atlas-api` startup** runs the same steps again, then the row-writing parts: registry
   seeding, the seed profile and the task-id sequence. Startup retries while Postgres comes up, and
   fails if the schema step fails.
+- **One at a time.** Startup and `atlas-migrate upgrade` both hold a Postgres advisory lock
+  (`main.boot_lock`) for their whole run, so several `atlas-api` replicas starting together, or
+  a replica and the migrate command, never reconcile or seed at the same time: the next one waits,
+  then finds nothing to add. A single process never waits. The retrieval add-on takes a different
+  lock of its own.
 - **Anything the reconciler cannot do** is a one-time script, `backend/migrate_*.py`. The
   reconciler cannot add a `NOT NULL` column, add a `CHECK` to an existing table, change a type,
   rename, drop or transform data. These scripts run in dry-run mode unless you pass `--apply`,

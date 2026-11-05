@@ -44,6 +44,10 @@ its order; this module adds an explicit way to run the schema half of it and not
 `migrate_*.py` scripts are separate and untouched: they are one-time, hand-run migrations for what
 the reconcile cannot do (see the "WHAT THIS CANNOT DO" block in `main._reconcile_graph_schema`).
 
+It holds the same Postgres advisory lock as `main.startup()` (`main.boot_lock`, TASK-1479) for
+the whole run, so an upgrade and a booting `atlas-api` replica, or two upgrades, never run the
+reconcile at the same time: the second waits, then finds nothing to add.
+
 Idempotent: every step is create-if-missing or add-if-missing, so a second run changes nothing.
 `verify_upgrade_command.py` proves that, and that the result equals the schema startup builds.
 """
@@ -121,13 +125,14 @@ def upgrade() -> str:
     import models_graph
     from db import Base, engine
 
-    before = _schema_counts(engine)
-    Base.metadata.create_all(engine)
-    models_graph.Base.metadata.create_all(engine)
-    models_auth.create_all(engine)
-    main._reconcile_graph_schema()
-    models_graph.ensure_search_indexes(engine)
-    return report(before, _schema_counts(engine))
+    with main.boot_lock(engine):  # TASK-1479: one boot or upgrade at a time; see its docstring
+        before = _schema_counts(engine)
+        Base.metadata.create_all(engine)
+        models_graph.Base.metadata.create_all(engine)
+        models_auth.create_all(engine)
+        main._reconcile_graph_schema()
+        models_graph.ensure_search_indexes(engine)
+        return report(before, _schema_counts(engine))
 
 
 def _parser() -> argparse.ArgumentParser:
