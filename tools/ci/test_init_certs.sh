@@ -153,8 +153,29 @@ run "$d" --origin-only
 run "$d" --origin-only --client-only
 [ "$RC" = 2 ] && pass "--origin-only with --client-only is a usage error" || fail "--origin-only --client-only" "rc=$RC"
 
-# 10. no key is ever printed.
-if cat "$SB"/*/out | grep -q "PRIVATE KEY"; then fail "no output carries a key"; else pass "no output carries a key"; fi
+# 10. no key is ever printed. grep reads the files itself: never `cat ... | grep -q` under pipefail.
+# grep -q exits at its first match, cat dies of SIGPIPE writing the rest, and the pipeline's status
+# turns the match into a miss, so a printed key passed (TASK-1504; TASK-1502 for the same race).
+carries_key() { grep -q "PRIVATE KEY" "$@"; }
+if carries_key "$SB"/*/out; then fail "no output carries a key"; else pass "no output carries a key"; fi
+
+# 10b. the check above bites: a key planted early in a large output (about 1 MB after it, far past
+# a pipe's buffer) is found. Outside "$SB"/*/out, so it never reaches case 10. The old form is run
+# on the same file too, for the record only (its outcome is a race): it typically misses (cat=141).
+# The PEM marker is spelled in two halves so no secret scanner takes this file for a key.
+planted="$SB/planted.out"
+pem_begin="-----BEGIN PRIVATE"; pem_end="-----END PRIVATE"
+{
+    echo "init-certs: wrote secrets/tls/server.key"
+    echo "$pem_begin KEY-----"
+    head -c 768000 /dev/zero | base64 -w 64
+    echo "$pem_end KEY-----"
+    for i in $(seq 1 2000); do echo "init-certs: line $i after the key"; done
+} > "$planted"
+if carries_key "$planted"; then pass "a key planted early in 1 MB of output is caught"
+else fail "a planted key was not caught" "$(wc -c < "$planted") bytes"; fi
+if cat "$planted" | grep -q "PRIVATE KEY"; then verdict=caught; else verdict=missed; fi
+echo "       (for the record, the old \`cat | grep -q\` on that file $verdict the key)"
 
 echo
 if [ "$fails" = 0 ]; then echo "test_init_certs: ALL PASS"; exit 0; fi

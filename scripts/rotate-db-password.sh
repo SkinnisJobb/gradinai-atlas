@@ -149,7 +149,9 @@ recreate() {
         "${DC[@]}" up -d --no-deps --force-recreate --wait --wait-timeout "$WAIT" "${RUNNING[@]}" || return 1
         log "recreated and healthy: ${RUNNING[*]}"
     fi
-    if printf ' %s ' "${RUNNING[@]+"${RUNNING[@]}"}" | grep -q ' atlas-api '; then
+    # A string match, not `printf | grep -q`: under pipefail a writer that dies of SIGPIPE once
+    # grep -q has matched turns the match into a miss, and this check would be skipped (TASK-1504).
+    if [[ " ${RUNNING[*]+${RUNNING[*]}} " == *" atlas-api "* ]]; then
         "${DC[@]}" exec -T atlas-api atlas-admin user list >/dev/null || return 1
         log "atlas-api reads the database"
     fi

@@ -166,9 +166,33 @@ lint() {
   echo "lint: ok (${#labels[@]} render(s): ${labels[*]})"
 }
 
+# other_rule_failures RULE OUT: the FAIL lines of conftest output OUT that are not RULE's. One awk
+# over a here-string, never `grep "^FAIL" | grep -qv`: under pipefail grep -q exits at its first
+# hit, the grep before it dies of SIGPIPE writing the rest, and the pipeline's status turns the hit
+# into a miss, so a fixture that also failed a second rule passed (TASK-1504).
+other_rule_failures() {
+  awk -v tag="[$1]" '/^FAIL/ && index($0, tag) == 0' <<< "$2"
+}
+
 self_test() {
-  local fails=0 f rule out rc rules r
+  local fails=0 f rule out rc rules r big verdict
   fail() { echo "SELF-TEST FAIL: $*" >&2; fails=$((fails + 1)); }
+
+  echo "== the one-rule check sees a second rule (a planted FAIL line ahead of ~1 MB of output)"
+  big="FAIL - planted.yaml - main - [other-rule] planted"$'\n'"$(for _ in $(seq 1 12000); do
+    echo "FAIL - planted.yaml - main - [some-rule] the fixture's own rule, repeated to fill the pipe"
+  done)"
+  if [ -n "$(other_rule_failures some-rule "$big")" ]; then
+    echo "ok   the planted [other-rule] line is reported"
+  else
+    fail "other_rule_failures missed a planted [other-rule] line"
+  fi
+  if [ -n "$(other_rule_failures some-rule "${big#*$'\n'}")" ]; then
+    fail "other_rule_failures reported a line of the fixture's own rule"
+  fi
+  # For the record only (its outcome is a race): the old pipeline on the same output.
+  if grep "^FAIL" <<< "$big" | grep -qv "\[some-rule\]"; then verdict=caught; else verdict=missed; fi
+  echo "     (for the record, the old grep | grep -qv on that output $verdict it)"
 
   echo "== the fixture tree passes the whole chain"
   lint "$FIXTURES/tree" || fail "fixtures/tree did not pass"
@@ -195,7 +219,7 @@ self_test() {
     if ! grep -q "^FAIL .*\[$rule\]" <<< "$out"; then
       fail "$(basename "$f") did not fail [$rule]:"$'\n'"$out"; continue
     fi
-    if grep "^FAIL" <<< "$out" | grep -qv "\[$rule\]"; then
+    if [ -n "$(other_rule_failures "$rule" "$out")" ]; then
       fail "$(basename "$f") also failed another rule:"$'\n'"$out"; continue
     fi
     echo "ok   $(basename "$f") -> [$rule]"

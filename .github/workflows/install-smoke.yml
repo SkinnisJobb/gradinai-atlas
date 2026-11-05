@@ -232,8 +232,12 @@ jobs:
           diff .env.example .env || true
           bash ../../scripts/init-secrets.sh
           ls -l secrets secrets/tls
-          docker compose config --services
-          if docker compose config --services | grep -qx atlas-retrieval; then
+          # Every grep that decides a check in this workflow reads a variable or a file, never the
+          # end of a pipe: under pipefail `producer | grep -q` can report a miss for a match it
+          # found, the producer dying of SIGPIPE after grep -q exits (TASK-1504, TASK-1502).
+          services=$(docker compose config --services)
+          printf '%s\n' "$services"
+          if grep -qx atlas-retrieval <<< "$services"; then
             echo "atlas-retrieval starts by default: the base leg must run with no embedding service" >&2; exit 1
           fi
           # OSS-18: the stack builds the `hardened` image stage, and this run starts it under an
@@ -321,7 +325,8 @@ jobs:
           echo "the atlas-migrate one-shot exited $rc"; [ "$rc" = 0 ]
           # TASK-1470: leg 1's single `up` ran the one-shot on a new volume, so its log says it
           # built the schema; each re-run says, unchanged, that nothing was missing.
-          docker compose logs --no-color atlas-migrate | grep -q '\[atlas-migrate\] upgrade: empty database, schema created (' \
+          migrate_log=$(docker compose logs --no-color atlas-migrate)
+          grep -q '\[atlas-migrate\] upgrade: empty database, schema created (' <<< "$migrate_log" \
             || { echo "the one-shot on an empty database did not say it created the schema" >&2; exit 1; }
           for i in 1 2; do
             out=$(docker compose exec -T atlas-api atlas-migrate upgrade | tr -d '\r')
@@ -432,7 +437,7 @@ jobs:
           # config nor warn that none is set. The --validate-only above proves v1.7.0 accepts it.
           test -n "$gw_log"
           for w in 'no session key configured' 'failed to write generated session key'; do
-            if printf '%s\n' "$gw_log" | grep -qF "$w"; then
+            if grep -qF -- "$w" <<< "$gw_log"; then
               echo "::error::gateway start log has \"$w\": config.session.key: disabled not honoured"; exit 1
             fi
           done
@@ -475,11 +480,11 @@ jobs:
           gw_log=$(docker compose --profile gateway logs --no-color atlas-gateway 2>&1)
           test -n "$gw_log"
           for w in 'no session key configured' 'failed to write generated session key' 'invalid session persistence key'; do
-            if printf '%s\n' "$gw_log" | grep -qF "$w"; then
+            if grep -qF -- "$w" <<< "$gw_log"; then
               echo "::error::gateway start log has \"$w\" with ATLAS_GATEWAY_SESSION_KEY_FILE set"; exit 1
             fi
           done
-          if printf '%s\n' "$gw_log" | grep -qF -f "$key_file"; then
+          if grep -qF -f "$key_file" <<< "$gw_log"; then
             echo "::error::the session key appears in the gateway log"; exit 1
           fi
           echo "gateway start log: no session-key warnings, and the key is not in it"
@@ -559,8 +564,8 @@ jobs:
           ( cd "$CH" && HOME="$CH" CLAUDE_CONFIG_DIR="$CC" NODE_EXTRA_CA_CERTS="$SMOKE_CA" \
               timeout 90 claude mcp list ) > "$SMOKE_DIR/mcp-list.out" 2>&1 || true
           sed -E 's/(Bearer )[A-Za-z0-9._~+\/=-]+/\1<redacted>/g; s/^/claude mcp list: /' "$SMOKE_DIR/mcp-list.out"
-          if ! grep -E '^atlas:' "$SMOKE_DIR/mcp-list.out" | grep -qi 'connected' \
-              || grep -E '^atlas:' "$SMOKE_DIR/mcp-list.out" | grep -qi 'failed'; then
+          atlas_line=$(grep -E '^atlas:' "$SMOKE_DIR/mcp-list.out" || true)
+          if ! grep -qi 'connected' <<< "$atlas_line" || grep -qi 'failed' <<< "$atlas_line"; then
             echo "Claude Code did not connect to the install" >&2; exit 1
           fi
           docker compose exec -T atlas-api atlas-admin token list --user alice
@@ -660,7 +665,8 @@ jobs:
           echo "=== the stub's endpoint stopped (SIGUSR1: port closed, container and name kept)"
           "${DC[@]}" kill -s SIGUSR1 atlas-embed-stub
           for _ in $(seq 1 20); do
-            "${DC[@]}" logs --no-color atlas-embed-stub | grep -q 'endpoint stopped' && break
+            stub_log=$("${DC[@]}" logs --no-color atlas-embed-stub)
+            grep -q 'endpoint stopped' <<< "$stub_log" && break
             sleep 0.5
           done
           if "${DC[@]}" exec -T atlas-api python -c "import socket; socket.create_connection(('gateway', 8443), 3)" 2>/dev/null; then
@@ -1354,7 +1360,8 @@ jobs:
           sso > "$SMOKE_DIR/9f-sso.before"
           echo "every table before the backup: $(grep -c . "$SMOKE_DIR/9f-counts.before") tables"
           echo "SSO accounts, IdP memberships (count digest):"; sed 's/^/  /' "$SMOKE_DIR/9f-sso.before"
-          q "SELECT count(*) FROM auth_user WHERE idp = 'oidc' AND subject IN ('sso-bob', 'sso-carol', 'sso-pella')" | grep -qx 3
+          sso_users=$(q "SELECT count(*) FROM auth_user WHERE idp = 'oidc' AND subject IN ('sso-bob', 'sso-carol', 'sso-pella')")
+          grep -qx 3 <<< "$sso_users"
 
           echo "=== backup run, with SSO on"
           bk backup run | tee "$SMOKE_DIR/9f-backup.out"
@@ -1396,7 +1403,8 @@ jobs:
             sleep 2
           done
           echo "atlas-api: $st"; [ "$st" = healthy ]
-          curl -fsS --cacert "$SMOKE_CA" "$SMOKE_URL/auth/login" | grep -q 'href="/auth/oidc/start"'
+          login_page=$(curl -fsS --cacert "$SMOKE_CA" "$SMOKE_URL/auth/login")
+          grep -q 'href="/auth/oidc/start"' <<< "$login_page"
           echo "GET /auth/login: offers Sign in with SSO"
       # --- end OSS-26 L -------------------------------------------------------------------------
 
@@ -1505,7 +1513,7 @@ jobs:
           check "user_local_name events for pom" 1 \
             "$(q "SELECT count(*) FROM auth_event e JOIN auth_user u ON u.id = e.user_id WHERE u.subject = 'sso-pom' AND e.event = 'user_local_name' AND e.reason = 'set'")"
           admin user list > "$P/user-list.out"
-          sed -n 1p "$P/user-list.out" | grep -q local_name
+          grep -q local_name <<< "$(sed -n 1p "$P/user-list.out")"
           grep -E '^oidc:sso-pom +pom ' "$P/user-list.out"
           [ "$fail" = 0 ]
 
@@ -1565,7 +1573,8 @@ jobs:
           echo "atlas-api: $(docker inspect -f '{{.State.Status}} health={{.State.Health.Status}} created={{.Created}}' "$api")"
           [ "$(docker inspect -f '{{.State.Health.Status}}' "$api")" = healthy ]
           [[ "$(docker inspect -f '{{.Created}}' "$api")" > "$t0" ]]
-          curl -fsS --cacert "$SMOKE_CA" "$SMOKE_URL/auth/login" | grep -q 'href="/auth/oidc/start"'
+          login_page=$(curl -fsS --cacert "$SMOKE_CA" "$SMOKE_URL/auth/login")
+          grep -q 'href="/auth/oidc/start"' <<< "$login_page"
           echo "atlas-migrate ran again on the SSO install, exit 0; atlas-api healthy after it, offering SSO"
       # --- end TASK-1457 -----------------------------------------------------------------------
 
@@ -1633,7 +1642,7 @@ jobs:
             done
             return 1
           }
-          no_work_left() { ! ls -A secrets | grep -q '^\.rotate-db-password'; }
+          no_work_left() { local l; l=$(ls -A secrets); ! grep -q '^\.rotate-db-password' <<< "$l"; }
 
           echo "=== before: a marker row; the old password's files kept for the checks"
           marker="rotation-$(openssl rand -hex 8)"
@@ -1673,6 +1682,8 @@ jobs:
           t0=$(date -u +%Y-%m-%dT%H:%M:%S)
           rotate > "$R/rotate.out" 2>&1 || { cat "$R/rotate.out"; echo "the rotation failed" >&2; exit 1; }
           cat "$R/rotate.out"
+          # The script's own read check ran: it finds atlas-api among the running services.
+          grep -q 'rotate-db-password: atlas-api reads the database' "$R/rotate.out"
           cp -p secrets/db_password "$R/new.password"
           echo "::add-mask::$(<"$R/new.password")"
           if cmp -s secrets/db_password "$R/old.password"; then echo "db_password did not change" >&2; exit 1; fi
