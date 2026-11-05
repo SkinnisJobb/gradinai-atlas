@@ -198,6 +198,12 @@ jobs:
       - name: "openshift new-secrets.py: no secret shown, refuses a second run"
         run: python tools/ci/test_new_secrets.py
 
+      # ARO task 4.2: scripts/openshift/pepper-fingerprint.py prints the SHA-256 of each pepper
+      # file as written (equal to sha256sum), never the value, refuses a malformed file, and
+      # --compare passes and fails correctly.
+      - name: "openshift pepper-fingerprint.py: sha256sum of the file, no value shown"
+        run: python tools/ci/test_pepper_fingerprint.py
+
       # init-secrets.sh refuses to overwrite, and never prints a secret.
       - name: init-secrets refuses a second run, and printed no secret
         working-directory: deploy/oss

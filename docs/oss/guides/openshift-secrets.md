@@ -74,14 +74,17 @@ and its diagnostic logs should go to your organisation's log store, so every rea
 
 Record the SHA-256 fingerprint of each file in the change record for the install. A fingerprint
 of 32 random bytes reveals nothing usable, and it lets you prove later that the vault, the files
-and the running pods hold the same peppers:
+and the running pods hold the same peppers. `scripts/openshift/pepper-fingerprint.py` prints one
+line per file, `<name>  sha256:<hex>`, and never the value; save its output as the record:
 
 ```
-sha256sum secrets/openshift/password_pepper secrets/openshift/token_pepper
-Get-FileHash -Algorithm SHA256 secrets\openshift\password_pepper, secrets\openshift\token_pepper
+python scripts/openshift/pepper-fingerprint.py secrets/openshift/password_pepper secrets/openshift/token_pepper > pepper-fingerprints.txt
 ```
 
-The first line is for bash, the second for PowerShell.
+The fingerprint is the SHA-256 of the file's bytes exactly as written, the base64 text plus its
+trailing newline, so `sha256sum` (bash) and `Get-FileHash -Algorithm SHA256` (PowerShell) on the
+same files give the same hex, an independent cross-check. The script also refuses a file that is
+not base64 of 32 bytes, without showing it.
 
 Once the vault holds both peppers, delete the local files, or keep them only somewhere as
 protected as the vault.
@@ -99,3 +102,45 @@ python scripts/openshift/new-secrets.py -n atlas --reuse
 ```
 
 `--reuse` checks that each file holds base64 of 32 bytes before it creates `atlas-peppers`.
+
+## The restore drill: prove the peppers match
+
+The fingerprints recorded at creation are checked at two points, and the drill fails at the first
+mismatch. `pepper-fingerprint.py` exits non-zero on a missing or malformed file, and with
+`--compare` on any fingerprint that differs from the record.
+
+**1. Check the restored files before `--reuse`.** After the `az keyvault secret download` lines
+above, and before `new-secrets.py --reuse`:
+
+```
+python scripts/openshift/pepper-fingerprint.py --compare pepper-fingerprints.txt secrets/openshift/password_pepper secrets/openshift/token_pepper
+```
+
+A mismatch on a file that is otherwise a valid pepper usually means its line ending changed on the
+way (no trailing newline, or CRLF); the script says which, never the value. Do not edit the file to
+make it match: work out which copy is the right one first.
+
+**2. Check the pods after deploy.** The image has Python but no copy of the script, and its root
+filesystem is read-only, so feed the script to Python on standard input. It reads the Secret
+mounted at `/run/secrets/peppers/` and writes nothing. In bash:
+
+```
+oc exec -i -n atlas deploy/atlas-api -- python - < scripts/openshift/pepper-fingerprint.py > pod-fingerprints.txt
+```
+
+PowerShell has no `<` redirection, so pipe the file instead:
+
+```
+Get-Content -Raw scripts/openshift/pepper-fingerprint.py | oc exec -i -n atlas deploy/atlas-api -- python - > pod-fingerprints.txt
+```
+
+Add `-c atlas-api` after `deploy/atlas-api` if the pod has more than one container. Then compare
+the pod's list with the record, on your machine:
+
+```
+python scripts/openshift/pepper-fingerprint.py --compare pepper-fingerprints.txt --from-list pod-fingerprints.txt
+```
+
+`--compare` reads this script's output or `sha256sum`'s. Keep both lists, and the commands' exit
+status, with the drill's evidence: they show that the vault, the restored files and the running
+pods hold the same peppers, and no one saw a value.
