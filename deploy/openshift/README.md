@@ -42,9 +42,11 @@ no `http://` URL). `tools/ci/check_pins.py` also checks every `image:` here for 
 | `pdb-api.yaml` | PodDisruptionBudget `atlas-api` | `minAvailable: 1` |
 | `job-migrate.yaml` | Job `atlas-migrate-<version>` | `atlas-migrate upgrade`, once per release |
 | `cronjob-audit-purge.yaml` | CronJob `atlas-audit-purge` | `atlas-admin audit purge` daily at 03:00 UTC (task 3.8) |
+| `service-mcp.yaml` | Service `atlas-mcp` | `:8493`, TLS only; its annotation makes the service CA issue Secret `atlas-mcp-tls` (task 3.2) |
+| `deployment-mcp.yaml` | Deployment `atlas-mcp` | 1 replica, uvicorn TLS on `:8493`, reaches the API only through `atlas-tls`'s `:9443` front, no secret mounted (task 3.2) |
 
 Every object carries `app.kubernetes.io/name: atlas`, `app.kubernetes.io/part-of: atlas`,
-`app.kubernetes.io/version` and an `app.kubernetes.io/component` (`api`, `migrate`,
+`app.kubernetes.io/version` and an `app.kubernetes.io/component` (`api`, `mcp`, `migrate`,
 `audit-purge`, `config`);
 the selectors use `name` and `component`, which the NetworkPolicies (task 3.4) will select on.
 
@@ -56,6 +58,7 @@ the selectors use `name` and `component`, which the NetworkPolicies (task 3.4) w
 | `atlas-db-app` | `fqdn-uri` only | the CloudNativePG `Cluster` named `atlas-db` (component `cnpg`, task 3.5) |
 | `atlas-db-ca` | `ca.crt` only (never `ca.key`) | the same `Cluster` |
 | `atlas-api-tls` | `tls.crt`, `tls.key` | the service CA, from the annotation on Service `atlas-api` |
+| `atlas-mcp-tls` | `tls.crt`, `tls.key` | the service CA, from the annotation on Service `atlas-mcp` |
 
 A database named other than `atlas-db` means patching the two `secretName`s in the Deployment, the
 Job and the CronJob.
@@ -88,6 +91,25 @@ Job and the CronJob.
   `oc rollout restart deploy/atlas-api`.
 - **`ATLAS_TRUSTED_PROXY_CIDRS` is a documentation range** (`198.51.100.0/24`) in the base, which
   trusts no real peer and so fails safe. The overlay sets the cluster's pod network CIDR.
+- **atlas-mcp reaches the API only through `atlas-tls`**, as in Compose: `ATLAS_BASE_URL` is
+  `https://atlas-tls.<namespace>.svc:9443` (the `:9443` front, task 3.3), verified against the
+  service CA alone (`ATLAS_CA_BUNDLE=/run/config/service-ca/service-ca.crt`). That URL's host and
+  port are exactly `ATLAS_INTERNAL_HOSTS` on `atlas-api`, the one Host on which a Bearer request
+  needs no cookie: the two are fixed on the containers and change together. atlas-mcp never
+  dials `atlas-api:8443`, and the NetworkPolicies (task 3.4) give it no route to it or to the
+  database.
+- **atlas-mcp holds no secret.** Each tool call forwards its caller's own Bearer token, so the pod
+  mounts only its serving certificate, the service-CA bundle, the probe script and `/tmp`: no
+  pepper, no database Secret, no database CA. Its exec probe is the same `https_probe.py`, on
+  `:8493` `/health`, server name `atlas-mcp.<namespace>.svc`, without `public` (`/health` is
+  outside the MCP transport's Host check).
+- **One atlas-mcp replica, stateful transport, no PDB.** atlas-mcp keeps each MCP session in the
+  memory of the pod that answered `initialize`, so a second replica would refuse the requests that
+  land on it. `ATLAS_MCP_STATELESS_HTTP=1` lifts that, but the release this base names
+  (`v0.0.1-alpha`) predates the switch and ignores it, so the base pins it to `0` on the container
+  and runs one replica; a PodDisruptionBudget on one replica would block every node drain. A
+  restart or a rollout ends the open sessions and clients start new ones. Running two is an
+  overlay change, below.
 
 ### The audit purge (task 3.8)
 
@@ -120,6 +142,7 @@ owner, so the CronJob's history limits (three successful, three failed) remove i
 | the trusted proxy range | a patch on the `atlas-api` container's `ATLAS_TRUSTED_PROXY_CIDRS` env entry: the pod network CIDR (`oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'`) |
 | the images and the release | see the next section; the base's registry is a placeholder |
 | one replica instead of two | a `replicas` patch, and delete the PDB (a `minAvailable: 1` on one replica blocks node drains) |
+| two `atlas-mcp` replicas (optional) | only on a release that has `ATLAS_MCP_STATELESS_HTTP`; see "Two atlas-mcp replicas" |
 
 ### Images and releases
 
@@ -135,6 +158,10 @@ OpenShift. Three things belong to one release and move together in the overlay:
 images:
   - name: registry.example.com/gradinai-atlas/gradinai-atlas-api    # matches the base, the Job and the init containers
     newName: registry.example.com/atlas/gradinai-atlas-api-ubi
+    newTag: v0.2.0
+    digest: sha256:<the release's digest>
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-mcp    # matches the atlas-mcp Deployment
+    newName: registry.example.com/atlas/gradinai-atlas-mcp-ubi
     newTag: v0.2.0
     digest: sha256:<the release's digest>
 labels:
@@ -156,6 +183,35 @@ audit trail until `ttlSecondsAfterFinished` (7 days) removes it, and the pipelin
 Forgetting the rename is loud: `oc apply` refuses the changed pod template. Running the Job
 again after its TTL is harmless (the upgrade is idempotent), and an `atlas-api` replica starting
 alongside it waits on the same Postgres advisory lock.
+
+### Two atlas-mcp replicas
+
+On a release that has the stateless transport (`ATLAS_MCP_STATELESS_HTTP`, after `v0.0.1-alpha`),
+an overlay may run two `atlas-mcp` replicas. Three things go together, in one change: the switch
+(no session is kept and each request stands alone, so any replica can answer it), the replica
+count, and a PodDisruptionBudget so a drain keeps one serving. Never two replicas without the
+switch: a request that lands on the pod that did not answer `initialize` is refused.
+
+```yaml
+patches:
+  - target: {kind: Deployment, name: atlas-mcp}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: atlas-mcp}
+      spec:
+        replicas: 2
+        template:
+          spec:
+            containers:
+              - name: atlas-mcp
+                env:
+                  - {name: ATLAS_MCP_STATELESS_HTTP, value: "1"}
+resources:
+  - pdb-mcp.yaml   # the overlay's own: base/pdb-api.yaml with `mcp` in place of `api`
+```
+
+The spread and anti-affinity rules for two replicas are already in the base Deployment.
 
 ## What later tasks add
 
