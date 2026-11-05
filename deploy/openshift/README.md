@@ -6,6 +6,10 @@ and the reasons behind every choice here, are in
 [Atlas on Azure Red Hat OpenShift](../../docs/oss/research/openshift-aro.md). This directory is
 being built task by task; until the install guide (task 5.1) lands, this page is the map.
 
+**To try an install now**, follow [FIRST-INSTALL.md](FIRST-INSTALL.md): a step-by-step for
+PowerShell 7 and `oc`, with the overlay [`overlays/example/`](overlays/example/kustomization.yaml)
+(no NetworkPolicies, no optional components, no backup yet).
+
 The Compose install in `deploy/oss/` is unchanged and separate: nothing here is read by it.
 
 ## The layout
@@ -373,5 +377,5 @@ runbook.
 | 3.4 | `base/`: the NetworkPolicies (default deny, then one allow per compose network edge) |
 | 3.5 | `components/cnpg/`: the CloudNativePG `Cluster` `atlas-db` and its backups |
 | 3.6 | `components/`: `oidc`, `retrieval`, `mtls`, `external-secrets`, `gitops` |
-| 3.7 | `overlays/example/` and a GitLab CI template for the company pipeline |
+| 3.7 | `overlays/example/` and `FIRST-INSTALL.md` (first step, done); then the full overlay and a GitLab CI template for the company pipeline |
 | 3.8 | `base/`: the audit purge CronJob |

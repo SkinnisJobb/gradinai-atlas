@@ -1,0 +1,25 @@
+# 4. Whose client-address header atlas-api believes (TASK-1496). atlas-api takes the client's
+# address, for the sign-in throttle and the audit trail, from CF-Connecting-IP, which atlas-tls
+# (Caddy) sets, and believes it only from a peer inside this list. atlas-tls runs on the pod
+# network, and pod addresses are not fixed, so the list is the cluster's whole pod network CIDR:
+#   oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'
+# (several CIDRs: comma-separated, no spaces). ARO's default is 10.128/14 in short form; write the
+# full form the command prints. The NetworkPolicies (task 3.4, not in this first install) narrow
+# who on that network can reach atlas-api at all.
+#
+# A wrong or unparsable entry is only logged at startup and trusts nothing: sign-ins still work,
+# but every one is counted against Caddy's address instead of the client's, so one person's
+# failed sign-ins can throttle everybody. Check the log line after the first start
+# (FIRST-INSTALL.md, troubleshooting).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-api
+spec:
+  template:
+    spec:
+      containers:
+        - name: atlas-api
+          env:
+            - name: ATLAS_TRUSTED_PROXY_CIDRS
+              value: change-me-pod-network-cidr
