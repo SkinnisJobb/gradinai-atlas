@@ -8,6 +8,11 @@
 #   atlas-postgres  deploy/postgres/pgvector.Dockerfile    atlas-postgres
 #   atlas-tls       deploy/caddy/Dockerfile                atlas-tls (Caddy + the Cloudflare DNS plugin)
 #
+# and, built and scanned but not yet published (docs/oss/research/openshift-aro.md, Story 1), the
+# OpenShift images on Red Hat UBI 9 that the compose install does not use:
+#
+#   atlas-api-ubi   backend/Dockerfile --target hardened-ubi   (TASK-1476)
+#
 # The one image the OSS compose PULLS, the gateway profile's AgentGateway, is upstream and pinned
 # tag@digest in the compose file; it is not republished (docs/oss/RELEASES.md, "What a release
 # publishes"). The hardened api/mcp/backup images are non-root, UID-agnostic, with a HEALTHCHECK;
@@ -177,6 +182,19 @@ jobs:
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-backup' || '' }}
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-backup' || '' }}
 
+      # OpenShift's API image (TASK-1476): `hardened` on ubi9/python-312-minimal. Opt-in, built here
+      # only; its `base` layers are the ones the hardened build above just made.
+      - name: build atlas-api (hardened-ubi)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          target: hardened-ubi
+          tags: atlas-api:hardened-ubi
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-api-hardened-ubi' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-api-hardened-ubi' || '' }}
+
       - name: build atlas-postgres (deploy/postgres/pgvector.Dockerfile)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -202,7 +220,7 @@ jobs:
         run: |
           set -euo pipefail
           bad=0
-          for img in atlas-api:hardened atlas-mcp:hardened atlas-backup:release; do
+          for img in atlas-api:hardened atlas-mcp:hardened atlas-backup:release atlas-api:hardened-ubi; do
             user=$(docker image inspect -f '{{.Config.User}}' "$img")
             hc=$(docker image inspect -f '{{if .Config.Healthcheck}}{{join .Config.Healthcheck.Test " "}}{{end}}' "$img")
             echo "$img: USER=$user"
@@ -220,6 +238,49 @@ jobs:
           done
           [ "$bad" = 0 ]
 
+      # The OpenShift contract for the -ubi images (TASK-1476): restricted SCC runs them under an
+      # arbitrary UID in group 0 and the ARO manifests set readOnlyRootFilesystem, so each is started
+      # exactly that way: `--user 1000770000:0 --read-only`, with only /tmp as a tmpfs (an emptyDir
+      # there). atlas-api: `atlas-migrate --help` (the migration Job's entrypoint) and uvicorn up to
+      # a 200 from /healthz against a throwaway atlas-postgres (the image built above), with
+      # throwaway peppers; nothing here is a secret and the network is removed afterwards.
+      - name: "check: the -ubi images start under 1000770000:0 with a read-only root filesystem"
+        run: |
+          set -euo pipefail
+          run_ro() { docker run --user 1000770000:0 --read-only --tmpfs /tmp "$@"; }
+          rand() { python3 -c 'import base64, os; print(base64.b64encode(os.urandom(32)).decode())'; }
+          probe() { # <container> <port> <path> [Host]: a 200 from inside the container, by its python
+            docker exec "$1" python -c "import sys, urllib.request as u; r = u.urlopen(u.Request('http://127.0.0.1:$2$3', headers={'Host': '${4:-localhost}'}), timeout=4); sys.exit(r.status != 200)"
+          }
+          wait_up() { # <container> <port> <path> [Host]
+            for _ in $(seq 1 60); do
+              [ "$(docker inspect -f '{{.State.Running}}' "$1")" = true ] || { docker logs "$1" || true; return 1; }
+              probe "$@" 2>/dev/null && return 0
+              sleep 1
+            done
+            docker logs "$1" || true; return 1
+          }
+          docker network create ubi-probe >/dev/null
+          trap 'docker rm -f ubi-api ubi-pg >/dev/null 2>&1 || true; docker network rm ubi-probe >/dev/null 2>&1 || true' EXIT
+
+          # atlas-api:hardened-ubi
+          run_ro --rm atlas-api:hardened-ubi atlas-migrate --help >/dev/null             || { echo "::error::atlas-api:hardened-ubi: atlas-migrate --help failed under 1000770000:0, read-only"; exit 1; }
+          echo "atlas-api:hardened-ubi: atlas-migrate --help ok"
+          pgpw=$(rand | tr -dc 'A-Za-z0-9')
+          docker run -d --name ubi-pg --network ubi-probe -e POSTGRES_USER=atlas -e POSTGRES_DB=atlas             -e POSTGRES_PASSWORD="$pgpw" atlas-postgres:release >/dev/null
+          for _ in $(seq 1 60); do docker exec ubi-pg pg_isready -U atlas -d atlas -h 127.0.0.1 >/dev/null 2>&1 && break; sleep 1; done
+          env_file="$RUNNER_TEMP/ubi-api.env"
+          {
+            echo "ATLAS_DB_URL=postgresql+psycopg2://atlas:$pgpw@ubi-pg:5432/atlas"
+            echo "ATLAS_PASSWORD_PEPPER=$(rand)"
+            echo "ATLAS_TOKEN_PEPPER=$(rand)"
+            echo "ATLAS_PUBLIC_URL=https://atlas.example.com"
+          } > "$env_file"
+          run_ro -d --name ubi-api --network ubi-probe --env-file "$env_file" atlas-api:hardened-ubi >/dev/null
+          wait_up ubi-api 8000 /healthz atlas.example.com             || { echo "::error::atlas-api:hardened-ubi: uvicorn did not answer /healthz under 1000770000:0, read-only"; exit 1; }
+          echo "atlas-api:hardened-ubi: uvicorn up, /healthz 200 (uid $(docker exec ubi-api id -u), read-only root)"
+          rm -f "$env_file"
+
       # The report names are what an `in` list in tools/ci/sca-accepted.json matches, so an image
       # built from the same recipe as one in sbom-sca.yml is reported under sbom-sca's name: one
       # acceptance then covers both runs, and sbom-sca's --full-scan knows every name.
@@ -234,6 +295,7 @@ jobs:
           trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-backup.json" atlas-backup:release
           trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-postgres-pgvector.json" atlas-postgres:release
           trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-caddy.json" atlas-tls:release
+          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-api-hardened-ubi.json" atlas-api:hardened-ubi
 
       - name: "gate: a fixable critical or high fails (tools/ci/sca_gate.py, sca-accepted.json)"
         run: python3 tools/ci/sca_gate.py "$RUNNER_TEMP/sca" --summary-md "$RUNNER_TEMP/sca/summary.md"

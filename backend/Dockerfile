@@ -7,6 +7,8 @@
 # deploy_status.py's fingerprint of what the image carries are the same for both.
 # A fourth stage, `backup` (STORY-atlas-crunch-mode), is `hardened` plus the Postgres client, built
 # only by the OSS compose file's opt-in `backup` profile; it has no COPY either.
+# A fifth, `hardened-ubi` (TASK-1476), is `hardened` on Red Hat UBI 9 for OpenShift; it copies /app
+# from `base` (`COPY --from`), so it adds no source COPY either.
 
 # Pinned tag@digest (TASK-1365); digest bumped in LCM patch round 1 (2026-10-25): python 3.12.15, trixie.
 FROM python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54 AS base
@@ -119,6 +121,42 @@ RUN apt-get update && apt-get install -y --no-install-recommends libpq5 liblz4-1
 COPY --from=pgclient /usr/lib/postgresql/16/bin/pg_dump /usr/lib/postgresql/16/bin/pg_restore /usr/local/bin/
 RUN pg_dump --version | grep -q ' 16\.' && pg_restore --version | grep -q ' 16\.'
 USER 10001:0
+
+
+# --- hardened-ubi (TASK-1476, ARO 1.1): `docker build --target hardened-ubi` --------------------
+# `hardened` on Red Hat's Universal Base Image, for OpenShift (docs/oss/research/openshift-aro.md,
+# question 1). Opt-in: nothing builds it but images.yml, and the stages above and the default
+# below are untouched. The same code and the same hashed lock as `hardened`:
+#   - /app comes from `base` with `COPY --from`, so this stage copies no source of its own and
+#     verify_deploy_status.py's COPY-to-spec map and deploy_status.py's fingerprint are the same
+#     for every target; the two CLI wrappers come from `base` too;
+#   - the lock is installed into the image's own venv (/opt/app-root, first on PATH) with
+#     --require-hashes. The lock carries every platform's wheel hash, and every compiled
+#     dependency has a manylinux wheel that UBI 9's glibc 2.34 satisfies, so nothing compiles;
+#   - the same runtime contract as `hardened`: every file group 0 and not group-writable (the
+#     venv too, which the base image ships group-writable), HOME=/home/atlas the one writable
+#     directory besides /tmp, numeric USER, the same HEALTHCHECK. The base image's own user
+#     (1001) is not used: OpenShift assigns its UID, and 10001:0 keeps the two hardened images alike.
+# Pinned tag@digest like every FROM (tools/ci/check_pins.py): `9.8` is the RHEL minor, which
+# Dependabot follows (the docker ecosystem watches /backend), refreshing the digest as Red Hat
+# rebuilds the image for each erratum.
+FROM registry.access.redhat.com/ubi9/python-312-minimal:9.8@sha256:d0ac54e77cd0be473b22fb274493526027f2746ec503b4a97ca08257813f0d4b AS hardened-ubi
+USER 0
+WORKDIR /app
+COPY --from=base /app /app
+COPY --from=base /usr/local/bin/atlas-migrate /usr/local/bin/atlas-admin /usr/local/bin/
+RUN pip install --no-cache-dir --require-hashes -r requirements-lock.txt \
+ && mkdir -p /home/atlas \
+ && chgrp -R 0 /app /home/atlas /usr/local/bin/atlas-migrate /usr/local/bin/atlas-admin \
+ && chmod -R g=u,g-w,o-w /app /opt/app-root \
+ && chmod 0775 /home/atlas
+ENV HOME=/home/atlas \
+    PYTHONDONTWRITEBYTECODE=1
+USER 10001:0
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD ["python", "-c", "import os, urllib.parse as p, urllib.request as u; o = os.environ.get('ATLAS_PUBLIC_URL') or (os.environ.get('ATLAS_LOGIN_ORIGINS') or 'http://localhost').split(',')[0].strip(); h = os.environ.get('ATLAS_PUBLIC_HOST') or p.urlsplit(o).netloc; u.urlopen(u.Request('http://127.0.0.1:8000/healthz', headers={'Host': h}), timeout=4)"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
 
 
 # --- the default (no --target): today's image, unchanged ---------------------------------------
