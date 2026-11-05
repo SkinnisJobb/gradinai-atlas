@@ -273,6 +273,7 @@ if docker logs "$P-tls" 2>&1 | grep -qiE 'x509|certificate signed by unknown aut
     ok "OSS-26 D: Caddy logged the verification failure ($(docker logs "$P-tls" 2>&1 | grep -oiE 'x509: [^"]{0,60}|certificate signed by unknown authority' | head -1))"
 else
     bad "OSS-26 D: no certificate error in Caddy's log"
+    docker logs "$P-tls" 2>&1 | tail -n 12 | cut -c1-400 | sed 's/^/    caddy: /'
 fi
 
 # --- client auth require (the mTLS leg) -----------------------------------------------------
