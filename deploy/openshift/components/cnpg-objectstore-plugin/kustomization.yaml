@@ -1,0 +1,42 @@
+# Component `cnpg-objectstore-plugin` (TASK-1491, ARO 3.5; research question 4): component `cnpg`
+# PLUS backups, through the Barman Cloud plugin to an Azure Blob container:
+#   - ObjectStore atlas-backups (objectstore.yaml): the destination, its credentials (Secret
+#     atlas-backup-azure, not created here) and the 30-day recovery window;
+#   - the Cluster names the plugin as its WAL archiver (the patch below);
+#   - ScheduledBackup atlas-db-daily (scheduledbackup.yaml): a base backup every night.
+#
+# OPT-IN. `cnpg` alone runs with no backup, so a first install needs neither the plugin nor any
+# storage. Switch to this component once both exist; the Cluster then starts archiving WAL and the
+# first base backup is taken at once. The in-tree `spec.backup.barmanObjectStore` method is not
+# offered: it is deprecated since CloudNativePG 1.26 and removed in 1.32.
+#
+# SELF-CONTAINED: it includes `cnpg` itself, so an overlay lists this component INSTEAD of `cnpg`,
+# never both (both would add Cluster atlas-db twice, which kustomize refuses). This is also why the
+# lint, which builds the base plus one component, sees the whole database here.
+#
+# What the platform team must have installed, once per cluster (open question 6): the Barman
+# Cloud plugin (it needs cert-manager) in the operator's namespace, and a grant of
+# `objectstores.barmancloud.cnpg.io` to the namespace admins (the plugin is not installed through
+# OLM, so its role is not aggregated into `admin` and `edit`).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+components:
+  - ../cnpg
+
+resources:
+  - objectstore.yaml
+  - scheduledbackup.yaml
+
+patches:
+  - target:
+      kind: Cluster
+      name: atlas-db
+    patch: |-
+      - op: add
+        path: /spec/plugins
+        value:
+          - name: barman-cloud.cloudnative-pg.io
+            isWALArchiver: true
+            parameters:
+              barmanObjectName: atlas-backups

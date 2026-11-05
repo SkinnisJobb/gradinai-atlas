@@ -213,6 +213,107 @@ resources:
 
 The spread and anti-affinity rules for two replicas are already in the base Deployment.
 
+## The database (task 3.5)
+
+Atlas's database is a CloudNativePG (CNPG) `Cluster` named `atlas-db`, run by an operator the
+platform team already has; these components hold only namespaced objects (no CRD, operator or
+ClusterRole). An overlay lists **one** of the first two:
+
+| Component | Adds | Needs on the cluster |
+|---|---|---|
+| `components/cnpg/` | `Cluster` `atlas-db` (PostgreSQL 16, 2 instances, database `atlas` owned by `atlas`, TLS required) and `Database` `atlas-db-atlas`. **No backup.** | the CNPG operator and a default storage class |
+| `components/cnpg-objectstore-plugin/` | everything in `cnpg` (it includes it), plus the Barman Cloud plugin's `ObjectStore` `atlas-backups` (Azure Blob, 30-day recovery window), the Cluster's WAL archive through the plugin, and `ScheduledBackup` `atlas-db-daily` (02:30 every day, the first one at once) | also the Barman Cloud plugin (with cert-manager), the `ObjectStore` role granted to the namespace's admins, the blob container, Secret `atlas-backup-azure` |
+| `components/cnpg-edb/` | nothing of its own: it moves every `postgresql.cnpg.io` object to EDB's group. List it **after** one of the two above | EDB Postgres for Kubernetes instead of community CNPG |
+
+`cnpg` is what a first install applies: base plus `cnpg` on a fresh namespace comes up with
+nothing else to create. **Until `cnpg-objectstore-plugin` replaces it there is no backup**, and
+the standby is the only copy of the data. Listing both is refused by `kustomize build`
+(Cluster `atlas-db` would be added twice). The in-tree `spec.backup.barmanObjectStore` method is
+not offered: it is deprecated since CNPG 1.26 and removed in 1.32.
+
+**What the Cluster makes, and the base mounts.** Secret `atlas-db-app` (the base reads only
+`fqdn-uri`, `postgresql://atlas:<password>@atlas-db-rw.<namespace>.svc.<cluster domain>:5432/atlas`,
+through the `db-url` init container) and Secret `atlas-db-ca` (the base reads only `ca.crt`, never
+`ca.key`). The operator's own CA signs a server certificate for every service name, so
+`PGSSLMODE=verify-full` against `ca.crt` holds for the host in `fqdn-uri`. A `pg_hba` rule refuses
+any connection without TLS. The `postgres` superuser has no password, and `atlas` has no
+`CREATEDB`.
+
+**Community or EDB.** The manifests are written for community CloudNativePG,
+`postgresql.cnpg.io/v1`, the default. On EDB Postgres for Kubernetes
+(`postgresql.k8s.enterprisedb.io/v1`, open question 6 of the research), add the switch:
+
+```yaml
+components:
+  - ../../components/cnpg          # or cnpg-objectstore-plugin
+  - ../../components/cnpg-edb      # after it: it patches what the one above added
+```
+
+Names, Secrets and services stay the same. EDB labels its pods `k8s.enterprisedb.io/...` instead of
+`cnpg.io/...`; the Cluster copies `app.kubernetes.io/name: atlas` and
+`app.kubernetes.io/component: database` onto its pods under either operator, and those are the
+labels to select on. The lint's schema catalog has no EDB schemas: the base-plus-`cnpg-edb`
+render holds no database object and passes, but an overlay that lists `cnpg-edb` fails
+kubeconform's strict mode until the lint maps that group to the CNPG schemas. On EDB, `imageName`
+is usually EDB's own image (next table).
+
+**What an overlay may change** (each a patch on the object named):
+
+| What | Patch |
+|---|---|
+| storage class and sizes | `Cluster` `atlas-db`: `/spec/storage/storageClass`, `/spec/storage/size` (20Gi), `/spec/walStorage/...` (5Gi); without a class, the cluster default |
+| instances, resources | `/spec/instances` (2), `/spec/resources` |
+| the PostgreSQL image | `/spec/imageName`, by tag **and digest** (the lint refuses a tag alone): a mirror of `ghcr.io/cloudnative-pg/postgresql:16.<minor>-<build>-standard-trixie`, or the platform team's image. Keep a `standard` image: `minimal` has no pgvector |
+| the backup destination | `ObjectStore` `atlas-backups`: `/spec/configuration/destinationPath`, `https://<account>.blob.core.windows.net/<container>/atlas` (the shipped value is a placeholder that cannot resolve) |
+| workload identity instead of a SAS token | `ObjectStore` `atlas-backups`: replace `/spec/configuration/azureCredentials` with `{inheritFromAzureAD: true}` |
+
+**pgvector, only with retrieval.** The `standard` image ships the `vector` extension, but `atlas`
+cannot create it (it is not a trusted extension). The operator does, from the `Database` object.
+`cnpg` lists no extension, as in the Compose install, and the `retrieval` component (task 3.6)
+carries this patch:
+
+```yaml
+patches:
+  - target: {kind: Database, name: atlas-db-atlas}
+    patch: |-
+      - op: add
+        path: /spec/extensions
+        value:
+          - {name: vector, ensure: present}
+```
+
+**Secret `atlas-backup-azure`** (for `cnpg-objectstore-plugin` only; never in this repository):
+
+| Key | Value |
+|---|---|
+| `AZURE_STORAGE_ACCOUNT` | the storage account's name |
+| `AZURE_STORAGE_SAS_TOKEN` | a SAS token scoped to the backup container, with read, add, create, write, delete and list (delete is how the 30-day window removes old backups) |
+
+The blob container must exist before the first WAL is archived: Barman does not create it. The
+storage account should have soft delete and an immutability policy (open question 7).
+
+**Backups and restores** (`cnpg-objectstore-plugin`). `oc get cluster atlas-db -o yaml` shows the
+conditions `ContinuousArchiving` and `LastBackupSucceeded`. The `immediate` backup is taken the
+moment the `ScheduledBackup` is created; when `cnpg` is swapped for this component on a running
+Cluster, the instances restart to load the plugin and that first backup fails on the race. Take
+one at once rather than wait for the nightly one. The deploy pipeline takes the same on-demand
+backup before each migrate Job, with a name unique to the release:
+
+```yaml
+apiVersion: postgresql.cnpg.io/v1      # postgresql.k8s.enterprisedb.io/v1 on EDB
+kind: Backup
+metadata:
+  name: atlas-db-before-v0-2-0
+spec:
+  cluster: {name: atlas-db}
+  method: plugin
+  pluginConfiguration: {name: barman-cloud.cloudnative-pg.io}
+```
+
+A restore is always a new `Cluster` bootstrapped from the object store (`bootstrap.recovery`),
+never in place; question 4 of the research describes the quarterly drill, and task 5.2 writes the
+runbook.
+
 ## What later tasks add
 
 | Task | Adds |

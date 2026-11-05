@@ -1,0 +1,30 @@
+# Component `cnpg-edb` (TASK-1491, ARO 3.5; research question 4 and open question 6): run the
+# database on EDB Postgres for Kubernetes instead of community CloudNativePG. EDB's operator is
+# the CloudNativePG code under another API group, `postgresql.k8s.enterprisedb.io`; the `cnpg`
+# component's objects (Cluster, Database, ScheduledBackup) are written for the community group
+# `postgresql.cnpg.io`, and this component moves every object of that group to EDB's.
+#
+# List it AFTER `cnpg` or `cnpg-objectstore-plugin` in the overlay (a component patches what the
+# components before it added):
+#   components:
+#     - ../../components/cnpg-objectstore-plugin
+#     - ../../components/cnpg-edb
+# On its own it changes nothing, which is what the lint's base-plus-one build of it shows.
+#
+# What does not change: the object names, so the Secrets the base mounts (atlas-db-app,
+# atlas-db-ca) and the services (atlas-db-rw) are the same; the `app.kubernetes.io/*` labels the
+# Cluster copies onto its pods (EDB's own labels are `k8s.enterprisedb.io/*`). What the overlay
+# may still have to set: `spec.imageName` to the image EDB's subscription provides, if the
+# platform team does not run the community image. The Barman Cloud plugin's ObjectStore keeps its
+# group (`barmancloud.cnpg.io`); whether EDB's operator works with that plugin, or with EDB's own
+# build of it, is part of open question 6.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target:
+      group: postgresql.cnpg.io
+    patch: |-
+      - op: replace
+        path: /apiVersion
+        value: postgresql.k8s.enterprisedb.io/v1

@@ -1,0 +1,31 @@
+# Component `cnpg` (TASK-1491, ARO 3.5; design: docs/oss/research/openshift-aro.md, question 4):
+# Atlas's database as a CloudNativePG Cluster named `atlas-db`, on an operator the platform team
+# already runs. Namespace-scoped objects only: no CRD, operator or ClusterRole.
+#
+# What it adds:
+#   cluster.yaml          Cluster atlas-db: PostgreSQL 16 (`standard` image, which carries
+#                         pgvector), 2 instances, database `atlas` owned by `atlas`, CNPG's own CA,
+#                         TLS required.
+#   database.yaml         Database atlas-db-atlas: the `atlas` database, declared. The retrieval
+#                         component patches `vector` into its extensions; nothing else does.
+#
+# The Cluster makes the two Secrets the base mounts: atlas-db-app (item `fqdn-uri`) and
+# atlas-db-ca (item `ca.crt`).
+#
+# NO BACKUP. Applied to a fresh namespace with the base, this comes up on its own: it needs the
+# operator and the cluster's default storage class, nothing else. Backups are the opt-in
+# component `cnpg-objectstore-plugin`, which includes this one and adds the Barman Cloud plugin's
+# ObjectStore and a ScheduledBackup; an overlay lists ONE of the two, never both (both would add
+# Cluster atlas-db twice, which kustomize refuses).
+#
+# Community CloudNativePG (`postgresql.cnpg.io`) is the API group written here; component
+# `cnpg-edb`, listed after this one, switches every object to EDB Postgres for Kubernetes.
+#
+# An overlay may set the storage class and sizes, the instance count, the resources and the image
+# (deploy/openshift/README.md, "The database").
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - cluster.yaml
+  - database.yaml
