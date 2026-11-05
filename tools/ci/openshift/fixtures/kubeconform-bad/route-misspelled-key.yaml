@@ -1,0 +1,11 @@
+# kubeconform must refuse this: `terminaton` is not a field of a Route's tls (OpenShift schema).
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: atlas
+spec:
+  to:
+    kind: Service
+    name: atlas-api
+  tls:
+    terminaton: reencrypt

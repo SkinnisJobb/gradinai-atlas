@@ -1,0 +1,11 @@
+# kube-linter configuration for the OpenShift manifests (TASK-1487, ARO 6.1).
+#
+# kube-linter's default checks (latest-tag, privileged-container, run-as-non-root,
+# no-read-only-root-fs, unset-cpu-requirements, unset-memory-requirements, mismatching-selector,
+# dangling-service, non-existent-service-account, env-var-secret and the rest) all apply: they
+# overlap Atlas's own conftest policies (tools/ci/openshift/policy/) on purpose, as a second
+# opinion from a maintained rule set. A check that does not fit a manifest is excluded here,
+# by name, with the reason, never with an annotation scattered in the manifests.
+checks:
+  doNotAutoAddDefaults: false
+  exclude: []

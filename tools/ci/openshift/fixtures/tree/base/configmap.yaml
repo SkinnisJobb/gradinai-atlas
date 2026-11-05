@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: atlas-env
+data:
+  ATLAS_PUBLIC_URL: https://atlas.example.com
+  ATLAS_TOKEN_PEPPER_FILE: /run/secrets/atlas-peppers/token_pepper
+  ATLAS_REQUIRE_SECRET_FILES: "1"

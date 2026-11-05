@@ -1,0 +1,9 @@
+# kubeconform must refuse this: `instance` is not a field of a CloudNativePG Cluster (CNPG schema).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: atlas-db
+spec:
+  instance: 2
+  storage:
+    size: 10Gi

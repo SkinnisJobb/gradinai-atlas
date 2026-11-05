@@ -1,0 +1,15 @@
+# A stand-in for deploy/openshift/overlays/example/ (TASK-1487): the base, one component and a
+# namespace, as an organisation's overlay would put them together.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: atlas
+resources:
+  - ../../base
+components:
+  - ../../components/cnpg
+# The passing case for the kustomization images rule: newName, newTag and digest together.
+images:
+  - name: registry.example.com/atlas/atlas-api
+    newName: mirror.example.com/atlas/atlas-api
+    newTag: 1.0.1
+    digest: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

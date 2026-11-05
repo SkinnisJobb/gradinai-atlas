@@ -1,0 +1,10 @@
+# Fails image-digest only: a CloudNativePG Cluster whose imageName is a tag.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: atlas-db
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+  storage:
+    size: 10Gi
