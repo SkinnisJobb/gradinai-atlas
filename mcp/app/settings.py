@@ -378,3 +378,57 @@ try:
     OAUTH_RESOURCE = load_oauth_resource()
 except OAuthResourceError as _exc:
     sys.exit(f"atlas-mcp refuses to start: {_exc}")
+
+
+# --------------------------------------------------------------------------- #
+# Stateless Streamable HTTP: more than one atlas-mcp replica (TASK-1480, ARO 2.2)
+# --------------------------------------------------------------------------- #
+# ADDITIVE, OPT-IN, OFF BY DEFAULT. atlas-mcp runs the MCP SDK's stateful Streamable
+# HTTP transport: `initialize` opens a session held in this process's memory
+# (mcp_server.py, 4 h idle timeout), and every later request names it in
+# `Mcp-Session-Id`. A request that lands on another replica names a session that
+# replica never saw and is refused, so behind a load balancer only one replica works.
+#
+# ATLAS_MCP_STATELESS_HTTP=1 runs FastMCP's `stateless_http` mode instead: each POST
+# gets a fresh transport and server session, no session id is issued or required,
+# and any replica can answer any request. What it does NOT change: the caller gate
+# (caller_auth.RequireCallerToken) still runs on every request, and each tool call
+# still forwards that request's own Bearer token to atlas-api (client.py); atlas-mcp
+# holds no token of its own either way. The Host / Origin allow-list still applies
+# (the SDK hands the same TransportSecuritySettings to each per-request transport).
+# What a client loses: server-to-client requests and notifications on a standalone
+# GET stream, and resumability; Atlas's tools use neither. The idle timeout means
+# nothing here, because nothing outlives its request.
+#
+# Unset, empty, 0/false/no/off: the stateful transport, exactly as before. 1/true/
+# yes/on: stateless. Anything else stops the process at import, naming the variable:
+# a typo must not leave a multi-replica install half-working in silence.
+
+STATELESS_HTTP_ENV = "ATLAS_MCP_STATELESS_HTTP"
+_ON = ("1", "true", "yes", "on")
+_OFF = ("", "0", "false", "no", "off")
+
+
+class StatelessHttpError(ValueError):
+    """ATLAS_MCP_STATELESS_HTTP is neither a true nor a false value."""
+
+
+def load_stateless_http(environ: Optional[Mapping[str, str]] = None) -> bool:
+    """True when `environ` (default `os.environ`) switches the stateless transport on."""
+    env = os.environ if environ is None else environ
+    raw = env.get(STATELESS_HTTP_ENV, "")
+    value = raw.strip().lower()
+    if value in _ON:
+        return True
+    if value in _OFF:
+        return False
+    raise StatelessHttpError(
+        f"{STATELESS_HTTP_ENV}={raw!r} is not a switch value; use 1 or 0 "
+        f"(also true/false, yes/no, on/off), or unset it.")
+
+
+try:
+    # Read once, at import, like DISABLED: one process, one configuration.
+    STATELESS_HTTP = load_stateless_http()
+except StatelessHttpError as _exc:
+    sys.exit(f"atlas-mcp refuses to start: {_exc}")

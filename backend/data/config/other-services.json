@@ -11,6 +11,7 @@
     {"name": "ATLAS_MCP_CLIENT_CERT_FILE", "summary": "The client certificate atlas-mcp presents to the API's TLS front (the optional mTLS leg)."},
     {"name": "ATLAS_MCP_CLIENT_KEY_FILE", "summary": "The private key of that client certificate."},
     {"name": "ATLAS_MCP_ENABLE_DELETE", "summary": "Register the delete tools (off by default)."},
+    {"name": "ATLAS_MCP_STATELESS_HTTP", "summary": "Run the stateless MCP transport, so several atlas-mcp replicas can serve one client (off by default)."},
     {"name": "ATLAS_MCP_OAUTH_SCOPES", "summary": "The scopes an MCP client is told to ask its identity provider for."}
   ],
   "compose": [

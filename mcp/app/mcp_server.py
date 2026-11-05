@@ -26,7 +26,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 # instead of every tool call (TASK-1366).
 from mcp.server.lowlevel.server import request_ctx as _request_ctx  # noqa: F401
 
-from . import settings                                    # allowed hosts; ATLAS_DISABLED_FEATURES
+from . import settings                                    # allowed hosts; ATLAS_DISABLED_FEATURES; stateless
 from . import client as client_mod
 from .client import client
 from .descriptions import DESCRIPTIONS
@@ -98,11 +98,19 @@ class _AuditedFastMCP(FastMCP):
             return await super().call_tool(name, arguments, *args, **kwargs)
 
 
+# STATELESS STREAMABLE HTTP: OPT-IN, OFF BY DEFAULT (TASK-1480, ARO 2.2). With
+# ATLAS_MCP_STATELESS_HTTP on (settings.py has the why), FastMCP's own `stateless_http`
+# mode: no session is kept, so any replica answers any request. Off, the keyword is the
+# SDK's default (False) and the server is built exactly as before. The idle timeout is
+# still passed: the SDK ignores it in stateless mode, and passing it either way keeps
+# one construction instead of two. Auth is not touched: the gate in main.py and the
+# per-call token in client.py run per HTTP request, which is what stateless mode serves.
 mcp = _Described(_AuditedFastMCP(
     "atlas",
     streamable_http_path="/",
     session_idle_timeout=SESSION_IDLE_TIMEOUT_S,
     transport_security=TRANSPORT_SECURITY,
+    stateless_http=settings.STATELESS_HTTP,
 ))
 
 

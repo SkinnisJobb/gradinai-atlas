@@ -85,6 +85,14 @@ request that presents a token always acts as itself.
   `deploy/oss/.env.example` shows the full list for the stack. The protection cannot be turned off.
 - **Session idle timeout.** Streamable-HTTP sessions idle for **4 hours** are closed; the client
   re-initializes.
+- **Stateless mode (off by default).** Sessions live in the process's memory, so a session opened
+  on one replica is refused (404) by another. `ATLAS_MCP_STATELESS_HTTP=1` switches to the SDK's
+  stateless Streamable HTTP: no session id is issued or needed, and any replica answers any
+  request, so atlas-mcp can run behind a load balancer. The caller gate and the per-call token are
+  unchanged; what a client loses is the server-to-client stream (a standalone GET) and
+  resumability, which Atlas's tools do not use. Unset, `0` or empty: stateful, as before. Any
+  other value stops startup, naming it. `verify_stateless_http.py` proves both modes with two
+  separate processes.
 
 ## Talking to atlas-api
 
