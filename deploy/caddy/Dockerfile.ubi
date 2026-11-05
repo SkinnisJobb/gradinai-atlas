@@ -1,0 +1,49 @@
+# The Caddy front (atlas-tls) on Red Hat's Universal Base Image, for OpenShift (TASK-1478, ARO 1.3).
+#
+# WHY. docs/oss/research/openshift-aro.md, questions 1 and 3: on ARO Caddy stays, as the
+# `atlas-tls` Deployment behind a re-encrypt Route, and the platform wants a UBI image. There is
+# no official UBI Caddy image, so this builds one. Opt-in: only images.yml builds it, and
+# deploy/caddy/Dockerfile (the compose install's atlas-tls and the homelab's front) is unchanged.
+#
+# WHAT IS IN IT. Stock Caddy and no plugin. The one plugin of deploy/caddy/Dockerfile,
+# caddy-dns/cloudflare, exists for ACME DNS-01, and on OpenShift there is no ACME: the public
+# certificate is the router's, and every certificate inside the namespace comes from the
+# OpenShift service CA (research doc, question 3). Leaving it out also leaves its dependency
+# graph out of the scanned binary.
+#
+# BUILD. xcaddy on ubi9/go-toolset (Go 1.26, which Caddy 2.11 needs), CGO off, so the binary is
+# static and runs on ubi9/ubi-micro (no package manager, no CA bundle: every upstream Caddy
+# dials is verified against a mounted CA file, and the OpenShift Caddyfile must keep ACME off,
+# `auto_https disable_certs` or `off`, or Caddy tries to order a certificate for the public host).
+# Caddy and xcaddy are pinned to exact release tags below and Go verifies every module against
+# the checksum database, so the binary is reproducible from this file. Caddy v2.11.9 requires
+# go-jose v4.1.6 and x/net v0.60.0 itself, so deploy/caddy/Dockerfile's `--replace` (TASK-1434)
+# and the atlas-caddy x/net acceptance in tools/ci/sca-accepted.json have nothing to do here.
+# To bump Caddy, change CADDY_VERSION; the base images are tag@digest (tools/ci/check_pins.py)
+# and Dependabot's docker ecosystem watches /deploy/caddy.
+#
+# RUNTIME. Any UID in group 0 (OpenShift's restricted SCC), numeric USER, no low port: the
+# OpenShift Caddyfile listens on 8443 and 9443. Caddy writes its state under XDG_DATA_HOME and
+# its autosaved config under XDG_CONFIG_HOME: both exist in the image, group 0 and
+# group-writable, and the ARO manifests mount an emptyDir on each so the root filesystem can be
+# read-only. HOME=/tmp for anything else that looks for one. No HEALTHCHECK: Kubernetes probes
+# the pod, and Docker's HEALTHCHECK is not used there.
+FROM registry.access.redhat.com/ubi9/go-toolset:1.26@sha256:c2bd0309bf78ae317024fdfc5602a31704e0dba9572f6d4b0bd4b681033dc965 AS builder
+ARG CADDY_VERSION=v2.11.9
+ARG XCADDY_VERSION=v0.4.7
+ENV CGO_ENABLED=0
+RUN go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}" \
+ && "$(go env GOPATH)/bin/xcaddy" build "${CADDY_VERSION}" --output /tmp/caddy \
+ && /tmp/caddy version
+
+FROM registry.access.redhat.com/ubi9/ubi-micro:9.8@sha256:6d9eff186ce3ccf399c1835265e7fd3f83bd112cc3422da2d39fd44e234aab59
+COPY --from=builder /tmp/caddy /usr/bin/caddy
+RUN mkdir -p /config /data /etc/caddy \
+ && chgrp 0 /config /data \
+ && chmod 0775 /config /data
+ENV XDG_CONFIG_HOME=/config \
+    XDG_DATA_HOME=/data \
+    HOME=/tmp
+USER 10001:0
+EXPOSE 8443 9443
+CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

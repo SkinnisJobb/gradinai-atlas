@@ -13,6 +13,7 @@
 #
 #   atlas-api-ubi   backend/Dockerfile --target hardened-ubi   (TASK-1476)
 #   atlas-mcp-ubi   mcp/Dockerfile --target hardened-ubi       (TASK-1477)
+#   atlas-tls-ubi   deploy/caddy/Dockerfile.ubi                (TASK-1478; stock Caddy, no plugin)
 #
 # The one image the OSS compose PULLS, the gateway profile's AgentGateway, is upstream and pinned
 # tag@digest in the compose file; it is not republished (docs/oss/RELEASES.md, "What a release
@@ -226,6 +227,18 @@ jobs:
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-tls-release' || '' }}
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-tls-release' || '' }}
 
+      # OpenShift's Caddy front (TASK-1478): xcaddy on ubi9/go-toolset, the static binary on
+      # ubi9/ubi-micro. deploy/caddy/Dockerfile above is unchanged.
+      - name: build atlas-tls (deploy/caddy/Dockerfile.ubi)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/caddy
+          file: deploy/caddy/Dockerfile.ubi
+          tags: atlas-tls:ubi
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-tls-ubi' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-tls-ubi' || '' }}
+
       # Acceptance 1 and 2 on the image itself. The full stack under an arbitrary UID is the
       # install smoke's leg 1 (install-smoke.yml).
       - name: "check: non-root numeric USER, HEALTHCHECK, runs under an arbitrary UID"
@@ -300,6 +313,92 @@ jobs:
           wait_up ubi-mcp 8092 /health             || { echo "::error::atlas-mcp:hardened-ubi: uvicorn did not answer /health under 1000770000:0, read-only"; exit 1; }
           echo "atlas-mcp:hardened-ubi: uvicorn up, /health 200 (uid $(docker exec ubi-mcp id -u), read-only root)"
 
+      # atlas-tls:ubi (TASK-1478). `caddy validate` and then `caddy run` under an arbitrary UID with
+      # a read-only root and XDG_CONFIG_HOME / XDG_DATA_HOME on a tmpfs each (the emptyDirs of the
+      # ARO Deployment). THE CADDYFILE IS A FIXTURE: the OpenShift Caddyfile is task 3.3's and does
+      # not exist yet, so this one has its shape (research doc, question 3): the re-encrypt front
+      # on :8443 with `default_sni` (the router sends no SNI), `trusted_proxies` +
+      # `client_ip_headers X-Forwarded-For` + `trusted_proxies_strict` for the router's address (a
+      # documentation range here; the real file names the pod network),
+      # `CF-Connecting-IP {client_ip}` to the API, the internal :9443 listener atlas-mcp dials,
+      # service-CA-shaped certificate files and trust pool (a throwaway self-signed pair), and ACME
+      # off (`auto_https disable_certs`: without it Caddy orders a certificate for the public host).
+      # Task 3.3 points this check at the real file. The run is probed over TLS with NO SNI (an IP
+      # literal, as the router connects) and with SNI on :9443; the upstreams do not exist here, so
+      # Caddy's 502 is the expected answer: it proves the handshake and the routing, not an upstream.
+      - name: "check: atlas-tls:ubi validates and serves the OpenShift-shaped Caddyfile under an arbitrary UID"
+        run: |
+          set -euo pipefail
+          img=atlas-tls:ubi
+          user=$(docker image inspect -f '{{.Config.User}}' "$img")
+          echo "$img: USER=$user"
+          [[ "$user" =~ ^[1-9][0-9]*:0$ ]] || { echo "::error::$img: USER is not a numeric non-root UID in group 0"; exit 1; }
+          fx="$RUNNER_TEMP/caddy-fixture"
+          mkdir -p "$fx/certs"
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 7 \
+            -subj "/CN=atlas-tls.atlas.svc" -addext "subjectAltName=DNS:atlas-tls.atlas.svc" \
+            -keyout "$fx/certs/tls.key" -out "$fx/certs/tls.crt" 2>/dev/null
+          cp "$fx/certs/tls.crt" "$fx/certs/service-ca.crt"
+          chmod 0644 "$fx/certs/tls.key"   # throwaway; the arbitrary UID must read the mount
+          cat > "$fx/Caddyfile" <<'CADDY'
+          {
+              admin off
+              auto_https disable_certs
+              skip_install_trust
+              default_sni atlas-tls.atlas.svc
+              servers :8443 {
+                  trusted_proxies static 198.51.100.0/24
+                  client_ip_headers X-Forwarded-For
+                  trusted_proxies_strict
+              }
+          }
+          (origin_tls) {
+              transport http {
+                  tls_trust_pool file /etc/caddy/certs/service-ca.crt
+                  tls_server_name {args[0]}
+              }
+          }
+          atlas.example.com:8443 {
+              tls /etc/caddy/certs/tls.crt /etc/caddy/certs/tls.key
+              reverse_proxy https://atlas-api.atlas.svc:8443 {
+                  import origin_tls atlas-api.atlas.svc
+                  header_up Host {hostport}
+                  header_up CF-Connecting-IP {client_ip}
+              }
+          }
+          atlas-tls.atlas.svc:9443 {
+              tls /etc/caddy/certs/tls.crt /etc/caddy/certs/tls.key
+              reverse_proxy https://atlas-api.atlas.svc:8443 {
+                  import origin_tls atlas-api.atlas.svc
+                  header_up Host {hostport}
+              }
+          }
+          CADDY
+          caddy_ro() {
+            docker run --user 1000770000:0 --read-only --tmpfs /config --tmpfs /data \
+              -e XDG_CONFIG_HOME=/config -e XDG_DATA_HOME=/data -v "$fx:/etc/caddy:ro" "$@"
+          }
+          caddy_ro --rm "$img" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
+            || { echo "::error::$img: caddy validate failed under 1000770000:0"; exit 1; }
+          trap 'docker rm -f ubi-tls >/dev/null 2>&1 || true' EXIT
+          caddy_ro -d --name ubi-tls -p 127.0.0.1:18443:8443 -p 127.0.0.1:19443:9443 "$img" >/dev/null
+          code=000
+          for _ in $(seq 1 30); do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' -H 'Host: atlas.example.com' https://127.0.0.1:18443/ || true)
+            [ "$code" = 502 ] && break
+            sleep 1
+          done
+          [ "$code" = 502 ] || { docker logs ubi-tls || true; echo "::error::$img: no TLS answer on :8443 without SNI (got $code)"; exit 1; }
+          subj=$(openssl s_client -connect 127.0.0.1:18443 -noservername </dev/null 2>/dev/null | openssl x509 -noout -subject)
+          echo "$img: :8443 without SNI presents $subj"
+          [[ "$subj" == *atlas-tls.atlas.svc* ]] || { echo "::error::$img: default_sni did not select the service certificate"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$fx/certs/service-ca.crt" \
+            --resolve atlas-tls.atlas.svc:19443:127.0.0.1 https://atlas-tls.atlas.svc:19443/ || true)
+          [ "$code" = 502 ] || { docker logs ubi-tls || true; echo "::error::$img: :9443 did not answer (got $code)"; exit 1; }
+          [ "$(docker inspect -f '{{.State.Running}}' ubi-tls)" = true ] || { echo "::error::$img: caddy exited"; exit 1; }
+          if docker logs ubi-tls 2>&1 | grep -qi acme; then docker logs ubi-tls; echo "::error::$img: caddy tried ACME"; exit 1; fi
+          echo "$img: caddy validate ok; runs as $(docker exec ubi-tls id -u) with a read-only root, :8443 (no SNI) and :9443 answer"
+
       # The report names are what an `in` list in tools/ci/sca-accepted.json matches, so an image
       # built from the same recipe as one in sbom-sca.yml is reported under sbom-sca's name: one
       # acceptance then covers both runs, and sbom-sca's --full-scan knows every name.
@@ -316,6 +415,7 @@ jobs:
           trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-caddy.json" atlas-tls:release
           trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-api-hardened-ubi.json" atlas-api:hardened-ubi
           trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-mcp-hardened-ubi.json" atlas-mcp:hardened-ubi
+          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-caddy-ubi.json" atlas-tls:ubi
 
       - name: "gate: a fixable critical or high fails (tools/ci/sca_gate.py, sca-accepted.json)"
         run: python3 tools/ci/sca_gate.py "$RUNNER_TEMP/sca" --summary-md "$RUNNER_TEMP/sca/summary.md"
