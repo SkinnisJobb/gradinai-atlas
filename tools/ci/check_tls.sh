@@ -37,6 +37,10 @@
 #                    reverse_proxy https://atlas-api-origin:8443 { import origin_tls ... }   ok
 #                    reverse_proxy atlas-api-origin:8000 {                                 FAIL
 #
+# R2 and R5 read compose files only: a YAML file without a top-level `services:` key (a
+# Kubernetes manifest under deploy/openshift/) is skipped by them, as check_binds.sh skips it;
+# its `ports:` lists publish nothing on a host. R1 and R4 still read it.
+#
 # THE ONE ESCAPE HATCH is a trailing `# tls-exempt: <reason>` on the line, honoured ONLY for R1
 # and R3, ONLY in deploy/ overlays and tools/ scripts, never in a base file, never for
 # ATLAS_MCP_BIND, never for R2 or R4. Every exemption is printed on every run, so the list of
@@ -107,6 +111,7 @@ check_refs() {  # check_refs <file>
 # R2 ----------------------------------------------------------------------------------------
 check_publishes() {  # check_publishes <compose file>
     local f=$1 bad=0 lineno raw entry resolved host target fields
+    is_compose "$f" || return 0   # not a compose file (check_binds.sh)
     while IFS=$'\t' read -r lineno raw; do
         case "$raw" in NETWORK_MODE_HOST|FLOW:*) continue ;; esac   # check_binds fails these
         entry=$(printf '%s' "$raw" | sed -E 's/^[[:space:]]*-[[:space:]]*//; s/[[:space:]]+#.*$//; s/^["'\'']//; s/["'\'']$//')
@@ -195,6 +200,7 @@ check_oss_upstreams() {  # check_oss_upstreams <Caddy file under deploy/oss/>
 # R5 ----------------------------------------------------------------------------------------
 check_oss_publishes() {  # check_oss_publishes <compose file under deploy/oss/>
     local f=$1 bad=0 lineno raw entry resolved target
+    is_compose "$f" || return 0   # not a compose file (check_binds.sh)
     while IFS=$'\t' read -r lineno raw; do
         case "$raw" in NETWORK_MODE_HOST|FLOW:*) continue ;; esac   # check_binds fails these
         entry=$(printf '%s' "$raw" | sed -E 's/^[[:space:]]*-[[:space:]]*//; s/[[:space:]]+#.*$//; s/^["'\'']//; s/["'\'']$//')
@@ -243,7 +249,7 @@ self_test() {
     local tmp rc=0
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' RETURN
-    mkdir -p "$tmp/deploy/homelab" "$tmp/deploy/oss/caddy" "$tmp/tools" "$tmp/mcp/app"
+    mkdir -p "$tmp/deploy/homelab" "$tmp/deploy/oss/caddy" "$tmp/deploy/openshift" "$tmp/tools" "$tmp/mcp/app"
     # t <0|1> <rule fn> <path relative to tmp> <content>
     t() {
         printf '%s\n' "$4" > "$tmp/$3"
@@ -271,6 +277,9 @@ self_test() {
     t 1 check_publishes p3.yml            $'services:\n  a:\n    ports:\n      - "8092:8092"'
     t 0 check_publishes p4.yml            $'services:\n  a:\n    ports:\n      - "${ATLAS_MCP_BIND:-${ATLAS_BIND:-127.0.0.1}}:8092:8092"\n      - "${ATLAS_MCP_TLS_BIND:-0.0.0.0}:8446:8446"'
     t 0 check_publishes deploy/p5.yml     $'services:\n  a:\n    ports:\n      - "8443:8443"  # bind-ok: TLS front door'
+    # A Kubernetes list is not a compose publish; the same item in a compose file still fails.
+    t 0 check_publishes deploy/openshift/k.yaml $'apiVersion: v1\nkind: Service\nspec:\n  ports:\n    - "8000"\n    - port: 8092'
+    t 1 check_publishes deploy/p6.yml     $'services:\n  a:\n    ports:\n      - "8000"'
     # R3
     t 1 check_bindvars deploy/homelab/m.env   $'ATLAS_MCP_BIND=0.0.0.0'
     t 1 check_bindvars deploy/homelab/m2.env  $'ATLAS_MCP_BIND=0.0.0.0  # tls-exempt: never honoured for atlas-mcp'
@@ -291,6 +300,7 @@ self_test() {
     t 1 check_oss_publishes deploy/oss/o2.yml $'services:\n  atlas-mcp:\n    ports:\n      - "${ATLAS_MCP_BIND:-127.0.0.1}:8092:8092"'
     t 0 check_oss_publishes deploy/oss/o3.yml $'services:\n  atlas-tls:\n    ports:\n      - "${ATLAS_TLS_BIND:-0.0.0.0}:${ATLAS_TLS_PORT:-443}:8443"  # bind-ok: the TLS ingress'
     t 0 check_oss_publishes deploy/oss/o4.yml $'services:\n  atlas-api:\n    expose:\n      - "8000"'
+    t 0 check_oss_publishes deploy/oss/o6.yaml $'apiVersion: v1\nkind: Service\nspec:\n  ports:\n    - "8000"'
     t 1 check_refs deploy/oss/o5.yml         $'services:\n  atlas-mcp:\n    environment:\n      ATLAS_BASE_URL: http://atlas-api:8000'
     # R6
     t 0 check_oss_upstreams deploy/oss/caddy/u1 $'a:8443 {\n\treverse_proxy https://atlas-api-origin:8443 {\n\t\timport origin_tls atlas-api-origin\n\t\timport upstream_headers\n\t}\n}'
@@ -306,7 +316,7 @@ self_test() {
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     case "${1:-}" in
         --self-test) self_test; exit $? ;;
-        -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,54p' "$0"; exit 0 ;;
         "") ;;
         *) echo "usage: $0 [--self-test]" >&2; exit 2 ;;
     esac
