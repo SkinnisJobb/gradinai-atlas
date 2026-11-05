@@ -39,6 +39,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import dsn  # noqa: E402
 import settings  # noqa: E402
 
 COUNT_SQL = {
@@ -110,6 +111,12 @@ def main() -> None:
             print(f"FATAL: no --db-url given, and {exc} Refusing to run "
                   "(no default DSN, by design).", file=sys.stderr)
             sys.exit(2)
+    try:
+        args.db_url = dsn.with_default_driver(args.db_url)  # TASK-1501: no driver -> psycopg2
+    except dsn.DsnError as exc:
+        print(f"FATAL: {exc}", file=sys.stderr)
+        sys.exit(2)
+
     print("=" * 78)
     print("strip attributes.frontmatter_raw and backlog/ source paths")
     print(f"DB:   {_redact(args.db_url)}")

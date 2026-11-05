@@ -68,6 +68,9 @@ the Job.
   which SQLAlchemy 2.1 resolves to psycopg 3; the image ships psycopg2. The `db-url` init
   container rewrites the scheme to `postgresql+psycopg2://` into a memory-backed `emptyDir`, and
   only it mounts the CNPG Secret. `base/db_url.py` explains it, and what removes it.
+- **The `db-url` bridge goes once the base references a release containing TASK-1501**, which
+  makes Atlas itself read a `postgresql://` URL as psycopg2 (`backend/dsn.py`); then
+  `ATLAS_DB_URL_FILE` points at the CNPG Secret's `fqdn-uri` directly.
 - **Probes are exec probes that verify the certificate.** The kubelet's HTTPS `httpGet` probe
   does not verify certificates. `base/https_probe.py`, run with the image's Python, dials the
   pod's own `:8443`, verifies the certificate and its name (`atlas-api.<namespace>.svc`) against

@@ -102,6 +102,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import dsn  # noqa: E402
 import settings  # noqa: E402
 
 DEFAULT_DIR = "/var/lib/atlas/backups"
@@ -138,9 +139,16 @@ _SECRETS_SEEN: list[str] = []
 
 def db_url() -> str:
     try:
-        url = settings.read_secret(settings.DB_URL_ENV)
+        raw = settings.read_secret(settings.DB_URL_ENV)
     except settings.SecretError as exc:
         raise BackupError(str(exc)) from None
+    _remember_secret(raw)
+    # TASK-1501: a URL with no driver (`postgresql://`) gets psycopg2 for SQLAlchemy (dsn.py).
+    # pg_dump/pg_restore never see it as a URL: `_conninfo` builds their conninfo from its parts.
+    try:
+        url = dsn.with_default_driver(raw)
+    except dsn.DsnError as exc:
+        raise BackupError(f"{settings.DB_URL_ENV}: {exc}") from None
     _remember_secret(url)
     return url
 

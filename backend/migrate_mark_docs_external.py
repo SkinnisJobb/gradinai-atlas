@@ -70,6 +70,7 @@ from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
 from models_graph import Node  # noqa: E402
+import dsn  # noqa: E402
 import settings  # noqa: E402
 
 # node_id -> the docs[].path this entry must carry `external: true` on.
@@ -192,6 +193,12 @@ def main() -> None:
             print(f"FATAL: no --db-url given, and {exc} Refusing to run "
                   "(no default DSN, by design).", file=sys.stderr)
             sys.exit(2)
+
+    try:
+        args.db_url = dsn.with_default_driver(args.db_url)  # TASK-1501: no driver -> psycopg2
+    except dsn.DsnError as exc:
+        print(f"FATAL: {exc}", file=sys.stderr)
+        sys.exit(2)
 
     print("=" * 78)
     print("ADR 0029 — mark the 5 external docs[] entries on live node rows")

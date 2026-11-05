@@ -1,7 +1,8 @@
 """Database wiring: the engine, the session factory, and the v0 Component/Gate ORM models.
 
 Split out of `app.py` (STORY-oss-04); the code is moved, not changed. `ATLAS_DB_URL` is read
-here, at import, through `settings.read_secret` (TASK-1349; see `_load_db_url`).
+here, at import, through `settings.read_secret` (TASK-1349; see `_load_db_url`), and a URL that
+names no driver gets psycopg2 (TASK-1501, `dsn.py`).
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ from contextlib import contextmanager
 from sqlalchemy import Integer, String, Text, ForeignKey, create_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
 
+import dsn
 import settings
 
 
@@ -128,14 +130,22 @@ _DB_URL_UNSET = (
 
 
 def _load_db_url() -> str:
-    """The DSN, or a RuntimeError naming the variable (never the value)."""
+    """The DSN, or a RuntimeError naming the variable (never the value).
+
+    A URL with no driver (`postgresql://`, `postgres://`, as CloudNativePG's `fqdn-uri` is) gets
+    `postgresql+psycopg2` (TASK-1501, `dsn.py`); one that names a driver is returned unchanged.
+    """
     try:
-        return settings.read_secret(settings.DB_URL_ENV)
+        raw = settings.read_secret(settings.DB_URL_ENV)
     except settings.SecretError as exc:
         msg = str(exc)
         if msg.startswith(settings.DB_URL_ENV + " is not set"):
             raise RuntimeError(_DB_URL_UNSET) from None
         raise RuntimeError(msg) from None
+    try:
+        return dsn.with_default_driver(raw)
+    except dsn.DsnError as exc:
+        raise RuntimeError(f"{settings.DB_URL_ENV}: {exc}") from None
 
 
 DB_URL = _load_db_url()
