@@ -260,6 +260,9 @@ upstreams from `CADDY_API_UPSTREAM` and `CADDY_MCP_UPSTREAM`). Whatever sits in 
   any other host gets `421`;
 - forward `Authorization` unchanged;
 - not buffer `/mcp/` responses, because MCP's streamable HTTP uses server-sent events;
+- route every `/mcp/` request of one MCP session to the same `atlas-mcp` replica, because its
+  sessions live in that process's memory; or set `ATLAS_MCP_STATELESS_HTTP=1` on `atlas-mcp`,
+  which keeps no session, so any replica answers any request;
 - set the real client address in `CF-Connecting-IP`, from an address range listed in
   `ATLAS_TRUSTED_PROXY_CIDRS`, so per-address sign-in throttling sees the client and not the
   proxy. Atlas ignores that header from anywhere else.

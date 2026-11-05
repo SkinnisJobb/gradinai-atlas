@@ -285,6 +285,7 @@ SPEC: dict = {
     "ATLAS_MCP_AUTH_CACHE_S": ("mcp", "int", lambda: "seconds",
                                lambda: int(in_source("mcp/app/caller_auth.py", "60"))),
     "ATLAS_MCP_ALLOW_SHARED_TOKEN": ("mcp", "flag", lambda: LENIENT, lambda: "0"),
+    "ATLAS_MCP_STATELESS_HTTP": ("mcp", "bool", STRICT_BOOL, lambda: "0"),
     "ATLAS_TOKEN": ("mcp", "secret", None, None),
     # audit
     "ATLAS_AUDIT_READS": ("audit", "bool", STRICT_BOOL, lambda: "0"),

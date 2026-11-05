@@ -10,7 +10,7 @@ audience: operations-security
 Atlas is configured with `ATLAS_*` environment variables. In the OSS install they live in
 `deploy/oss/.env` (copied from `deploy/oss/.env.example`), which compose reads for its own
 `${...}` and passes to atlas-api and atlas-mcp. This page lists every variable the code
-reads (97), grouped by area, and then the ones only the compose file reads.
+reads (98), grouped by area, and then the ones only the compose file reads.
 
 How to read an entry:
 
@@ -38,7 +38,7 @@ How to read an entry:
 - [TLS and the internal hop](#tls-and-the-internal-hop) (6)
 - [Retrieval add-on](#retrieval-add-on) (15)
 - [Optional features](#optional-features) (12)
-- [atlas-mcp](#atlas-mcp) (6)
+- [atlas-mcp](#atlas-mcp) (7)
 - [Read audit](#read-audit) (2)
 - [Backups](#backups) (2)
 - [Not for an install](#not-for-an-install) (5)
@@ -991,6 +991,7 @@ GitHub linking (off here: github_link). The three credentials are files only. *(
 | [`ATLAS_MCP_ALLOW_SHARED_TOKEN`](#atlas_mcp_allow_shared_token) | `0` | - | no | atlas-mcp |
 | [`ATLAS_MCP_AUTH_CACHE_S`](#atlas_mcp_auth_cache_s) | `60` | commented out | no | atlas-mcp |
 | [`ATLAS_MCP_ENABLE_DELETE`](#atlas_mcp_enable_delete) | `0` | commented out | no | atlas-mcp |
+| [`ATLAS_MCP_STATELESS_HTTP`](#atlas_mcp_stateless_http) | `0` | commented out | no | atlas-mcp |
 | [`ATLAS_TOKEN`](#atlas_token) | - | - | yes | atlas-mcp |
 
 ### `ATLAS_MCP_ALLOWED_HOSTS`
@@ -1038,6 +1039,16 @@ How long the door remembers that the API accepted a token, in seconds.
 Offer atlas_delete. Grants nothing: each call still needs the caller's own admin scope.
 
 - **Allowed:** on for 1/true/yes/on; anything else is off
+- **Default:** `0`
+- **OSS install:** not set; `.env.example` shows `1` commented out
+- **Secret:** no
+- **Read by:** atlas-mcp
+
+### `ATLAS_MCP_STATELESS_HTTP`
+
+Run more than one atlas-mcp replica behind a load balancer: 1 switches the MCP transport to stateless Streamable HTTP, so no session is kept in memory and any replica answers any request. Auth is unchanged: every request still carries the caller's own token. Unset or 0 keeps the stateful sessions, which is all a single replica needs.
+
+- **Allowed:** 1 or 0 (also true/false, yes/no, on/off)
 - **Default:** `0`
 - **OSS install:** not set; `.env.example` shows `1` commented out
 - **Secret:** no
