@@ -18,7 +18,11 @@ fails on it as `third-party-tag`.
 
 WHAT IS SCANNED. Every tracked file (git ls-files; a directory walk outside a checkout):
   - Dockerfiles / Containerfiles: each `FROM` (stage aliases and `scratch` skipped) and each
-    `COPY --from=<image>` that names an image rather than a stage;
+    `COPY --from=<image>` that names an image rather than a stage. A NAMED BUILD CONTEXT
+    (`docker build --build-context repo=.`, build-push-action's `build-contexts:`) is a local
+    directory, not an image: the Dockerfile declares it in a comment, `# build-context: repo`,
+    and `--from=repo` / `FROM repo` are then skipped like a stage (TASK-1483: mcp/ and
+    deploy/caddy/ reach the repository's LICENSE and NOTICE that way);
   - compose files: any tracked .yml/.yaml outside .github/ with a top-level `services:` key,
     so `docker-compose*.yml`, `mcp/docker-compose*.yml` and the `deploy/*.yml` overrides alike;
     each `image:` line (a `build:`-only service has no reference to pin);
@@ -136,9 +140,13 @@ def classify_action(ref: str) -> str:
     return "unpinned"
 
 
+BUILD_CONTEXT_RE = re.compile(r"^\s*#\s*build-context:\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*$", re.MULTILINE)
+
+
 def scan_dockerfile(path: str, text: str) -> list[Ref]:
     refs: list[Ref] = []
-    stages: set[str] = set()
+    # Declared named build contexts count as stages: a directory the build is handed, no image.
+    stages: set[str] = {m.group(1).lower() for m in BUILD_CONTEXT_RE.finditer(text)}
     # Join backslash continuations, remembering the line each instruction starts on.
     logical: list[tuple[int, str]] = []
     buf, start = "", 0
@@ -388,6 +396,16 @@ def self_test() -> int:
     got = [(r.line, r.ref, r.status) for r in scan_dockerfile("Dockerfile", df)]
     expect(got, [(2, f"golang:1.22@{d}", "ok"), (6, "nginx:1", "unpinned"),
                  (7, "python:3.12-slim", "unpinned")], "dockerfile scan")
+    # A declared named build context is skipped; an undeclared bare name is still an image.
+    df2 = (
+        "# build-context: repo\n"
+        f"FROM python:3.12-slim@{d}\n"
+        "COPY --from=repo LICENSE NOTICE /licenses/\n"
+        "COPY --from=other LICENSE /x/\n"
+    )
+    got = [(r.line, r.ref, r.status) for r in scan_dockerfile("Dockerfile", df2)]
+    expect(got, [(2, f"python:3.12-slim@{d}", "ok"), (4, "other", "floating")],
+           "dockerfile scan, named build context")
 
     compose = (
         "services:\n  db:\n    image: \"postgres:16\"  # comment\n"

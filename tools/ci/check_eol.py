@@ -5,7 +5,11 @@ WHAT IT CHECKS. Every runtime version the tracked tree names -- the Python of th
 (`FROM python:3.12-slim`), the Postgres of the compose files (`postgres:16`,
 `pgvector/pgvector:...-pg16`), the Caddy of deploy/caddy (`caddy:2.11.6`), and the Python and
 Node the workflows set up (`python-version:` / `node-version:`) -- is looked up in
-tools/ci/eol.json. The run FAILS when one is
+tools/ci/eol.json. The OpenShift images on Red Hat UBI (TASK-1483) count too: every `ubi9/...`
+base is RHEL 9 (`rhel`), `ubi9/python-312-minimal` is also Python 3.12, `ubi9/go-toolset:1.26` is
+Go 1.26 (the compiler of the Caddy binary: an unsupported Go stops getting standard-library
+fixes), and the Caddy that deploy/caddy/Dockerfile.ubi builds is its `ARG CADDY_VERSION=v2.x.y`,
+a build argument and not an image tag. The run FAILS when one is
 
   * past its end of security support, or within `margin_days` (183, six months) of it;
   * a cycle the table does not list (add it, with its date, from the source below);
@@ -59,6 +63,15 @@ IMAGE_RULES = (
     ("postgresql", re.compile(r"(?<![\w/])postgres:(\d+)")),
     ("postgresql", re.compile(r"\bpgvector/pgvector:[\w.]*-pg(\d+)")),
     ("caddy", re.compile(r"(?<![\w/])caddy:(\d+)")),
+    # Red Hat UBI bases (registry.access.redhat.com/ubi9/...). A rule with two groups joins them
+    # with a dot: python-312 is cycle 3.12.
+    ("rhel", re.compile(r"\bubi(\d+)/")),
+    ("python", re.compile(r"\bubi\d+/python-(\d)(\d+)")),
+    ("go", re.compile(r"\bubi\d+/go-toolset:(\d+\.\d+)")),
+)
+# Versions a Dockerfile takes as a build argument rather than an image tag, on `ARG` lines.
+ARG_RULES = (
+    ("caddy", re.compile(r"^\s*ARG\s+CADDY_VERSION=v?(\d+)\.")),
 )
 IMAGE_LINE = re.compile(r"^\s*(FROM\s|-?\s*image:)", re.IGNORECASE)
 # product -> regex with year, month, patch as groups 1-3; the policy is the table's `calver` entry.
@@ -101,13 +114,22 @@ def scan(root: Path, files: list[str]) -> list[tuple[str, str, str, int]]:
         for n, line in enumerate(text.splitlines(), 1):
             if line.lstrip().startswith("#"):
                 continue
+            if rules is IMAGE_RULES and "Dockerfile" in rel.rsplit("/", 1)[-1]:
+                for product, rx in ARG_RULES:
+                    for m in rx.finditer(line):
+                        found.append((product, cycle_of(m), rel, n))
             # Image rules look only at image references, so `postgres:5432` in a URL is not one.
             if rules is IMAGE_RULES and not IMAGE_LINE.match(line):
                 continue
             for product, rx in rules:
                 for m in rx.finditer(line):
-                    found.append((product, m.group(1), rel, n))
+                    found.append((product, cycle_of(m), rel, n))
     return found
+
+
+def cycle_of(m: re.Match) -> str:
+    """The cycle a rule matched: its groups joined with dots (`python-312` -> `3.12`)."""
+    return ".".join(g for g in m.groups() if g is not None)
 
 
 def scan_calver(root: Path, files: list[str]) -> list[tuple[str, str, str, int]]:
@@ -278,6 +300,29 @@ def self_test() -> int:
     ok = ok and not IMAGE_LINE.match("      ATLAS_DB_URL: postgresql://atlas@atlas-postgres:5432/atlas")
     ok = ok and sorted(rx) == [("caddy", "2"), ("postgresql", "16"), ("postgresql", "16"),
                                ("python", "3.12")]
+    # The UBI bases and the Caddy build argument (TASK-1483), end to end through scan() on the
+    # lines the Dockerfiles carry: a FROM per base, the ARG in Dockerfile.ubi, and an ARG of
+    # another name or in a non-Dockerfile that must not count.
+    import tempfile
+    ubi = ("FROM registry.access.redhat.com/ubi9/python-312-minimal:9.8@sha256:ab AS hardened-ubi\n"
+           "FROM registry.access.redhat.com/ubi9/go-toolset:1.26@sha256:cd AS builder\n"
+           "ARG CADDY_VERSION=v2.11.9\n"
+           "ARG XCADDY_VERSION=v0.4.7\n"
+           "FROM registry.access.redhat.com/ubi9/ubi-micro:9.8@sha256:ef\n"
+           "# FROM registry.access.redhat.com/ubi8/ubi-micro:8.10\n")
+    with tempfile.TemporaryDirectory() as tmp:
+        Path(tmp, "Dockerfile.ubi").write_text(ubi, encoding="utf-8")
+        Path(tmp, "notes.txt").write_text("ARG CADDY_VERSION=v3.0.0\n", encoding="utf-8")
+        got = sorted((p, c, n) for p, c, _f, n in scan(Path(tmp), ["Dockerfile.ubi", "notes.txt"]))
+    ok = ok and got == [("caddy", "2", 3), ("go", "1.26", 2), ("python", "3.12", 1),
+                        ("rhel", "9", 1), ("rhel", "9", 2), ("rhel", "9", 5)]
+    ubi_table = {"checked": "2026-10-01", "max_age_days": 120, "margin_days": 183, "products": {
+        "rhel": {"cycles": {"9": {"eol": "2032-05-31"}, "8": {"eol": "2027-03-01"}}},
+        "go": {"cycles": {"1.26": {"eol": None}}}}}
+    ubi_fails, _ = evaluate([("rhel", "9", "D", 1), ("go", "1.26", "D", 2), ("rhel", "8", "D", 3),
+                             ("go", "1.24", "D", 4)], ubi_table, today)
+    ok = ok and len(ubi_fails) == 2 and any("rhel 8 reaches" in f for f in ubi_fails) \
+        and any("go 1.24 is not in" in f for f in ubi_fails)
     cv = [(p, f"{m.group(1)}.{int(m.group(2))}.{m.group(3)}") for p, r in CALVER_RULES
           for m in r.finditer("    image: cloudflare/cloudflared:2026.07.3@sha256:ab")]
     ok = ok and cv == [("cloudflared", "2026.7.3")]
@@ -286,7 +331,8 @@ def self_test() -> int:
     new = evaluate_calver([("cloudflared", "2026.10.3", "p.yml", 1)], pol, dt.date(2026, 10, 25))
     nopol = evaluate_calver([("cloudflared", "2026.10.3", "p.yml", 1)], {}, dt.date(2026, 10, 25))
     ok = ok and len(old) == 1 and "116 days old" in old[0] and new == [] and len(nopol) == 1
-    print("self-test", "passed" if ok else f"FAILED: {fails} {warns} {fails2} {fails3} {rx} {cv} {old} {new}")
+    print("self-test", "passed" if ok else f"FAILED: {fails} {warns} {fails2} {fails3} {rx} {cv} {old} {new} "
+                                         f"{got} {ubi_fails}")
     return 0 if ok else 1
 
 

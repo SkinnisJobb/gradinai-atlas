@@ -6,6 +6,10 @@
 #                                       mcp/Dockerfile, deploy/caddy/Dockerfile), the same
 #                                       recipes the homelab and deploy/oss build. Building them
 #                                       also proves the hashed locks install (--require-hashes).
+#   atlas-api-hardened-ubi,             the OpenShift images that images.yml publishes on a release
+#   atlas-mcp-hardened-ubi,             (TASK-1483): backend/ and mcp/Dockerfile --target
+#   atlas-caddy-ubi                     hardened-ubi and deploy/caddy/Dockerfile.ubi, reported under
+#                                       images.yml's names, so their SBOMs ride on the release too
 #   atlas-postgres,                     built here too: deploy/postgres/Dockerfile (postgres:16,
 #   atlas-postgres-pgvector             the homelab) and pgvector.Dockerfile (deploy/oss), the
 #                                       upstream images with gosu replaced (see that Dockerfile)
@@ -151,6 +155,42 @@ jobs:
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-caddy' || '' }}
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-caddy' || '' }}
 
+      # The OpenShift images (TASK-1483), on images.yml's cache scopes (the same recipes). The mcp
+      # and Caddy builds are handed the repository root as the named context `repo`, for the
+      # LICENSE and NOTICE in their /licenses.
+      - name: build atlas-api (hardened-ubi)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          target: hardened-ubi
+          tags: atlas-api:hardened-ubi
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-api-hardened-ubi' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-api-hardened-ubi' || '' }}
+
+      - name: build atlas-mcp (hardened-ubi)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: mcp
+          target: hardened-ubi
+          build-contexts: repo=.
+          tags: atlas-mcp:hardened-ubi
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-mcp-hardened-ubi' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-mcp-hardened-ubi' || '' }}
+
+      - name: build atlas-caddy-ubi (deploy/caddy/Dockerfile.ubi, OpenShift's atlas-tls)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/caddy
+          file: deploy/caddy/Dockerfile.ubi
+          build-contexts: repo=.
+          tags: atlas-caddy:ubi
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-tls-ubi' || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-tls-ubi' || '' }}
+
       - name: build atlas-postgres (deploy/postgres, the homelab's Postgres)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -181,6 +221,9 @@ jobs:
           scan atlas-api atlas-api:ci
           scan atlas-mcp atlas-mcp:ci
           scan atlas-caddy atlas-caddy:ci
+          scan atlas-api-hardened-ubi atlas-api:hardened-ubi
+          scan atlas-mcp-hardened-ubi atlas-mcp:hardened-ubi
+          scan atlas-caddy-ubi atlas-caddy:ubi
           scan atlas-postgres atlas-postgres:ci
           scan atlas-postgres-pgvector atlas-postgres-pgvector:ci
           # Every pulled image the compose files ship, exactly as referenced (tag@digest).

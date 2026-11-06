@@ -168,10 +168,11 @@ every door and leg; the decisions:
   `tools/ci/check_oss_headers.py` (which fails if the two copies differ). The Route has no
   `hsts_header` annotation, so the header is sent once.
 - **No ACME.** `auto_https off`: every certificate is a file, and Caddy has no `:80` listener.
-- **The image.** No release has published the UBI build of Caddy (`deploy/caddy/Dockerfile.ubi`)
-  yet, so the base names the released Compose Caddy (`gradinai-atlas-tls`, Alpine, with an
-  unused Cloudflare DNS plugin), which runs this Caddyfile unchanged under an arbitrary UID. The
-  overlay moves it to `gradinai-atlas-tls-ubi` once a release carries it.
+- **The image.** The base names the released Compose Caddy (`gradinai-atlas-tls`, Alpine, with
+  an unused Cloudflare DNS plugin), which runs this Caddyfile unchanged under an arbitrary UID.
+  From `v0.0.2-alpha` on, a release also publishes the UBI build of Caddy
+  (`deploy/caddy/Dockerfile.ubi`) as `gradinai-atlas-tls-ubi`; the overlay moves to it
+  ("Images and releases" below).
 - **Probes are not exec probes**: the image has no shell, Python or HTTP client. Startup and
   liveness are `tcpSocket :8443`; readiness is an HTTPS `httpGet` of `/healthz`, which the
   Caddyfile's catch-all `:8443` site sends through its verified leg to atlas-api, so a front that
@@ -201,8 +202,19 @@ digest that release published (`ghcr.io/<owner>/gradinai-atlas-api`, listed in t
 `release-images.env`; see [Releases](../../docs/oss/RELEASES.md)). Its registry,
 `registry.example.com/gradinai-atlas`, is a placeholder, because the repository names no
 account: **every overlay sets the image**, to GHCR or to the organisation's mirror of the same
-digest. Task 1.4 publishes the UBI build (`gradinai-atlas-api-ubi`), which is the one to run on
-OpenShift. Three things belong to one release and move together in the overlay:
+digest.
+
+**The `-ubi` images are the ones to run on OpenShift.** From `v0.0.2-alpha` on, every release
+publishes them beside the Compose images (task 1.4; [Releases](../../docs/oss/RELEASES.md#what-a-release-publishes)):
+`gradinai-atlas-api-ubi`, `gradinai-atlas-mcp-ubi` and `gradinai-atlas-tls-ubi`, on Red Hat UBI 9,
+non-root under any UID in group 0, checked with Red Hat's preflight, with `/licenses` and their
+own labels. An overlay switches to them by changing `newName` to the `-ubi` name; the `name:`
+it matches stays the base's (`gradinai-atlas-api`, `-mcp`, `-tls`), because that is what the
+manifests say. Their digests are the release's `release-images.env` lines
+`ATLAS_IMAGE_API_UBI`, `ATLAS_IMAGE_MCP_UBI` and `ATLAS_IMAGE_TLS_UBI` (the part after `@`); the
+lines without `_UBI` are the Compose images. The example overlay still names the `v0.0.1-alpha`
+Compose images until it is moved in its own change. Three things belong to one release and move
+together in the overlay:
 
 ```yaml
 images:

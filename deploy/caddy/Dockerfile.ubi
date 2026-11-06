@@ -35,15 +35,38 @@ ENV CGO_ENABLED=0
 RUN go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}" \
  && "$(go env GOPATH)/bin/xcaddy" build "${CADDY_VERSION}" --output /tmp/caddy \
  && /tmp/caddy version
+# Caddy's own licence (Apache-2.0), from the module the binary was built from, for /licenses.
+RUN cp "$(go env GOMODCACHE)/github.com/caddyserver/caddy/v2@${CADDY_VERSION}/LICENSE" /tmp/caddy-LICENSE
 
 FROM registry.access.redhat.com/ubi9/ubi-micro:9.8@sha256:6d9eff186ce3ccf399c1835265e7fd3f83bd112cc3422da2d39fd44e234aab59
 COPY --from=builder /tmp/caddy /usr/bin/caddy
 RUN mkdir -p /config /data /etc/caddy \
  && chgrp 0 /config /data \
  && chmod 0775 /config /data
+# /licenses and the certification labels (TASK-1483; `preflight check container`): this
+# repository's LICENSE and NOTICE (the build recipe and configuration) and Caddy's licence. The
+# repository root is outside this build context (deploy/caddy/), so the build is handed it as the
+# NAMED BUILD CONTEXT `repo` (`--build-context repo=.` from the root; images.yml's
+# `build-contexts:`); the comment below declares it to tools/ci/check_pins.py. The ARGs come
+# after the last RUN, so a new version re-labels the image without rebuilding a layer.
+# build-context: repo
+COPY --from=repo LICENSE NOTICE /licenses/
+COPY --from=builder /tmp/caddy-LICENSE /licenses/caddy/LICENSE
 ENV XDG_CONFIG_HOME=/config \
     XDG_DATA_HOME=/data \
     HOME=/tmp
 USER 10001:0
 EXPOSE 8443 9443
 CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+ARG ATLAS_VERSION=dev
+ARG ATLAS_RELEASE=dev
+LABEL name="gradinai-atlas-tls-ubi" \
+      vendor="gradinai-atlas" \
+      maintainer="gradinai-atlas" \
+      version="${ATLAS_VERSION}" \
+      release="${ATLAS_RELEASE}" \
+      summary="Atlas TLS front (atlas-tls, Caddy) on Red Hat UBI 9" \
+      description="Stock Caddy, no plugin and no ACME, terminating the re-encrypt Route and the service-CA legs to atlas-api and atlas-mcp, non-root under any UID in group 0, for OpenShift." \
+      io.k8s.display-name="Atlas TLS front (atlas-tls)" \
+      io.k8s.description="Stock Caddy, no plugin and no ACME, terminating the re-encrypt Route and the service-CA legs to atlas-api and atlas-mcp, non-root under any UID in group 0, for OpenShift." \
+      org.opencontainers.image.licenses="Apache-2.0"

@@ -8,36 +8,45 @@
 #   atlas-postgres  deploy/postgres/pgvector.Dockerfile    atlas-postgres
 #   atlas-tls       deploy/caddy/Dockerfile                atlas-tls (Caddy + the Cloudflare DNS plugin)
 #
-# and, built and scanned but not yet published (docs/oss/research/openshift-aro.md, Story 1), the
-# OpenShift images on Red Hat UBI 9 that the compose install does not use:
+# and the OpenShift images on Red Hat UBI 9 (docs/oss/research/openshift-aro.md, Story 1), which
+# the compose install does not use; published since TASK-1483 (v0.0.2-alpha):
 #
 #   atlas-api-ubi   backend/Dockerfile --target hardened-ubi   (TASK-1476)
-#   atlas-mcp-ubi   mcp/Dockerfile --target hardened-ubi       (TASK-1477)
-#   atlas-tls-ubi   deploy/caddy/Dockerfile.ubi                (TASK-1478; stock Caddy, no plugin)
+#   atlas-mcp-ubi   mcp/Dockerfile --target hardened-ubi       (TASK-1477; + build context `repo`)
+#   atlas-tls-ubi   deploy/caddy/Dockerfile.ubi                (TASK-1478; stock Caddy, no plugin;
+#                                                               + build context `repo`)
+#
+# The two `repo` builds are handed the repository root as the named build context `repo`, for
+# the LICENSE and NOTICE their /licenses carries (their own contexts are mcp/ and deploy/caddy/).
 #
 # The one image the OSS compose PULLS, the gateway profile's AgentGateway, is upstream and pinned
 # tag@digest in the compose file; it is not republished (docs/oss/RELEASES.md, "What a release
 # publishes"). The hardened api/mcp/backup images are non-root, UID-agnostic, with a HEALTHCHECK;
 # the default stage the homelab builds is not touched by this workflow.
 #
-#   build-scan  every PR touching the images' inputs, every v* tag, by hand: build all five,
+#   build-scan  every PR touching the images' inputs, every v* tag, by hand: build all eight,
 #               check the image config of api, mcp and backup (numeric non-root USER,
 #               HEALTHCHECK, starts a process under an arbitrary UID in group 0; Postgres and
 #               Caddy run as their upstream images do, outside OSS-18's scope), then Trivy and
 #               THE SAME GATE as sbom-sca.yml (tools/ci/sca_gate.py + tools/ci/sca-accepted.json:
 #               a fixable CRITICAL or HIGH fails, an accepted one warns until its date, one with
 #               no fix is reported). The dependencies are the hashed locks (--require-hashes).
+#               The three -ubi images also go through Red Hat's `preflight check container`
+#               (pinned by version and sha256, no Red Hat account, against a throwaway local
+#               registry): see that step for which of its checks block and why.
 #   publish     v* tags only (the tag push, or `gh workflow run images.yml --ref <tag>` to run it
 #               again), after build-scan passed. First the release check: the tag is
 #               semver (vMAJOR.MINOR.PATCH, optionally -prerelease) and docs/oss/RELEASES.md has a
-#               `## <tag>` section. Then push all five to ghcr.io/<owner>/gradinai-atlas-<name>,
-#               tagged with the git tag, and write each `name:tag@digest` (job summary, outputs,
-#               and `release-images.env`, the five lines an install pastes into .env for
-#               deploy/oss/release.yml). The only job with `packages: write`. The push rebuilds
+#               `## <tag>` section. Then push all eight to ghcr.io/<owner>/gradinai-atlas-<name>
+#               (the five, plus api-ubi, mcp-ubi and tls-ubi), tagged with the git tag, and write
+#               each `name:tag@digest` (job summary, outputs, and `release-images.env`: the five
+#               lines an install pastes into .env for deploy/oss/release.yml, then the three
+#               ATLAS_IMAGE_*_UBI lines an OpenShift overlay takes its digests from, which
+#               compose reads nothing of). The only job with `packages: write`. The push rebuilds
 #               from build-scan's layer cache (type=gha, same scope), so it pushes the layers
 #               that were scanned.
 #   release     after publish: a DRAFT GitHub release for the tag, its notes the tag's section
-#               of docs/oss/RELEASES.md plus the five references, `release-images.env` attached.
+#               of docs/oss/RELEASES.md plus the eight references, `release-images.env` attached.
 #               A -prerelease tag makes a prerelease. Re-running updates the notes and replaces
 #               the asset. The only job with `contents: write`. A draft, because a release made
 #               with the job's own token triggers no workflow: a maintainer publishes it
@@ -66,6 +75,8 @@ on:
       - "deploy/postgres/**"
       - "deploy/caddy/**"
       - "deploy/openshift/base/caddy/**"
+      - "LICENSE"
+      - "NOTICE"
       - "docs/oss/RELEASES.md"
       - "tools/ci/sca_gate.py"
       - "tools/ci/sca-accepted.json"
@@ -88,6 +99,14 @@ env:
   TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db,ghcr.io/aquasecurity/trivy-db
   TRIVY_NO_PROGRESS: "true"
   TRIVY_DISABLE_VEX_NOTICE: "true"
+  # Red Hat's preflight (github.com/redhat-openshift-ecosystem/openshift-preflight), the release
+  # binary checked against this sha256 (the release's own asset digest). No Red Hat account: the
+  # checks run locally and nothing is submitted.
+  PREFLIGHT_VERSION: 1.21.2
+  PREFLIGHT_SHA256: 7e33916cafb2633afe81ef2beb62d2bb53b441f1dd794c7e8578ce22dcc1948b
+  # The throwaway registry preflight pulls the -ubi images from (it reads a registry, not the
+  # docker daemon), tag@digest like every image (tools/ci/check_pins.py).
+  PREFLIGHT_REGISTRY_IMAGE: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
 
 jobs:
   build-scan:
@@ -186,13 +205,18 @@ jobs:
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-backup' || '' }}
 
       # OpenShift's API image (TASK-1476): `hardened` on ubi9/python-312-minimal. Opt-in, built here
-      # only; its `base` layers are the ones the hardened build above just made.
+      # only; its `base` layers are the ones the hardened build above just made. The two build
+      # args are its `version` and `release` labels (TASK-1483), set as publish sets them; they
+      # come after the stage's last RUN, so they change no layer.
       - name: build atlas-api (hardened-ubi)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: backend/Dockerfile
           target: hardened-ubi
+          build-args: |
+            ATLAS_VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'ci' }}
+            ATLAS_RELEASE=${{ github.sha }}
           tags: atlas-api:hardened-ubi
           load: true
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-api-hardened-ubi' || '' }}
@@ -204,6 +228,10 @@ jobs:
         with:
           context: mcp
           target: hardened-ubi
+          build-contexts: repo=.
+          build-args: |
+            ATLAS_VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'ci' }}
+            ATLAS_RELEASE=${{ github.sha }}
           tags: atlas-mcp:hardened-ubi
           load: true
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-mcp-hardened-ubi' || '' }}
@@ -235,6 +263,10 @@ jobs:
         with:
           context: deploy/caddy
           file: deploy/caddy/Dockerfile.ubi
+          build-contexts: repo=.
+          build-args: |
+            ATLAS_VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'ci' }}
+            ATLAS_RELEASE=${{ github.sha }}
           tags: atlas-tls:ubi
           load: true
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-tls-ubi' || '' }}
@@ -436,12 +468,116 @@ jobs:
           if grep -q ':80"' <<<"$ubi_log"; then fail "caddy opened a :80 listener"; fi
           echo "$img: the OpenShift Caddyfile serves as uid $(docker exec ubi-tls id -u) with a read-only root"
 
+      - name: cache preflight
+        id: preflight-bin
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/bin/preflight
+          key: preflight-bin-${{ env.PREFLIGHT_VERSION }}-${{ env.PREFLIGHT_SHA256 }}
+
+      - name: download preflight (checksum verified)
+        if: steps.preflight-bin.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          f=preflight-linux-amd64
+          curl -fsSL --retry 3 -o "$f" "https://github.com/redhat-openshift-ecosystem/openshift-preflight/releases/download/${PREFLIGHT_VERSION}/$f"
+          echo "$PREFLIGHT_SHA256  $f" | sha256sum -c -
+          install -m 0755 "$f" bin/preflight
+
+      # RED HAT PREFLIGHT (TASK-1483): `preflight check container`, the container-certification
+      # policy, on each -ubi image. Preflight reads a registry, not the docker daemon, so each
+      # image is pushed to a throwaway registry on the runner's loopback (plain HTTP, hence
+      # --insecure) under a unique tag. Nothing is submitted to Red Hat; no account is needed.
+      #   BLOCKING (a failure or an error fails the job): the checks about running on OpenShift
+      #   and about what the image is.
+      #     RunAsNonRoot           the restricted SCC refuses a root USER
+      #     BasedOnUbi             the reason these images exist: a base Red Hat supports
+      #     HasModifiedFiles       no RPM-installed file changed in a later layer, so the image
+      #                            is still what Red Hat's errata (and scanners) describe
+      #     HasNoProhibitedPackages  only UBI-redistributable packages
+      #     HasLicense             /licenses carries the terms (LICENSE, NOTICE)
+      #     HasRequiredLabel       name, vendor, version, release, summary, description
+      #   REPORTED (a warning): the rest, which are about a certified catalogue listing or the
+      #   push rather than the image running: HasUniqueTag (a property of the tag pushed; publish
+      #   pushes the release tag), LayerCountAcceptable (fewer than 40 layers), and the
+      #   trademark checks HasNoProhibitedLabels and HasProhibitedContainerName. Atlas does not
+      #   certify; a check a newer preflight adds is reported too until it is classified here.
+      #   A blocking check that does not run at all (renamed by a newer preflight) fails.
+      # Also checked: each image's `name` label is the package it is published as.
+      - name: "check: Red Hat preflight on the -ubi images"
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/preflight"
+          mkdir -p "$out"
+          preflight --version
+          docker run -d --name pf-registry -p 127.0.0.1::5000 "$PREFLIGHT_REGISTRY_IMAGE" >/dev/null
+          trap 'docker rm -f pf-registry >/dev/null 2>&1 || true' EXIT
+          port=$(docker port pf-registry 5000/tcp | sed -n '1s/.*://p')
+          for _ in $(seq 1 30); do curl -fsS "http://127.0.0.1:$port/v2/" >/dev/null 2>&1 && break; sleep 1; done
+          blocking=(RunAsNonRoot BasedOnUbi HasModifiedFiles HasNoProhibitedPackages HasLicense HasRequiredLabel)
+          echo "## Red Hat preflight $PREFLIGHT_VERSION (blocking: ${blocking[*]})" >> "$GITHUB_STEP_SUMMARY"
+          bad=0
+          # The local image and the package it is published as, side by side (no `a=b` pairs:
+          # gitleaks' generic-api-key rule reads those as a key).
+          imgs=(atlas-api:hardened-ubi atlas-mcp:hardened-ubi atlas-tls:ubi)
+          pkgs=(gradinai-atlas-api-ubi gradinai-atlas-mcp-ubi gradinai-atlas-tls-ubi)
+          for i in 0 1 2; do
+            img=${imgs[$i]}; name=${pkgs[$i]}
+            label=$(docker image inspect -f '{{index .Config.Labels "name"}}' "$img")
+            [ "$label" = "$name" ] || { echo "::error::$img: label name is '$label', not $name"; bad=1; }
+            ref="127.0.0.1:$port/$name:ci-${GITHUB_SHA::12}"
+            docker tag "$img" "$ref"
+            docker push -q "$ref" >/dev/null
+            rc=0
+            preflight check container "$ref" --insecure --artifacts "$out/$name" \
+              > "$out/$name.json" 2> "$out/$name.log" || rc=$?
+            echo "$name: preflight exit $rc"
+            python3 - "$out/$name.json" "$name" "${blocking[@]}" <<'PY' || { bad=1; tail -n 30 "$out/$name.log" || true; }
+          import json, os, sys
+          path, name, *blocking = sys.argv[1:]
+          with open(path, encoding="utf-8") as fh:
+              results = json.load(fh)["results"]
+          status = {c["name"]: (kind, c) for kind in ("passed", "failed", "errors")
+                    for c in (results.get(kind) or [])}
+          fail, rows = False, []
+          for check, (kind, c) in sorted(status.items()):
+              rows.append(f"| {name} | {check} | {kind} | {'blocking' if check in blocking else 'reported'} |")
+              if kind == "passed":
+                  print(f"{name}: passed {check}")
+                  continue
+              msg = f"{name}: {kind} {check}: {c.get('description', '')} {c.get('suggestion') or c.get('help') or ''}".strip()
+              if check in blocking:
+                  print(f"::error::{msg}")
+                  fail = True
+              else:
+                  print(f"::warning::{msg} (reported, not blocking)")
+          for check in blocking:
+              if check not in status:
+                  print(f"::error::{name}: the blocking check {check} did not run")
+                  fail = True
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n| image | check | result | policy |\n|---|---|---|---|\n" + "\n".join(rows) + "\n")
+          sys.exit(1 if fail else 0)
+          PY
+          done
+          [ "$bad" = 0 ]
+
+      - name: upload the preflight results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: images-preflight
+          path: ${{ runner.temp }}/preflight
+          if-no-files-found: warn
+          retention-days: 30
+
       # The report names are what an `in` list in tools/ci/sca-accepted.json matches, so an image
       # built from the same recipe as one in sbom-sca.yml is reported under sbom-sca's name: one
       # acceptance then covers both runs, and sbom-sca's --full-scan knows every name.
       # atlas-postgres (pgvector.Dockerfile) is atlas-postgres-pgvector (sbom-sca's atlas-postgres is
       # the homelab's postgres:16); atlas-tls (deploy/caddy) is atlas-caddy. No --full-scan here:
-      # this run sees five images, so an acceptance for an image it does not scan is skipped.
+      # this run sees eight images, so an acceptance for an image it does not scan is skipped.
       - name: scan the images
         run: |
           set -euo pipefail
@@ -482,6 +618,9 @@ jobs:
       backup-digest: ${{ steps.backup.outputs.digest }}
       postgres-digest: ${{ steps.postgres.outputs.digest }}
       tls-digest: ${{ steps.tls.outputs.digest }}
+      api-ubi-digest: ${{ steps.api-ubi.outputs.digest }}
+      mcp-ubi-digest: ${{ steps.mcp-ubi.outputs.digest }}
+      tls-ubi-digest: ${{ steps.tls-ubi.outputs.digest }}
     defaults:
       run:
         shell: bash
@@ -506,7 +645,7 @@ jobs:
         run: |
           set -euo pipefail
           owner=${GITHUB_REPOSITORY_OWNER,,}
-          for n in api mcp backup postgres tls; do
+          for n in api mcp backup postgres tls api-ubi mcp-ubi tls-ubi; do
             echo "$n=ghcr.io/$owner/gradinai-atlas-$n" >> "$GITHUB_OUTPUT"
           done
 
@@ -595,9 +734,75 @@ jobs:
             org.opencontainers.image.version=${{ github.ref_name }}
           cache-from: type=gha,scope=atlas-tls-release
 
-      # The five references, tag AND digest, as the job summary and as release-images.env: the
-      # lines an install pastes into .env for deploy/oss/release.yml (variable names as in
-      # .env.example's "Released images" block).
+      # The OpenShift images (TASK-1483), from build-scan's cache scopes, so the scanned and
+      # preflight-checked layers are the ones pushed. `version` and `release` are the tag and the
+      # commit (their labels; build-scan set the same).
+      - name: push atlas-api-ubi
+        id: api-ubi
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: backend/Dockerfile
+          target: hardened-ubi
+          build-args: |
+            ATLAS_VERSION=${{ github.ref_name }}
+            ATLAS_RELEASE=${{ github.sha }}
+          push: true
+          tags: ${{ steps.names.outputs.api-ubi }}:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+            url=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=atlas-api-hardened-ubi
+
+      - name: push atlas-mcp-ubi
+        id: mcp-ubi
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: mcp
+          target: hardened-ubi
+          build-contexts: repo=.
+          build-args: |
+            ATLAS_VERSION=${{ github.ref_name }}
+            ATLAS_RELEASE=${{ github.sha }}
+          push: true
+          tags: ${{ steps.names.outputs.mcp-ubi }}:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+            url=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=atlas-mcp-hardened-ubi
+
+      - name: push atlas-tls-ubi
+        id: tls-ubi
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/caddy
+          file: deploy/caddy/Dockerfile.ubi
+          build-contexts: repo=.
+          build-args: |
+            ATLAS_VERSION=${{ github.ref_name }}
+            ATLAS_RELEASE=${{ github.sha }}
+          push: true
+          tags: ${{ steps.names.outputs.tls-ubi }}:${{ github.ref_name }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.licenses=Apache-2.0
+            url=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=atlas-tls-ubi
+
+      # The eight references, tag AND digest, as the job summary and as release-images.env: the
+      # five lines an install pastes into .env for deploy/oss/release.yml (variable names as in
+      # .env.example's "Released images" block), then the three ATLAS_IMAGE_*_UBI lines, which
+      # compose reads nothing of: an OpenShift overlay copies its digests from them
+      # (deploy/openshift/README.md, "Images and releases"). install-smoke's upgrade job takes
+      # exactly the five compose lines and ignores these.
       - name: digests and release-images.env
         env:
           API: ${{ steps.names.outputs.api }}@${{ steps.api.outputs.digest }}
@@ -605,6 +810,9 @@ jobs:
           BACKUP: ${{ steps.names.outputs.backup }}@${{ steps.backup.outputs.digest }}
           POSTGRES: ${{ steps.names.outputs.postgres }}@${{ steps.postgres.outputs.digest }}
           TLS: ${{ steps.names.outputs.tls }}@${{ steps.tls.outputs.digest }}
+          API_UBI: ${{ steps.names.outputs.api-ubi }}@${{ steps.api-ubi.outputs.digest }}
+          MCP_UBI: ${{ steps.names.outputs.mcp-ubi }}@${{ steps.mcp-ubi.outputs.digest }}
+          TLS_UBI: ${{ steps.names.outputs.tls-ubi }}@${{ steps.tls-ubi.outputs.digest }}
         run: |
           set -euo pipefail
           ref() { local repo=${1%@*} digest=${1#*@}; echo "$repo:$GITHUB_REF_NAME@$digest"; }
@@ -618,6 +826,10 @@ jobs:
             echo "ATLAS_IMAGE_BACKUP=$(ref "$BACKUP")"
             echo "ATLAS_IMAGE_POSTGRES=$(ref "$POSTGRES")"
             echo "ATLAS_IMAGE_TLS=$(ref "$TLS")"
+            echo "# OpenShift (deploy/openshift): the UBI images, for an overlay's images: entries."
+            echo "ATLAS_IMAGE_API_UBI=$(ref "$API_UBI")"
+            echo "ATLAS_IMAGE_MCP_UBI=$(ref "$MCP_UBI")"
+            echo "ATLAS_IMAGE_TLS_UBI=$(ref "$TLS_UBI")"
           } > "$out"
           # Every line carries a digest: a failed push output would leave `@` with nothing after.
           # The second grep has no -q, so it reads to the end and its writer never meets SIGPIPE
@@ -663,7 +875,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # The notes are the tag's section of RELEASES.md (its `## <tag>` heading up to the next
-      # `## `), then the five image references. The token is the job's own, read by gh from GH_TOKEN.
+      # `## `), then the eight image references. The token is the job's own, read by gh from GH_TOKEN.
       - name: create or update the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -672,6 +884,9 @@ jobs:
           BACKUP_DIGEST: ${{ needs.publish.outputs.backup-digest }}
           POSTGRES_DIGEST: ${{ needs.publish.outputs.postgres-digest }}
           TLS_DIGEST: ${{ needs.publish.outputs.tls-digest }}
+          API_UBI_DIGEST: ${{ needs.publish.outputs.api-ubi-digest }}
+          MCP_UBI_DIGEST: ${{ needs.publish.outputs.mcp-ubi-digest }}
+          TLS_UBI_DIGEST: ${{ needs.publish.outputs.tls-ubi-digest }}
         run: |
           set -euo pipefail
           tag=$GITHUB_REF_NAME
@@ -687,6 +902,10 @@ jobs:
             echo "ATLAS_IMAGE_BACKUP=ghcr.io/$owner/gradinai-atlas-backup:$tag@$BACKUP_DIGEST"
             echo "ATLAS_IMAGE_POSTGRES=ghcr.io/$owner/gradinai-atlas-postgres:$tag@$POSTGRES_DIGEST"
             echo "ATLAS_IMAGE_TLS=ghcr.io/$owner/gradinai-atlas-tls:$tag@$TLS_DIGEST"
+            echo "# OpenShift (deploy/openshift): the UBI images, for an overlay's images: entries."
+            echo "ATLAS_IMAGE_API_UBI=ghcr.io/$owner/gradinai-atlas-api-ubi:$tag@$API_UBI_DIGEST"
+            echo "ATLAS_IMAGE_MCP_UBI=ghcr.io/$owner/gradinai-atlas-mcp-ubi:$tag@$MCP_UBI_DIGEST"
+            echo "ATLAS_IMAGE_TLS_UBI=ghcr.io/$owner/gradinai-atlas-tls-ubi:$tag@$TLS_UBI_DIGEST"
           } > "$env_file"
           # No -q on the second grep, so a line without a digest cannot pass on SIGPIPE (TASK-1504).
           if grep '^ATLAS_IMAGE_' "$env_file" | grep -vE '@sha256:[0-9a-f]{64}$' > /dev/null; then
@@ -700,6 +919,8 @@ jobs:
             echo ""
             echo "Pinned by tag and digest. Paste \`release-images.env\` (attached) into \`deploy/oss/.env\` and add"
             echo "\`release.yml\` to the compose files; [the procedure]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$tag/docs/oss/RELEASES.md#upgrading-with-released-images)."
+            echo "The three \`*_UBI\` lines are the OpenShift images, for an overlay's \`images:\` entries; compose reads none of them"
+            echo "([deploy/openshift/README.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$tag/deploy/openshift/README.md#images-and-releases))."
             echo ""
             echo '```'
             grep '^ATLAS_IMAGE_' "$env_file"

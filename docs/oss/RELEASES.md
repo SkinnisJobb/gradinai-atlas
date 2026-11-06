@@ -44,15 +44,36 @@ and only then publishes them to the GitHub container registry, each tagged with 
 | `ghcr.io/<owner>/gradinai-atlas-postgres` | `deploy/postgres/pgvector.Dockerfile` (pgvector on PostgreSQL 16, `gosu` replaced, no `apt`) | `atlas-postgres` |
 | `ghcr.io/<owner>/gradinai-atlas-tls` | `deploy/caddy/Dockerfile` (Caddy with the Cloudflare DNS plugin) | `atlas-tls` |
 
+From `v0.0.2-alpha` on, a release also publishes the **OpenShift images**, on Red Hat's Universal
+Base Image 9 (UBI). The Compose install does not use them; the OpenShift manifests do
+([deploy/openshift/README.md](../../deploy/openshift/README.md#images-and-releases)):
+
+| Image | Built from | Used by (`deploy/openshift`) |
+|---|---|---|
+| `ghcr.io/<owner>/gradinai-atlas-api-ubi` | `backend/Dockerfile`, target `hardened-ubi` (`ubi9/python-312-minimal`) | `atlas-api`, the migrate Job, the audit CronJob |
+| `ghcr.io/<owner>/gradinai-atlas-mcp-ubi` | `mcp/Dockerfile`, target `hardened-ubi` (`ubi9/python-312-minimal`) | `atlas-mcp` |
+| `ghcr.io/<owner>/gradinai-atlas-tls-ubi` | `deploy/caddy/Dockerfile.ubi` (stock Caddy built on `ubi9/go-toolset`, run on `ubi9/ubi-micro`; no plugin) | `atlas-tls` |
+
+Each carries its licence terms in `/licenses` and its own `name`, `vendor`, `version` (the
+release tag), `release` (the commit), `summary` and `description` labels. Besides the
+vulnerability gate, these three go through Red Hat's `preflight check container` on every pull
+request that touches them and on the tag: a failure of the checks that matter for running on
+OpenShift (`RunAsNonRoot`, `BasedOnUbi`, `HasModifiedFiles`, `HasNoProhibitedPackages`,
+`HasLicense`, `HasRequiredLabel`) stops the release, and the others are reported (the comment
+on that step in `images.yml` says why). Preflight runs locally with no Red Hat account; nothing
+is submitted for certification.
+
 **Not republished:** the gateway profile's `atlas-gateway` runs the upstream AgentGateway image,
 which `docker-compose.yml` already pins by tag and `@sha256` digest. Pulling it by digest gives
 every install the same bytes, so a copy under the Atlas name would add nothing. The upstream bases
-of the five images above (Python, pgvector, Caddy) are pinned the same way in their Dockerfiles.
+of the images above (Python, pgvector, Caddy, UBI) are pinned the same way in their Dockerfiles.
 
 The workflow then writes a **draft GitHub release** for the tag: the tag's section of this page as
-its notes, the five image references (tag and digest), and the file `release-images.env` with the
-five lines an install pastes into its `.env`. A maintainer publishes the draft, and publishing it
-attaches the SBOMs (`sbom-sca.yml`).
+its notes, the image references (tag and digest), and the file `release-images.env`. Its first
+five lines are the ones a Compose install pastes into its `.env`; the three after them,
+`ATLAS_IMAGE_API_UBI`, `ATLAS_IMAGE_MCP_UBI` and `ATLAS_IMAGE_TLS_UBI`, are where an OpenShift
+overlay takes its digests from, and Compose reads none of them. A maintainer publishes the draft,
+and publishing it attaches the SBOMs (`sbom-sca.yml`), the three UBI images' included.
 
 The images are built for `linux/amd64`.
 
@@ -81,7 +102,8 @@ built. From `deploy/oss/`:
    settings and one-time steps: `diff .env.example .env`.
 4. **Replace the five `ATLAS_IMAGE_*` lines** in `.env` with those from the release's
    `release-images.env` (attached to the GitHub release, and printed in its notes). Replace all
-   five together: they are one release.
+   five together: they are one release. The `ATLAS_IMAGE_*_UBI` lines are for OpenShift; pasting
+   them too does no harm, nothing in Compose reads them.
 5. **Pull and restart.** Add `release.yml` once to `COMPOSE_FILE` in `.env`, before any other
    overlay (`COMPOSE_FILE=docker-compose.yml:release.yml:retrieval.yml`), or pass it with `-f` every
    time:
@@ -130,20 +152,51 @@ For maintainers of the repository the install is made from. Nothing creates a ta
    git push origin vX.Y.Z
    ```
 
-4. **Watch the `images` run** for the tag. `publish` checks the tag (semver, notes present), pushes
-   the five images and prints their references; `release` writes the draft release. If a job fails
+4. **Watch the `images` run** for the tag. `build-scan` builds, scans and preflights the images;
+   `publish` checks the tag (semver, notes present), pushes the eight images and prints their
+   references; `release` writes the draft release. If a job fails
    for a reason outside the tag (a registry hiccup), run it again on the same tag:
    `gh run rerun <run-id> --failed`, or `gh workflow run images.yml --ref vX.Y.Z`. If the images
    themselves are wrong, do not move the tag: fix it and release the next PATCH.
 5. **Publish the draft** when its notes read right: `gh release edit vX.Y.Z --draft=false`. That
    attaches the SBOMs.
-6. **First release only:** the registry creates each package private. Make each of the five public
-   in the package's settings if installs should pull without signing in, and check that an
-   anonymous `docker pull` of one reference from `release-images.env` works.
+6. **A release that publishes a new package** (the first release; `v0.0.2-alpha`, which adds the
+   three `-ubi` packages): the registry creates each new package private. Make it public in the
+   package's settings if installs should pull without signing in, and check that an anonymous
+   `docker pull` of its reference from `release-images.env` works.
 
 ## Release notes
 
 Newest first. Each section is what the GitHub release shows for that tag.
+
+## v0.0.2-alpha
+
+A pre-release, the second alpha. For a Compose install it is a patch: no new required setting
+and no one-time step. Most of the work is the groundwork for running Atlas on OpenShift (Azure
+Red Hat OpenShift), which is not finished yet.
+
+- **OpenShift images:** `gradinai-atlas-api-ubi`, `gradinai-atlas-mcp-ubi` and
+  `gradinai-atlas-tls-ubi`, on Red Hat UBI 9, checked with Red Hat's preflight, published with
+  this release ([What a release publishes](#what-a-release-publishes)). `release-images.env` has
+  three more lines for them, `ATLAS_IMAGE_*_UBI`, which Compose does not read.
+- **OpenShift manifests, in progress:** `deploy/openshift/` (Kustomize): the base (atlas-api, the
+  migrate Job, atlas-mcp, atlas-tls with the re-encrypt Route, the audit purge CronJob), the
+  CloudNativePG database as components, and an example overlay with a step-by-step first install
+  (`deploy/openshift/FIRST-INSTALL.md`). Its overlay still names this release's Debian-based
+  images; moving it to the `-ubi` ones is the next step
+  ([deploy/openshift/README.md](../../deploy/openshift/README.md#images-and-releases)).
+- **Startup:** the schema step and the boot seeding hold a PostgreSQL advisory lock, so several
+  replicas, or a replica and `atlas-migrate`, starting together no longer race. A single process
+  never waits on it. A `postgresql://` database URL with no driver now means psycopg2.
+- **New optional setting:** `ATLAS_MCP_STATELESS_HTTP=1` makes the MCP transport stateless, for
+  more than one `atlas-mcp` replica behind a load balancer. Unset, nothing changes.
+- **Security patches:** CVE-2026-109518 (apt): newer `python:3.12-slim` and `postgres:16-trixie`
+  digests, and `apt` removed from the pgvector image.
+- **Settings:** `ATLAS_MCP_STATELESS_HTTP` (optional, off).
+- **One-time steps:** none.
+- **Postgres image:** changed: the same pgvector 0.8.7 on PostgreSQL 16, Debian 13, on a newer
+  base digest and without `apt`. Run the collation check after the upgrade, as
+  [INSTALL section 10](INSTALL.md#10-upgrading) says.
 
 ## v0.0.1-alpha
 
