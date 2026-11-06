@@ -1,0 +1,25 @@
+# A base backup of atlas-db every night (TASK-1491; research question 4), through the Barman Cloud
+# plugin into ObjectStore atlas-backups. With the WAL archive the Cluster streams continuously, it
+# gives point-in-time recovery to any second inside the 30-day window. `immediate` takes the first
+# one on creation, so the window starts at once. The deploy pipeline also takes an on-demand
+# Backup before each migrate Job (deploy/openshift/README.md, "The database").
+#
+# Six fields, seconds first: 02:30 every day, in the operator's time zone (UTC unless the platform
+# team set otherwise).
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: atlas-db-daily
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/part-of: atlas
+    app.kubernetes.io/component: database
+spec:
+  cluster:
+    name: atlas-db
+  schedule: "0 30 2 * * *"
+  immediate: true
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

@@ -1,0 +1,36 @@
+# Where atlas-db's backups go, for the Barman Cloud plugin (TASK-1491; research question 4): base
+# backups and the WAL archive in an Azure Blob container, kept for a 30-day recovery window, so
+# point-in-time recovery reaches back 30 days. The plugin deletes what falls outside the window.
+#
+# The destination is a placeholder that cannot resolve (a storage account name has no hyphen): the
+# overlay sets it to `https://<account>.blob.core.windows.net/<container>/atlas`. The storage
+# account should have soft delete and an immutability policy (open question 7).
+#
+# Secret atlas-backup-azure is not created here (deploy/openshift/README.md, "The database"): the
+# storage account name and a SAS token scoped to the container. For workload identity the overlay
+# replaces azureCredentials with `inheritFromAzureAD: true`, if the platform supports it for the
+# plugin.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: atlas-backups
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/part-of: atlas
+    app.kubernetes.io/component: database
+spec:
+  retentionPolicy: "30d"
+  configuration:
+    destinationPath: https://set-in-overlay.blob.core.windows.net/atlas-backups/atlas
+    azureCredentials:
+      storageAccount:
+        name: atlas-backup-azure
+        key: AZURE_STORAGE_ACCOUNT
+      storageSasToken:
+        name: atlas-backup-azure
+        key: AZURE_STORAGE_SAS_TOKEN
+    wal:
+      compression: gzip
+      maxParallel: 2
+    data:
+      compression: gzip

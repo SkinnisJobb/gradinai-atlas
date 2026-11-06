@@ -1,0 +1,27 @@
+# The `atlas` database, declared (TASK-1491; research question 4). initdb in cluster.yaml creates
+# it; this resource adopts it (same name and owner, so the operator changes nothing) and is where
+# an extension is added.
+#
+# PGVECTOR ONLY WITH RETRIEVAL. `vector` ships in the `standard` image, but it is not a trusted
+# extension, so the `atlas` owner cannot create it; the operator can, from `spec.extensions`.
+# Only the retrieval add-on uses it, and that is off by default, so this resource lists no
+# extension: the `retrieval` component (task 3.6) adds `vector` with a patch on this object, and
+# without that component the extension is never created, as in the Compose install. The patch is
+# in deploy/openshift/README.md, "The database".
+#
+# `retain`: deleting this resource (or the component) leaves the database and its rows alone.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: atlas-db-atlas
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/part-of: atlas
+    app.kubernetes.io/component: database
+spec:
+  cluster:
+    name: atlas-db
+  name: atlas
+  owner: atlas
+  ensure: present
+  databaseReclaimPolicy: retain

@@ -1,0 +1,91 @@
+# The CloudNativePG Cluster `atlas-db` (TASK-1491; research question 4). The operator runs it: the
+# pods, their PVCs, the services atlas-db-rw / -ro / -r, the TLS certificates and the Secrets.
+#
+# NAMES THE BASE DEPENDS ON. Cluster `atlas-db` makes Secret `atlas-db-app` (keys `uri`,
+# `fqdn-uri`, `password` and the parts; the base mounts only `fqdn-uri`) and Secret `atlas-db-ca`
+# (keys `ca.crt`, `ca.key`; the base mounts only `ca.crt`). `fqdn-uri` names the host
+# `atlas-db-rw.<namespace>.svc.<cluster domain>`, which the server certificate carries, so
+# `PGSSLMODE=verify-full` against `ca.crt` holds. Renaming the Cluster means patching the two
+# secretNames in the base (README).
+#
+# TLS. No `spec.certificates`: the operator makes its own CA (Secret atlas-db-ca) and a server
+# certificate for every service name, and rotates them. The pg_hba rule below refuses any
+# connection that is not TLS, so a client that forgot PGSSLMODE fails instead of sending the
+# password in clear.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: atlas-db
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/part-of: atlas
+    app.kubernetes.io/component: database
+spec:
+  # A primary and a hot standby in another zone: the smallest layout that survives a node or zone
+  # loss without a restore. An overlay sets 3 if the platform team's standard says so.
+  instances: 2
+
+  # PostgreSQL 16 on CloudNativePG's `standard` image (the `minimal` one has no pgvector), Debian
+  # trixie, by the immutable build tag and its index digest. Moving it: pick a newer
+  # `16.<minor>-<build>-standard-trixie` tag of ghcr.io/cloudnative-pg/postgresql and its digest
+  # (`docker buildx imagetools inspect <image>`); the operator then updates the standby first and
+  # switches over. An organisation that mirrors images, or runs EDB, patches this field (README,
+  # "The database").
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.15-202611020810-standard-trixie@sha256:b67681006859e6572798d498fc1755016fe4808efecc9fa8bd48059de4efaaeb
+
+  # Update the standby, then switch over to it, without waiting for a person.
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+
+  # The `postgres` superuser gets no password and no Secret; the operator works through the
+  # local socket. Atlas connects as `atlas`, the database owner, which has no CREATEDB.
+  enableSuperuserAccess: false
+
+  bootstrap:
+    initdb:
+      database: atlas
+      owner: atlas
+      encoding: UTF8
+
+  postgresql:
+    pg_hba:
+      # Placed after the operator's own rules (local socket, certificate-authenticated
+      # replication) and before its catch-all `host all all all scram-sha-256`: a client
+      # connecting without TLS is refused.
+      - hostnossl all all all reject
+
+  # Sizes and class are the overlay's: the platform team names the storage class (open question
+  # 6); without one the cluster default is used. WAL on its own volume, so a burst of WAL cannot
+  # fill the data volume.
+  storage:
+    size: 20Gi
+  walStorage:
+    size: 5Gi
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  # The instances on different zones when the cluster has them (a preferred rule, so a cluster
+  # with one zone still schedules both).
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: topology.kubernetes.io/zone
+
+  # Copied onto every object the operator makes (pods, services, PVCs). The NetworkPolicies
+  # (task 3.4) select the database pods by these, which are the same under community CNPG and
+  # EDB, whose own `cnpg.io/...` and `k8s.enterprisedb.io/...` labels differ.
+  inheritedMetadata:
+    labels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/part-of: atlas
+      app.kubernetes.io/component: database
+
+  # NO BACKUP in this component: a first install needs neither the Barman Cloud plugin nor a
+  # storage account. Component `cnpg-objectstore-plugin` (which includes this one) adds the WAL
+  # archive and the nightly base backup. Until it is on, the standby is the only copy: losing both
+  # instances' volumes loses the data.
