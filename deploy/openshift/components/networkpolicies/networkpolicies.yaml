@@ -64,7 +64,10 @@ spec:
 #   in  :8443 from the OpenShift router only. `policy-group.network.openshift.io/ingress` is the
 #       label OpenShift puts on the router's namespace (and, for a router on the host network, on
 #       the host network's traffic); `podSelector: {}` beside it is what makes the selector also
-#       match host-network pods (OpenShift's documentation). This is the rule that keeps other
+#       match host-network pods (OpenShift's documentation). Matched by KEY (`Exists`), not by
+#       value: OpenShift's documentation writes the value "", but clusters are seen with other
+#       values (such as "ingress"), and a `matchLabels` on the wrong value admits no router at
+#       all, so the Route answers 503. This is the rule that keeps other
 #       pods from forging X-Forwarded-For: Caddy believes that header from the whole pod
 #       network (CADDY_TRUSTED_PROXIES), so only the router may reach :8443.
 #   in  :9443 from atlas-mcp only (atlas-mcp's way to the API, as in Compose).
@@ -87,8 +90,8 @@ spec:
   ingress:
     - from:
         - namespaceSelector:
-            matchLabels:
-              policy-group.network.openshift.io/ingress: ""
+            matchExpressions:
+              - {key: policy-group.network.openshift.io/ingress, operator: Exists}
           podSelector: {}
       ports:
         - {protocol: TCP, port: 8443}

@@ -468,7 +468,7 @@ The seven compose networks become these edges:
 | `data` | postgres, migrate, api | ingress to the CNPG pods (`cnpg.io/cluster: atlas-db`) on 5432 from `atlas-api` and the migrate Job only; the operator's own access to its instances must stay open (see below) |
 | `origin` | api, tls | ingress to `atlas-api` on 8443 from `atlas-tls` pods only |
 | `mcp` | mcp, tls | ingress to `atlas-mcp` on 8493 from `atlas-tls` only; ingress to `atlas-tls` on 9443 from `atlas-mcp` only |
-| `edge` | tls | ingress to `atlas-tls` on 8443 from the router: `namespaceSelector: {matchLabels: {policy-group.network.openshift.io/ingress: ""}}` |
+| `edge` | tls | ingress to `atlas-tls` on 8443 from the router: `namespaceSelector: {matchLabels: {policy-group.network.openshift.io/ingress: ""}}` (built as `matchExpressions` with `operator: Exists` on that key, because clusters carry other values) |
 | `egress` | api (with an overlay) | egress from `atlas-api` on 443 to the IdP or the embeddings endpoint, only in the `oidc` / `retrieval` components. NetworkPolicy cannot name a host; it allows 443 to the CIDRs the platform team gives (or, if they run one, an egress proxy or EgressFirewall, which is theirs) |
 | `gateway`, `gateway-edge` | gateway, tls | not in v1 (question 10) |
 

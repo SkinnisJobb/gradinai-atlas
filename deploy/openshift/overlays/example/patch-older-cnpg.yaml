@@ -1,0 +1,55 @@
+# OPTIONAL: for a CloudNativePG operator older than the base expects (FIRST-INSTALL.md, step 1,
+# "The CloudNativePG version"). Not applied until its two entries under `patches:` in
+# kustomization.yaml are uncommented (this file, and the inline one for the migrate Job).
+#
+# WHAT THE BASE EXPECTS. The app Secret `atlas-db-app` with the key `fqdn-uri`, which community
+# CloudNativePG writes from 1.25.3 on the 1.25 line, 1.26.1 on the 1.26 line, and every 1.27 or
+# later; and the `Database` resource, from 1.25.0. An older operator writes only `uri`, and the
+# pods wait in ContainerCreating on a Secret item that never appears.
+#
+# WHAT THIS CHANGES.
+#   1. atlas-api and the audit CronJob (and the migrate Job, by the inline entry beside this one)
+#      read the Secret's `uri` key instead, under the same file name, so the db-url init
+#      container (base/db_url.py) and everything after it are unchanged. `uri` names the host
+#      `atlas-db-rw.<namespace>`, which is one of the names on CloudNativePG's server certificate
+#      (the operator's GetClusterAltDNSNames: the service name, `.<namespace>`, `.<namespace>.svc`
+#      and the full cluster-domain name), so `PGSSLMODE=verify-full` against `ca.crt` still holds.
+#   2. The `Database` `atlas-db-atlas` is not created, for an operator before 1.25.0, which has
+#      no such resource. The `atlas` database is still made by the Cluster's `initdb`. On
+#      1.25.0 to 1.25.2 and 1.26.0, which have the resource but not the key, the delete is
+#      harmless: the database exists either way.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-api
+spec:
+  template:
+    spec:
+      volumes:
+        - name: db
+          secret:
+            items:
+              - key: uri
+                path: fqdn-uri
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: atlas-audit-purge
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          volumes:
+            - name: db
+              secret:
+                items:
+                  - key: uri
+                    path: fqdn-uri
+---
+$patch: delete
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: atlas-db-atlas
