@@ -518,8 +518,12 @@ jobs:
           blocking=(RunAsNonRoot BasedOnUbi HasModifiedFiles HasNoProhibitedPackages HasLicense HasRequiredLabel)
           echo "## Red Hat preflight $PREFLIGHT_VERSION (blocking: ${blocking[*]})" >> "$GITHUB_STEP_SUMMARY"
           bad=0
-          for pair in atlas-api:hardened-ubi=gradinai-atlas-api-ubi atlas-mcp:hardened-ubi=gradinai-atlas-mcp-ubi atlas-tls:ubi=gradinai-atlas-tls-ubi; do
-            img=${pair%%=*}; name=${pair#*=}
+          # The local image and the package it is published as, side by side (no `a=b` pairs:
+          # gitleaks' generic-api-key rule reads those as a key).
+          imgs=(atlas-api:hardened-ubi atlas-mcp:hardened-ubi atlas-tls:ubi)
+          pkgs=(gradinai-atlas-api-ubi gradinai-atlas-mcp-ubi gradinai-atlas-tls-ubi)
+          for i in 0 1 2; do
+            img=${imgs[$i]}; name=${pkgs[$i]}
             label=$(docker image inspect -f '{{index .Config.Labels "name"}}' "$img")
             [ "$label" = "$name" ] || { echo "::error::$img: label name is '$label', not $name"; bad=1; }
             ref="127.0.0.1:$port/$name:ci-${GITHUB_SHA::12}"
