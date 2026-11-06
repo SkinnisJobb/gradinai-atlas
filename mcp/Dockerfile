@@ -3,7 +3,8 @@
 # UID-agnostic runtime on top, and the LAST stage is `base` unchanged, so a build without
 # `--target` (the homelab) produces today's image. See backend/Dockerfile.
 # A fourth, `hardened-ubi` (TASK-1477), is `hardened` on Red Hat UBI 9 for OpenShift; it copies
-# /app from `base` (`COPY --from`), so it adds no source COPY.
+# /app from `base` (`COPY --from`), so it adds no source COPY; LICENSE and NOTICE reach its
+# /licenses from the named build context `repo` (TASK-1483).
 
 # Pinned tag@digest (TASK-1365); digest bumped in LCM patch round 1 (2026-10-25): python 3.12.15, trixie.
 FROM python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54 AS base
@@ -61,11 +62,30 @@ USER 0
 WORKDIR /app
 COPY --from=base /app /app
 RUN pip install --no-cache-dir --require-hashes -r requirements-lock.txt  && mkdir -p /home/atlas  && chgrp -R 0 /app /home/atlas  && chmod -R g=u,g-w,o-w /app /opt/app-root  && chmod 0775 /home/atlas
+# /licenses and the certification labels (TASK-1483), as backend/Dockerfile's `hardened-ubi`.
+# LICENSE and NOTICE sit at the repository root, outside this build context (mcp/): the build is
+# handed the root as a NAMED BUILD CONTEXT, `repo` (`--build-context repo=.` from the root;
+# images.yml's `build-contexts:`), and only this stage reads it, so a build of any other target
+# needs nothing extra. The comment below declares it to tools/ci/check_pins.py.
+# build-context: repo
+COPY --from=repo LICENSE NOTICE /licenses/
 ENV HOME=/home/atlas     PYTHONDONTWRITEBYTECODE=1
 USER 10001:0
 EXPOSE 8092
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3     CMD ["python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8092/health', timeout=4)"]
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8092"]
+ARG ATLAS_VERSION=dev
+ARG ATLAS_RELEASE=dev
+LABEL name="gradinai-atlas-mcp-ubi" \
+      vendor="gradinai-atlas" \
+      maintainer="gradinai-atlas" \
+      version="${ATLAS_VERSION}" \
+      release="${ATLAS_RELEASE}" \
+      summary="Atlas MCP server (atlas-mcp) on Red Hat UBI 9" \
+      description="The Atlas MCP server, which gives AI agents the Atlas graph through the API's access rules, non-root under any UID in group 0, for OpenShift." \
+      io.k8s.display-name="Atlas MCP server (atlas-mcp)" \
+      io.k8s.description="The Atlas MCP server, which gives AI agents the Atlas graph through the API's access rules, non-root under any UID in group 0, for OpenShift." \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 
 # --- the default (no --target): today's image, unchanged ---------------------------------------

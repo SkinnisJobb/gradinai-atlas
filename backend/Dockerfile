@@ -8,7 +8,8 @@
 # A fourth stage, `backup` (STORY-atlas-crunch-mode), is `hardened` plus the Postgres client, built
 # only by the OSS compose file's opt-in `backup` profile; it has no COPY either.
 # A fifth, `hardened-ubi` (TASK-1476), is `hardened` on Red Hat UBI 9 for OpenShift; it copies /app
-# from `base` (`COPY --from`), so it adds no source COPY either.
+# from `base` (`COPY --from`), so it adds no source COPY either; its one other COPY puts LICENSE
+# and NOTICE in /licenses (TASK-1483), outside /app.
 
 # Pinned tag@digest (TASK-1365); digest bumped in LCM patch round 1 (2026-10-25): python 3.12.15, trixie.
 FROM python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54 AS base
@@ -150,6 +151,13 @@ RUN pip install --no-cache-dir --require-hashes -r requirements-lock.txt \
  && chgrp -R 0 /app /home/atlas /usr/local/bin/atlas-migrate /usr/local/bin/atlas-admin \
  && chmod -R g=u,g-w,o-w /app /opt/app-root \
  && chmod 0775 /home/atlas
+# Red Hat's container certification policy (`preflight check container`, TASK-1483): the image's
+# licence terms under /licenses, and its own name, vendor, version, release, summary and
+# description labels instead of the ones inherited from the base. Not under /app, so neither
+# deploy_status.py's fingerprint nor verify_deploy_status.py's COPY map is concerned. The ARGs
+# come after the last RUN, so a new version re-labels the image without rebuilding a layer;
+# images.yml passes the release tag and commit on publish, a local build says `dev`.
+COPY LICENSE NOTICE /licenses/
 ENV HOME=/home/atlas \
     PYTHONDONTWRITEBYTECODE=1
 USER 10001:0
@@ -157,6 +165,18 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD ["python", "-c", "import os, urllib.parse as p, urllib.request as u; o = os.environ.get('ATLAS_PUBLIC_URL') or (os.environ.get('ATLAS_LOGIN_ORIGINS') or 'http://localhost').split(',')[0].strip(); h = os.environ.get('ATLAS_PUBLIC_HOST') or p.urlsplit(o).netloc; u.urlopen(u.Request('http://127.0.0.1:8000/healthz', headers={'Host': h}), timeout=4)"]
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+ARG ATLAS_VERSION=dev
+ARG ATLAS_RELEASE=dev
+LABEL name="gradinai-atlas-api-ubi" \
+      vendor="gradinai-atlas" \
+      maintainer="gradinai-atlas" \
+      version="${ATLAS_VERSION}" \
+      release="${ATLAS_RELEASE}" \
+      summary="Atlas API and board (atlas-api) on Red Hat UBI 9" \
+      description="The Atlas API, its board and the atlas-migrate and atlas-admin commands, non-root under any UID in group 0, for OpenShift." \
+      io.k8s.display-name="Atlas API (atlas-api)" \
+      io.k8s.description="The Atlas API, its board and the atlas-migrate and atlas-admin commands, non-root under any UID in group 0, for OpenShift." \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 
 # --- the default (no --target): today's image, unchanged ---------------------------------------
