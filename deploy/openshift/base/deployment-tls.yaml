@@ -1,0 +1,210 @@
+# atlas-tls: Caddy, the TLS front (TASK-1490; research questions 3 and 9). The only door into the
+# namespace from outside (the re-encrypt Route, route-atlas.yaml) and atlas-api's front for
+# atlas-mcp. Its configuration is base/caddy/Caddyfile, which explains every door and leg; this
+# file gives it what that Caddyfile reads:
+#
+#   /etc/caddy/                            ConfigMap atlas-caddy: Caddyfile, client-auth-*.caddy
+#   /run/secrets/tls/{tls.crt,tls.key}     Secret atlas-tls-tls (service CA, Service atlas-tls)
+#   /run/config/service-ca/service-ca.crt  the service-CA bundle: the trust pool of every leg
+#   /config, /data                         Caddy's XDG_CONFIG_HOME and XDG_DATA_HOME, emptyDirs,
+#                                          so the root filesystem stays read-only
+#   CADDY_PUBLIC_HOST                      ATLAS_PUBLIC_HOST from atlas-env: one value for both
+#   POD_NAMESPACE                          for the *.<ns>.svc names
+#   CADDY_TRUSTED_PROXIES                  the router's range (a documentation range here)
+#   CADDY_CLIENT_AUTH                      off; the `mtls` component (task 3.6) sets require
+#
+# No secret but its own serving certificate: atlas-tls authenticates nobody, it forwards each
+# request's own token or cookie over verified TLS.
+#
+# PROBES are not exec probes, unlike atlas-api and atlas-mcp: the image is a static Caddy binary
+# on ubi-micro, with no shell, no Python and no HTTP client to run one with. startup and liveness
+# are tcpSocket on :8443 (Caddy is alive and listening; a bad certificate or Caddyfile makes it
+# exit instead). readiness is an HTTPS httpGet of /healthz: the kubelet's Host is the pod address,
+# which the Caddyfile's catch-all :8443 site sends through its CA-verified leg to atlas-api with
+# the public Host, so a front that cannot reach atlas-api is taken out of the Route (research
+# question 9). The kubelet does not verify the certificate of that probe; it carries no token.
+# These probes come over the network, from the node, so the NetworkPolicies (task 3.4) must let
+# the kubelet reach :8443.
+#
+# SECURITY CONTEXT: the restricted profile, stated on the pod and the container. No runAsUser or
+# fsGroup: the SCC assigns both, and Caddy runs under any UID in group 0 (it needs only the
+# emptyDirs to be writable). It listens on 8443 and 9443 only, so it needs no capability.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-tls
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: tls
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: tls
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: atlas
+        app.kubernetes.io/component: tls
+    spec:
+      serviceAccountName: atlas
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      # The two replicas on different zones when the cluster has them, and on different nodes in
+      # any case if the scheduler can (as atlas-api).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: tls
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: atlas
+                    app.kubernetes.io/component: tls
+      containers:
+        - name: atlas-tls
+          # The Caddy front of release v0.0.1-alpha, by tag and digest: the digest is the one the
+          # release published to GitHub's container registry (ghcr.io/<owner>/gradinai-atlas-tls,
+          # ATLAS_IMAGE_TLS in the release's release-images.env; docs/oss/RELEASES.md). That is
+          # the compose install's Caddy (deploy/caddy/Dockerfile: Alpine, with the Cloudflare DNS
+          # plugin this Caddyfile never uses); it runs this Caddyfile unchanged under an arbitrary
+          # UID. The UBI build (deploy/caddy/Dockerfile.ubi, gradinai-atlas-tls-ubi, stock Caddy)
+          # is the one to run on OpenShift; no release has published it yet (task 1.4). The
+          # registry is a placeholder, as for atlas-api: the overlay names the registry and the
+          # image with a Kustomize `images:` entry matching this name. deploy/openshift/README.md,
+          # "Images and releases".
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-tls:v0.0.1-alpha@sha256:8902763650a5a117dda378a228e184a04df25a4dd03d0a43e0dd6ccfdc9f0cb5
+          imagePullPolicy: IfNotPresent
+          # Both images' own CMD, stated so that either runs the same way.
+          command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+          ports:
+            - name: https
+              containerPort: 8443
+              protocol: TCP
+            - name: https-internal
+              containerPort: 9443
+              protocol: TCP
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # The site the public door answers for: the Route's host, which atlas-env already
+            # holds for atlas-api and atlas-mcp. After changing it, restart this Deployment too.
+            - name: CADDY_PUBLIC_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: atlas-env
+                  key: ATLAS_PUBLIC_HOST
+            # Whose X-Forwarded-For to believe on :8443: the router's address range, space-
+            # separated CIDRs. On ARO the router pods are on the pod network, so it is the pod
+            # network CIDR (`oc get network.config cluster -o
+            # jsonpath='{.spec.clusterNetwork[*].cidr}'`), narrowed to the router's namespace by the
+            # NetworkPolicies (task 3.4). The base carries a documentation range, which trusts no
+            # real peer: it fails safe (every request is counted against the router's address)
+            # until the overlay sets the real value, together with atlas-api's
+            # ATLAS_TRUSTED_PROXY_CIDRS.
+            - name: CADDY_TRUSTED_PROXIES
+              value: 198.51.100.0/24
+            # The mTLS leg on :9443: off here; the `mtls` component (task 3.6) sets `require` and
+            # mounts the client CA at /run/secrets/client-ca/ca.crt.
+            - name: CADDY_CLIENT_AUTH
+              value: "off"
+            - name: XDG_CONFIG_HOME
+              value: /config
+            - name: XDG_DATA_HOME
+              value: /data
+          startupProbe:
+            tcpSocket:
+              port: https
+            periodSeconds: 2
+            timeoutSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: https
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            # Through the verified leg to atlas-api (the Caddyfile's catch-all :8443 site).
+            httpGet:
+              scheme: HTTPS
+              port: https
+              path: /healthz
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 192Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: caddy
+              mountPath: /etc/caddy
+              readOnly: true
+            - name: tls
+              mountPath: /run/secrets/tls
+              readOnly: true
+            - name: service-ca
+              mountPath: /run/config/service-ca
+              readOnly: true
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: caddy
+          configMap:
+            name: atlas-caddy
+        - name: tls
+          secret:
+            secretName: atlas-tls-tls
+            defaultMode: 0440
+        - name: service-ca
+          configMap:
+            name: atlas-service-ca
+            items:
+              - key: service-ca.crt
+                path: service-ca.crt
+        # Caddy's autosaved config and its (unused) certificate storage; nothing here outlives
+        # the pod.
+        - name: config
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Mi
+        - name: data
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi

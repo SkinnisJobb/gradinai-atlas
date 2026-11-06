@@ -65,6 +65,7 @@ on:
       - "frontend/**"
       - "deploy/postgres/**"
       - "deploy/caddy/**"
+      - "deploy/openshift/base/caddy/**"
       - "docs/oss/RELEASES.md"
       - "tools/ci/sca_gate.py"
       - "tools/ci/sca-accepted.json"
@@ -313,20 +314,23 @@ jobs:
           wait_up ubi-mcp 8092 /health             || { echo "::error::atlas-mcp:hardened-ubi: uvicorn did not answer /health under 1000770000:0, read-only"; exit 1; }
           echo "atlas-mcp:hardened-ubi: uvicorn up, /health 200 (uid $(docker exec ubi-mcp id -u), read-only root)"
 
-      # atlas-tls:ubi (TASK-1478). `caddy validate` and then `caddy run` under an arbitrary UID with
-      # a read-only root and XDG_CONFIG_HOME / XDG_DATA_HOME on a tmpfs each (the emptyDirs of the
-      # ARO Deployment). THE CADDYFILE IS A FIXTURE: the OpenShift Caddyfile is task 3.3's and does
-      # not exist yet, so this one has its shape (research doc, question 3): the re-encrypt front
-      # on :8443 with `default_sni` (the router sends no SNI), `trusted_proxies` +
-      # `client_ip_headers X-Forwarded-For` + `trusted_proxies_strict` for the router's address (a
-      # documentation range here; the real file names the pod network),
-      # `CF-Connecting-IP {client_ip}` to the API, the internal :9443 listener atlas-mcp dials,
-      # service-CA-shaped certificate files and trust pool (a throwaway self-signed pair), and ACME
-      # off (`auto_https disable_certs`: without it Caddy orders a certificate for the public host).
-      # Task 3.3 points this check at the real file. The run is probed over TLS with NO SNI (an IP
-      # literal, as the router connects) and with SNI on :9443; the upstreams do not exist here, so
-      # Caddy's 502 is the expected answer: it proves the handshake and the routing, not an upstream.
-      - name: "check: atlas-tls:ubi validates and serves the OpenShift-shaped Caddyfile under an arbitrary UID"
+      # atlas-tls:ubi (TASK-1478) running THE OPENSHIFT CADDYFILE (deploy/openshift/base/caddy/,
+      # TASK-1490) as deploy/openshift/base/deployment-tls.yaml runs it: under an arbitrary UID with
+      # a read-only root, XDG_CONFIG_HOME / XDG_DATA_HOME on a tmpfs each (the emptyDirs), the
+      # ConfigMap's files at /etc/caddy, a service-CA-shaped CA and leaves (throwaway, made here)
+      # at the Secret and ConfigMap paths, and the Deployment's environment. The upstreams are a
+      # stub (the same image, answering with the Host, CF-Connecting-IP and path it received)
+      # holding the names atlas-api.atlas.svc and atlas-mcp.atlas.svc on a private network. Proven:
+      #   - :8443 answers a handshake with NO SNI (as the router connects) with the service cert;
+      #   - the security headers are on a live response of the public door;
+      #   - from a trusted peer, X-Forwarded-For becomes CF-Connecting-IP and a client-sent
+      #     CF-Connecting-IP is replaced (the sign-in throttle counts the client, not the proxy);
+      #   - /mcp goes to atlas-mcp, the rest to atlas-api, each over the verified leg;
+      #   - :9443 (atlas-mcp's door) reaches the api stub, and there a spoofed CF-Connecting-IP
+      #     is replaced by the socket peer;
+      #   - the readiness door (any other Host) serves /healthz through the api leg, nothing else;
+      #   - no ACME attempt, no :80 listener.
+      - name: "check: atlas-tls:ubi serves the OpenShift Caddyfile under an arbitrary UID"
         run: |
           set -euo pipefail
           img=atlas-tls:ubi
@@ -334,70 +338,97 @@ jobs:
           echo "$img: USER=$user"
           [[ "$user" =~ ^[1-9][0-9]*:0$ ]] || { echo "::error::$img: USER is not a numeric non-root UID in group 0"; exit 1; }
           fx="$RUNNER_TEMP/caddy-fixture"
-          mkdir -p "$fx/certs"
-          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 7 \
-            -subj "/CN=atlas-tls.atlas.svc" -addext "subjectAltName=DNS:atlas-tls.atlas.svc" \
-            -keyout "$fx/certs/tls.key" -out "$fx/certs/tls.crt" 2>/dev/null
-          cp "$fx/certs/tls.crt" "$fx/certs/service-ca.crt"
-          chmod 0644 "$fx/certs/tls.key"   # throwaway; the arbitrary UID must read the mount
-          cat > "$fx/Caddyfile" <<'CADDY'
+          mkdir -p "$fx/ca" "$fx/sca" "$fx/tls" "$fx/stub"
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
+            -subj "/CN=service-ca-fixture" -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" \
+            -keyout "$fx/ca/ca.key" -out "$fx/sca/service-ca.crt" 2>/dev/null
+          leaf() {  # dir name...
+            local d=$1; shift
+            local san; san=$(printf 'DNS:%s,' "$@"); san=${san%,}
+            openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj "/CN=$1" \
+              -keyout "$d/tls.key" -out "$d/tls.csr" 2>/dev/null
+            printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\n' "$san" > "$d/ext"
+            openssl x509 -req -in "$d/tls.csr" -CA "$fx/sca/service-ca.crt" -CAkey "$fx/ca/ca.key" \
+              -CAcreateserial -days 2 -extfile "$d/ext" -out "$d/tls.crt" 2>/dev/null
+            chmod 0644 "$d/tls.key"   # throwaway; the arbitrary UID must read the mount
+          }
+          leaf "$fx/tls" atlas-tls.atlas.svc
+          leaf "$fx/stub" atlas-api.atlas.svc atlas-mcp.atlas.svc
+          cat > "$fx/stub/Caddyfile" <<'CADDY'
           {
               admin off
-              auto_https disable_certs
-              skip_install_trust
-              default_sni atlas-tls.atlas.svc
-              servers :8443 {
-                  trusted_proxies static 198.51.100.0/24
-                  client_ip_headers X-Forwarded-For
-                  trusted_proxies_strict
-              }
+              auto_https off
           }
-          (origin_tls) {
-              transport http {
-                  tls_trust_pool file /etc/caddy/certs/service-ca.crt
-                  tls_server_name {args[0]}
-              }
+          :8443 {
+              tls /etc/caddy/tls.crt /etc/caddy/tls.key
+              respond "port=8443 host={hostport} cfip={header.CF-Connecting-IP} path={path}"
           }
-          atlas.example.com:8443 {
-              tls /etc/caddy/certs/tls.crt /etc/caddy/certs/tls.key
-              reverse_proxy https://atlas-api.atlas.svc:8443 {
-                  import origin_tls atlas-api.atlas.svc
-                  header_up Host {hostport}
-                  header_up CF-Connecting-IP {client_ip}
-              }
-          }
-          atlas-tls.atlas.svc:9443 {
-              tls /etc/caddy/certs/tls.crt /etc/caddy/certs/tls.key
-              reverse_proxy https://atlas-api.atlas.svc:8443 {
-                  import origin_tls atlas-api.atlas.svc
-                  header_up Host {hostport}
-              }
+          :8493 {
+              tls /etc/caddy/tls.crt /etc/caddy/tls.key
+              respond "port=8493 host={hostport} cfip={header.CF-Connecting-IP} path={path}"
           }
           CADDY
-          caddy_ro() {
+          trap 'docker rm -f ubi-tls ubi-stub >/dev/null 2>&1 || true; docker network rm ubi-net >/dev/null 2>&1 || true' EXIT
+          docker network create --subnet 198.51.100.0/24 --gateway 198.51.100.1 ubi-net >/dev/null
+          docker run -d --name ubi-stub --network ubi-net \
+            --network-alias atlas-api.atlas.svc --network-alias atlas-mcp.atlas.svc \
+            -v "$fx/stub:/etc/caddy:ro" "$img" >/dev/null
+          # The runner reaches the published ports through the network's gateway, which plays the
+          # router here: CADDY_TRUSTED_PROXIES names it (and a second range, as an overlay may).
+          tls_run() {
             docker run --user 1000770000:0 --read-only --tmpfs /config --tmpfs /data \
-              -e XDG_CONFIG_HOME=/config -e XDG_DATA_HOME=/data -v "$fx:/etc/caddy:ro" "$@"
+              -e XDG_CONFIG_HOME=/config -e XDG_DATA_HOME=/data \
+              -e POD_NAMESPACE=atlas -e CADDY_PUBLIC_HOST=atlas.example.com \
+              -e "CADDY_TRUSTED_PROXIES=198.51.100.1/32 192.0.2.0/24" -e CADDY_CLIENT_AUTH=off \
+              -v "$GITHUB_WORKSPACE/deploy/openshift/base/caddy:/etc/caddy:ro" \
+              -v "$fx/tls:/run/secrets/tls:ro" -v "$fx/sca:/run/config/service-ca:ro" "$@"
           }
-          caddy_ro --rm "$img" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
-            || { echo "::error::$img: caddy validate failed under 1000770000:0"; exit 1; }
-          trap 'docker rm -f ubi-tls >/dev/null 2>&1 || true' EXIT
-          caddy_ro -d --name ubi-tls -p 127.0.0.1:18443:8443 -p 127.0.0.1:19443:9443 "$img" >/dev/null
-          code=000
+          tls_run --rm --network none "$img" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile \
+            || { echo "::error::$img: caddy validate failed on the OpenShift Caddyfile"; exit 1; }
+          tls_run -d --name ubi-tls --network ubi-net -p 127.0.0.1:18443:8443 -p 127.0.0.1:19443:9443 \
+            "$img" caddy run --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null
+          fail() { docker logs ubi-tls || true; echo "::error::$img: $*"; exit 1; }
+          pub=(--cacert "$fx/sca/service-ca.crt" --resolve atlas-tls.atlas.svc:18443:127.0.0.1 -H 'Host: atlas.example.com')
+          body=""
           for _ in $(seq 1 30); do
-            code=$(curl -sk -o /dev/null -w '%{http_code}' -H 'Host: atlas.example.com' https://127.0.0.1:18443/ || true)
-            [ "$code" = 502 ] && break
+            body=$(curl -s "${pub[@]}" https://atlas-tls.atlas.svc:18443/ready || true)
+            [[ "$body" == port=8443* ]] && break
             sleep 1
           done
-          [ "$code" = 502 ] || { docker logs ubi-tls || true; echo "::error::$img: no TLS answer on :8443 without SNI (got $code)"; exit 1; }
+          [[ "$body" == port=8443* ]] || fail "the public door did not reach the api stub (got '$body')"
           subj=$(openssl s_client -connect 127.0.0.1:18443 -noservername </dev/null 2>/dev/null | openssl x509 -noout -subject)
-          echo "$img: :8443 without SNI presents $subj"
-          [[ "$subj" == *atlas-tls.atlas.svc* ]] || { echo "::error::$img: default_sni did not select the service certificate"; exit 1; }
-          code=$(curl -s -o /dev/null -w '%{http_code}' --cacert "$fx/certs/service-ca.crt" \
-            --resolve atlas-tls.atlas.svc:19443:127.0.0.1 https://atlas-tls.atlas.svc:19443/ || true)
-          [ "$code" = 502 ] || { docker logs ubi-tls || true; echo "::error::$img: :9443 did not answer (got $code)"; exit 1; }
-          [ "$(docker inspect -f '{{.State.Running}}' ubi-tls)" = true ] || { echo "::error::$img: caddy exited"; exit 1; }
-          if docker logs ubi-tls 2>&1 | grep -qi acme; then docker logs ubi-tls; echo "::error::$img: caddy tried ACME"; exit 1; fi
-          echo "$img: caddy validate ok; runs as $(docker exec ubi-tls id -u) with a read-only root, :8443 (no SNI) and :9443 answer"
+          echo "no SNI on :8443 -> $subj"
+          [[ "$subj" == *atlas-tls.atlas.svc* ]] || fail "default_sni did not select the service certificate"
+          hdrs=$(curl -s -D - -o /dev/null "${pub[@]}" https://atlas-tls.atlas.svc:18443/)
+          for h in 'strict-transport-security: max-age=31536000' 'x-frame-options: DENY' \
+                   'x-content-type-options: nosniff' 'referrer-policy: same-origin' \
+                   "content-security-policy: default-src 'self'; script-src 'self';"; do
+            grep -qiF "$h" <<<"$hdrs" || fail "public door response lacks '$h'"
+          done
+          echo "security headers present on the public door"
+          body=$(curl -s "${pub[@]}" -H 'X-Forwarded-For: 203.0.113.7' -H 'CF-Connecting-IP: 192.0.2.66' \
+            https://atlas-tls.atlas.svc:18443/api/x)
+          echo "trusted peer, XFF 203.0.113.7, spoofed CF-Connecting-IP -> $body"
+          [ "$body" = "port=8443 host=atlas.example.com cfip=203.0.113.7 path=/api/x" ] \
+            || fail "X-Forwarded-For from the trusted peer did not become CF-Connecting-IP"
+          body=$(curl -s "${pub[@]}" -H 'X-Forwarded-For: 203.0.113.7' https://atlas-tls.atlas.svc:18443/mcp/)
+          echo "/mcp -> $body"
+          [[ "$body" == port=8493\ *cfip=203.0.113.7\ path=/mcp/ ]] || fail "/mcp did not reach atlas-mcp"
+          body=$(curl -s --cacert "$fx/sca/service-ca.crt" --resolve atlas-tls.atlas.svc:19443:127.0.0.1 \
+            -H 'X-Forwarded-For: 203.0.113.7' -H 'CF-Connecting-IP: 192.0.2.66' https://atlas-tls.atlas.svc:19443/api/me)
+          echo ":9443 -> $body"
+          [ "$body" = "port=8443 host=atlas-tls.atlas.svc:19443 cfip=198.51.100.1 path=/api/me" ] \
+            || fail ":9443 did not reach the api stub with the socket peer as CF-Connecting-IP"
+          body=$(curl -sk https://127.0.0.1:18443/healthz)
+          echo "readiness door /healthz -> $body"
+          [ "$body" = "port=8443 host=atlas.example.com cfip=198.51.100.1 path=/healthz" ] || fail "readiness door"
+          code=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:18443/api/x)
+          [ "$code" = 404 ] || fail "the readiness door served more than /healthz (got $code)"
+          [ "$(docker inspect -f '{{.State.Running}}' ubi-tls)" = true ] || fail "caddy exited"
+          if docker logs ubi-tls 2>&1 | grep -qi acme; then fail "caddy tried ACME"; fi
+          if docker logs ubi-tls 2>&1 | grep -q ':80"'; then fail "caddy opened a :80 listener"; fi
+          echo "$img: the OpenShift Caddyfile serves as uid $(docker exec ubi-tls id -u) with a read-only root"
 
       # The report names are what an `in` list in tools/ci/sca-accepted.json matches, so an image
       # built from the same recipe as one in sbom-sca.yml is reported under sbom-sca's name: one

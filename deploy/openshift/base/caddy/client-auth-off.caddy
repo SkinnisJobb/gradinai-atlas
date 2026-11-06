@@ -1,0 +1,5 @@
+# CADDY_CLIENT_AUTH=off (the default): no client certificate is asked for on :9443. atlas-mcp is
+# identified by each caller's Bearer token, as on every other hop. Imported inside the `tls` block
+# of the atlas-tls.<ns>.svc:9443 site in Caddyfile (the OpenShift copy of
+# deploy/oss/caddy/client-auth-off.caddy).
+protocols tls1.2 tls1.3
