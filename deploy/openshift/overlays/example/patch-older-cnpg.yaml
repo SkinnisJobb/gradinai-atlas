@@ -9,8 +9,10 @@
 #
 # WHAT THIS CHANGES.
 #   1. atlas-api and the audit CronJob (and the migrate Job, by the inline entry beside this one)
-#      read the Secret's `uri` key instead, under the same file name, so the db-url init
-#      container (base/db_url.py) and everything after it are unchanged. `uri` names the host
+#      read the Secret's `uri` key instead, projected under the same file name into the same
+#      mount, /run/secrets/db/fqdn-uri, so ATLAS_DB_URL_FILE and every container are unchanged.
+#      `uri` is a bare postgresql:// URL like `fqdn-uri`, which Atlas reads as psycopg2
+#      (backend/dsn.py). `uri` names the host
 #      `atlas-db-rw.<namespace>`, which is one of the names on CloudNativePG's server certificate
 #      (the operator's GetClusterAltDNSNames: the service name, `.<namespace>`, `.<namespace>.svc`
 #      and the full cluster-domain name), so `PGSSLMODE=verify-full` against `ca.crt` still holds.
