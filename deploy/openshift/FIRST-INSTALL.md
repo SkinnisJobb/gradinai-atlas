@@ -185,6 +185,12 @@ oc new-project atlas
 
 Otherwise use the one you were given. Every later command names it with `-n atlas`.
 
+**The database first, on its own?** If the database is to be created separately from Atlas (the
+platform team creates it, or you want to see it healthy first), install it now with the plain YAML
+file [`database/atlas-db.yaml`](database/README.md) and follow
+[Installing the database first, with plain YAML](#installing-the-database-first-with-plain-yaml)
+in steps 5 and 6. Otherwise the overlay creates it in step 6, with everything else.
+
 **Did the project come with NetworkPolicies?** Many clusters create every project from a template
 that adds some:
 
@@ -514,6 +520,59 @@ oc kustomize deploy\openshift\overlays\ours | Select-String -Pattern 'image:|ima
 ```
 
 Every image must name your registry and end in `@sha256:` and a digest.
+
+## Installing the database first, with plain YAML
+
+An alternative to letting the overlay create the database: install it on its own, before Atlas,
+from one plain YAML file, the way a CloudNativePG cluster is usually created. It is the same
+database (the file is rendered from the same component, `components/cnpg`, and the repository's
+lint keeps the two equal), with the database pods' NetworkPolicies included.
+
+1. **After step 2**, follow [`database/README.md`](database/README.md): edit the lines marked
+   `# EDIT:` in `database\atlas-db.yaml` (storage class, sizes, instances, the operator's
+   namespace, a mirrored image and pull secret), then
+
+   ```powershell
+   oc apply -f deploy\openshift\database\atlas-db.yaml -n atlas
+   oc wait clusters.postgresql.cnpg.io/atlas-db -n atlas --for=condition=Ready --timeout=15m
+   ```
+
+2. **In step 5**, your overlay must not own the database too. In
+   `deploy\openshift\overlays\ours\kustomization.yaml`, under `components:`, **remove**
+   `- ../../components/cnpg` and add `- ../../components/cnpg-external` as the **last** line:
+
+   ```yaml
+   components:
+     # - ../../components/networkpolicies    # optional, as before
+     - ../../components/cnpg-external         # last
+   ```
+
+   `cnpg-external` removes the database pods' two NetworkPolicies from the overlay
+   (`atlas-database`, `atlas-database-from-operator`: the database file holds them, and two owners
+   would undo each other's edits), and makes `oc kustomize` fail with
+   `testing value /kind failed` if a `Cluster` is still in the overlay. The other NetworkPolicies
+   (default deny, DNS, Atlas's own edges) work as before when switched on.
+
+3. **Everything that patched the database lives in the database file now**, not in the overlay,
+   whose patches on the `Cluster` or `Database` would fail the build (`no matches for Id Cluster...`):
+   - a mirrored database image and its pull secret: `imageName:` and `imagePullSecrets:` in
+     `atlas-db.yaml`. If you enable `patch-pull-secret.yaml` for the Atlas pods, delete its second
+     document (from `---` down, the `Cluster`) first;
+   - an older operator: the overlay's `OLDER CLOUDNATIVEPG` entries are still needed for the
+     Atlas pods, but delete the last document of `patch-older-cnpg.yaml` (the `Database` delete),
+     and, below 1.25, the `Database` document of `atlas-db.yaml`;
+   - storage class, sizes, instances, resources, the operator's namespace and EDB: the `# EDIT:`
+     lines of `atlas-db.yaml`, not the patches in [The patches the table names](#the-patches-the-table-names).
+
+4. **Step 6** is unchanged, except that the first `oc wait` is already done: the Atlas pods find
+   the database by its Secrets, `atlas-db-app` and `atlas-db-ca`, which have the same names. Check
+   what the overlay will apply first; it must hold no `Cluster` and no `Database`:
+
+   ```powershell
+   oc kustomize deploy\openshift\overlays\ours | Select-String -Pattern '^kind:' | Group-Object | Select-Object Count, Name
+   ```
+
+Removing the database later deletes its data with it: [`database/README.md`, "Remove it"](database/README.md#remove-it).
 
 ## Troubleshooting
 

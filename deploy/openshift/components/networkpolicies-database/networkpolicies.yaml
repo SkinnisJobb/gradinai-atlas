@@ -1,0 +1,107 @@
+# The database pods' NetworkPolicies (TASK-1493; research question 6), split out of component
+# `networkpolicies` so the plain-YAML database install (deploy/openshift/database/) carries exactly
+# these and nothing that selects an Atlas application pod. Component `networkpolicies` includes
+# this one, so an overlay that lists `networkpolicies` gets both files, as before.
+#
+# Each policy selects ONLY the database pods (app.kubernetes.io/name: atlas and component:
+# database, which the `cnpg` component's inheritedMetadata copies onto them), so applying these
+# alone, in a namespace whose Atlas pods have no policy of Atlas's, isolates the database and
+# nothing else.
+---
+# The CloudNativePG pods of Cluster atlas-db (the `cnpg` component copies app.kubernetes.io/name:
+# atlas and component: database onto them, under community CNPG and EDB alike).
+#   in  :5432 from atlas-api, the migrate Job and the audit CronJob; never from atlas-mcp or
+#       atlas-tls.
+#   in  :5432 and :8000 from the other instances (streaming replication, and the join and
+#       switchover steps). The operator is the next policy.
+#   out the other instances :5432 and :8000.
+#   out the Kubernetes API, :6443 on any address. Each instance's manager watches its Cluster
+#       through the API. The API server runs on the control-plane nodes' host network, which no
+#       pod selector can name, and its address is the cluster's, so the rule names the port only;
+#       the policy is checked after the `kubernetes` Service's 443 is translated to it.
+#   out the cluster DNS (openshift-dns, 5353), the same rule as policy `atlas-dns`: a standby
+#       finds its primary by the service name atlas-db-rw. With component `networkpolicies` the
+#       rule is there twice, which is harmless (policies only add); without it, on the database
+#       installed on its own, this is the only DNS rule the database pods have.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-database
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: database
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+            matchExpressions:
+              - {key: app.kubernetes.io/component, operator: In, values: [api, migrate, audit-purge]}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: database
+      ports:
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8000}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: database
+      ports:
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8000}
+    - ports:
+        - {protocol: TCP, port: 6443}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - {protocol: UDP, port: 5353}
+        - {protocol: TCP, port: 5353}
+---
+# The CloudNativePG operator to the instances: :8000 (the instance manager's status endpoint) and
+# :5432, as CloudNativePG's networking documentation asks. A policy of its own so an overlay can
+# patch the one value below without counting rule indexes.
+#
+# THE NAMESPACE IS THE OVERLAY'S: `cnpg-system` is community CloudNativePG's default (its manifest
+# and Helm chart); an operator installed from OperatorHub (OLM, community or EDB) usually runs in
+# `openshift-operators`. Any pod of that namespace is admitted, not only the operator's: the
+# operator's pod labels differ between community CNPG and EDB, and a wrong label here would stop
+# the database from coming up. README, "NetworkPolicies", has the patch.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-database-from-operator
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - {protocol: TCP, port: 8000}
+        - {protocol: TCP, port: 5432}

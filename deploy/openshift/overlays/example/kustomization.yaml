@@ -31,12 +31,21 @@ resources:
 # default storage class, 2 instances, NO backup. If the cluster runs EDB Postgres for Kubernetes
 # instead, add ../../components/cnpg-edb after it. For backups, replace this line with
 # ../../components/cnpg-objectstore-plugin (never both). deploy/openshift/README.md, "The database".
+#
+# DATABASE INSTALLED SEPARATELY, with the plain YAML file ../../database/atlas-db.yaml
+# (FIRST-INSTALL.md, "Installing the database first, with plain YAML"): this overlay must not own
+# it too. Remove the `- ../../components/cnpg` line and uncomment `- ../../components/cnpg-external`,
+# which stays the LAST line of `components:`. It drops the database pods' two NetworkPolicies (the
+# database file has them) and fails the build if a Cluster is still here. Every patch below on
+# Cluster atlas-db or Database atlas-db-atlas then goes into atlas-db.yaml instead (its `# EDIT:`
+# lines); FIRST-INSTALL.md lists which.
 components:
   - ../../components/cnpg
   # NetworkPolicies: default deny for every Atlas pod, then one allow per edge. Needed at once if
   # the project came with NetworkPolicies of its own (the operator cannot reach the database
   # otherwise); set the operator's namespace if it is not cnpg-system (README, "NetworkPolicies").
   # - ../../components/networkpolicies
+  # - ../../components/cnpg-external
 
 # 2. The OpenShift (UBI) images of release v0.0.2-alpha, by tag AND the digest the release
 # published: the lines ATLAS_IMAGE_API_UBI, ATLAS_IMAGE_MCP_UBI and ATLAS_IMAGE_TLS_UBI of its

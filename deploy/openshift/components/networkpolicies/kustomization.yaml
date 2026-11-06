@@ -8,8 +8,11 @@
 # has the edge list, how these sit next to an OpenShift project template's own policies, and the
 # questions for the platform team.
 #
-# What it adds (networkpolicies.yaml), all selecting pods labelled app.kubernetes.io/name: atlas
-# (every Atlas pod, and the database pods through the Cluster's inheritedMetadata):
+# What it adds, all selecting pods labelled app.kubernetes.io/name: atlas (every Atlas pod, and the
+# database pods through the Cluster's inheritedMetadata). networkpolicies.yaml here holds the
+# application pods' policies; the last two below, the database pods' own, come from component
+# `networkpolicies-database`, which this one includes (the plain-YAML database install,
+# deploy/openshift/database/, carries those two without the rest):
 #   atlas-default-deny            no ingress, no egress, for every Atlas pod
 #   atlas-dns                     egress to the cluster DNS (openshift-dns, port 5353)
 #   atlas-tls                     in: the router to :8443, atlas-mcp to :9443;
@@ -19,7 +22,7 @@
 #   atlas-db-clients              out: the database :5432, for the migrate Job and the audit CronJob
 #   atlas-database                in: atlas-api, the Job, the CronJob to :5432, and the instances to
 #                                 each other; out: the instances, and the Kubernetes API (:6443),
-#                                 which CloudNativePG's instance manager needs
+#                                 which CloudNativePG's instance manager needs, and the DNS
 #   atlas-database-from-operator  in: the CloudNativePG operator's namespace to :8000 and :5432
 #
 # THE OVERLAY SETS the operator's namespace when it is not `cnpg-system` (community CNPG's
@@ -31,6 +34,9 @@
 # extra policy for cnpg-objectstore-plugin).
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
+
+components:
+  - ../networkpolicies-database
 
 resources:
   - networkpolicies.yaml

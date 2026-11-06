@@ -8,7 +8,9 @@
 #   components/<name>/     each built as base/ plus that one component (a Component cannot be
 #                          built alone, and two components may be alternatives, such as cnpg and
 #                          cnpg-objectstore-plugin, so they are not all stacked at once);
-#   overlays/<name>/       each built as it is.
+#   overlays/<name>/       each built as it is;
+#   database/              the plain-YAML database install: built as it is, and its build must
+#                          equal database/atlas-db.yaml (the drift check below).
 # A kustomization anywhere else under ROOT fails the run: it would not be linted, so it must be
 # placed in that layout or added here. A ROOT that is absent, or holds no kustomization, passes
 # with a note (the manifests arrive in later tasks; this check lands first).
@@ -23,12 +25,21 @@
 #                The kustomization files themselves go through namespace `kustomization` (every
 #                `images:` entry carries a digest).
 #
+# THE DRIFT CHECK. database/atlas-db.yaml is applied with `oc apply -f` and read by people, so it
+# carries comments; database/kustomization.yaml renders the same objects from the components. The
+# committed file, with every comment (whole-line, and trailing ` # ...`) and blank line removed,
+# must equal `kustomize build database/` with its blank lines removed, byte for byte. The build
+# side is not stripped, so a value holding ` #` can only make the check fail, never pass.
+# THE TWO PATHS ADD UP, when components/cnpg-external exists: base + cnpg + networkpolicies (the
+# all-in-one install) holds exactly the objects of base + networkpolicies + cnpg-external plus
+# atlas-db.yaml, none of them in both; and cnpg-external with cnpg still listed fails to build.
+#
 # --self-test proves the tools and the policies refuse what they must: the fixture tree under
 # fixtures/tree/ (base, a component, an overlay) passes the whole chain; every file in
 # fixtures/conftest-bad/ fails conftest with exactly the rule its name starts with, and every
 # policy rule has at least one such file; every file in fixtures/kubeconform-bad/ fails
 # kubeconform; kube-linter fails a privileged container; an absent or empty tree passes; a
-# kustomization outside the layout fails.
+# kustomization outside the layout fails; a database file that drifted from its build fails.
 #
 # Tools come from the environment: KUSTOMIZE, KUBECONFORM, KUBE_LINTER, CONFTEST (default: on
 # PATH). .github/workflows/openshift-lint.yml pins and checksum-verifies them.
@@ -96,10 +107,10 @@ lint() {
     dir="$(dirname "$f")"
     rel="${dir#"$root"/}"
     case "$rel" in
-      base | components/* | overlays/*)
+      base | database | components/* | overlays/*)
         case "$rel" in */*/*) ;; *) continue ;; esac ;;
     esac
-    echo "lint: FAIL $rel has a kustomization outside base/, components/<name>/ and overlays/<name>/; it would not be linted" >&2
+    echo "lint: FAIL $rel has a kustomization outside base/, database/, components/<name>/ and overlays/<name>/; it would not be linted" >&2
     stray=1
   done < <(find "$root" \( -name kustomization.yaml -o -name kustomization.yml -o -name Kustomization \) -type f | sort)
   [ "$stray" -eq 0 ] || return 1
@@ -141,6 +152,17 @@ lint() {
     labels+=("overlay-$name")
   done
 
+  if has_kustomization "$root/database"; then
+    echo "lint: kustomize build database (and the drift check against database/atlas-db.yaml)"
+    "$KUSTOMIZE" build "$root/database" > "$out/database.yaml" || return 1
+    labels+=(database); base_labels+=(database)
+    database_drift "$root/database" "$out/database.yaml" || return 1
+    if has_kustomization "$root/components/cnpg-external"; then
+      database_compose "$root" "$out" || return 1
+      labels+=(separate-database); base_labels+=(separate-database)
+    fi
+  fi
+
   local rc=0 l ns
   # The kustomization files themselves: an `images:` entry must carry a digest (namespace
   # `kustomization`). The render check would miss one that matches no container today.
@@ -164,6 +186,86 @@ lint() {
     return 1
   fi
   echo "lint: ok (${#labels[@]} render(s): ${labels[*]})"
+}
+
+# strip_comments FILE: FILE without comments (whole-line, and a trailing ` # ...`), trailing
+# blanks and blank lines.
+strip_comments() {
+  sed -e 's/[[:space:]]#.*$//' -e '/^[[:space:]]*#/d' -e 's/[[:space:]]*$//' -e '/^$/d' "$1"
+}
+
+# database_drift DIR RENDER: DIR/atlas-db.yaml, comments stripped, must equal RENDER (the build of
+# DIR) with its blank lines removed. Prints the difference and returns 1 if not.
+database_drift() {
+  local dir="$1" render="$2" want="$WORK/drift-build-$RANDOM" got="$WORK/drift-file-$RANDOM"
+  if [ ! -f "$dir/atlas-db.yaml" ]; then
+    echo "lint: FAIL database/ has a kustomization but no atlas-db.yaml" >&2
+    return 1
+  fi
+  sed -e '/^[[:space:]]*$/d' "$render" > "$want"
+  strip_comments "$dir/atlas-db.yaml" > "$got"
+  if ! diff -u --label "kustomize build database/" --label "database/atlas-db.yaml without comments" \
+      "$want" "$got" >&2; then
+    echo "lint: FAIL database/atlas-db.yaml differs from its build (above: - the build, + the file); carry the build's change into the file, keeping its comments" >&2
+    return 1
+  fi
+  echo "lint: database/atlas-db.yaml matches its build"
+}
+
+# kind_names FILE: one "Kind/name" line per object of a rendered FILE, sorted.
+kind_names() {
+  awk '/^---/ { k = ""; m = 0; next }
+       /^kind: / { k = $2 }
+       /^metadata:/ { m = 1; next }
+       /^[^ ]/ { m = 0 }
+       m && /^  name: / { print k "/" $2; m = 0 }' "$1" | sort
+}
+
+# compose_kustomization ROOT DIR COMPONENT...: DIR/kustomization.yaml, the base plus the
+# components named. Kustomize refuses an absolute path, so it points back with relative ones.
+compose_kustomization() {
+  local root="$1" d="$2" c
+  shift 2
+  mkdir -p "$d"
+  printf 'apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - %s\ncomponents:\n' \
+    "$(realpath --relative-to="$d" "$root/base")" > "$d/kustomization.yaml"
+  for c in "$@"; do
+    printf '  - %s\n' "$(realpath --relative-to="$d" "$root/components/$c")" >> "$d/kustomization.yaml"
+  done
+}
+
+# database_compose ROOT OUT: the database from atlas-db.yaml plus an overlay listing networkpolicies
+# and cnpg-external hold the same objects as one listing cnpg and networkpolicies, none twice; and
+# cnpg-external refuses a render that still has cnpg. Leaves the separate path's render in
+# OUT/separate-database.yaml for the linters.
+database_compose() {
+  local root="$1" out="$2" w="$WORK/compose-$RANDOM" both
+  compose_kustomization "$root" "$w/all-in-one" cnpg networkpolicies
+  compose_kustomization "$root" "$w/separate" networkpolicies cnpg-external
+  compose_kustomization "$root" "$w/both" cnpg networkpolicies cnpg-external
+  echo "lint: kustomize build base + cnpg + networkpolicies, and base + networkpolicies + cnpg-external"
+  "$KUSTOMIZE" build "$w/all-in-one" > "$w/all-in-one.yaml" || return 1
+  "$KUSTOMIZE" build "$w/separate" > "$out/separate-database.yaml" || return 1
+  kind_names "$w/all-in-one.yaml" > "$w/all-in-one.names"
+  kind_names "$out/separate-database.yaml" > "$w/separate.names"
+  kind_names "$out/database.yaml" > "$w/database.names"
+  both="$(comm -12 "$w/separate.names" "$w/database.names")"
+  if [ -n "$both" ]; then
+    echo "lint: FAIL in both atlas-db.yaml and the overlay with cnpg-external (two owners):"$'\n'"$both" >&2
+    return 1
+  fi
+  sort "$w/separate.names" "$w/database.names" > "$w/sum.names"
+  if ! diff -u --label "base + cnpg + networkpolicies" --label "base + networkpolicies + cnpg-external, plus atlas-db.yaml" \
+      "$w/all-in-one.names" "$w/sum.names" >&2; then
+    echo "lint: FAIL atlas-db.yaml and the overlay with cnpg-external do not add up to the all-in-one install" >&2
+    return 1
+  fi
+  echo "lint: atlas-db.yaml plus cnpg-external add up to cnpg plus networkpolicies ($(wc -l < "$w/all-in-one.names") objects, none twice)"
+  if "$KUSTOMIZE" build "$w/both" > /dev/null 2>&1; then
+    echo "lint: FAIL cnpg-external built with cnpg still listed; it must refuse a Cluster" >&2
+    return 1
+  fi
+  echo "lint: cnpg-external refuses a render that still lists cnpg"
 }
 
 # other_rule_failures RULE OUT: the FAIL lines of conftest output OUT that are not RULE's. One awk
@@ -207,6 +309,17 @@ self_test() {
   cp -r "$FIXTURES/tree/base" "$WORK/stray/base"
   printf 'resources: []\n' > "$WORK/stray/extra/kustomization.yaml"
   if lint "$WORK/stray" > /dev/null 2>&1; then fail "a stray kustomization passed"; fi
+
+  echo "== a database file that drifted from its build fails; a comment-only change passes"
+  mkdir -p "$WORK/drift"
+  cp -r "$FIXTURES/tree/base" "$FIXTURES/tree/components" "$FIXTURES/tree/database" "$WORK/drift/"
+  printf '# a comment the build does not have\n\n' >> "$WORK/drift/database/atlas-db.yaml"
+  sed -i 's/^\(  instances: [0-9]*\)$/\1    # a trailing comment/' "$WORK/drift/database/atlas-db.yaml"
+  lint "$WORK/drift" > /dev/null 2>&1 || fail "a comment-only change to the database file failed"
+  sed -i 's/^  instances: [0-9]*/  instances: 9/' "$WORK/drift/database/atlas-db.yaml"
+  if lint "$WORK/drift" > /dev/null 2>&1; then fail "a drifted database file passed"; fi
+  rm "$WORK/drift/database/atlas-db.yaml"
+  if lint "$WORK/drift" > /dev/null 2>&1; then fail "a database kustomization without atlas-db.yaml passed"; fi
 
   echo "== each conftest-bad fixture fails with exactly its own rule"
   for f in "$FIXTURES"/conftest-bad/*.yaml; do

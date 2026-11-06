@@ -1,0 +1,210 @@
+# Atlas's PostgreSQL database as a CloudNativePG cluster, in one plain YAML file.
+#
+#   oc apply -f atlas-db.yaml -n atlas
+#   oc wait clusters.postgresql.cnpg.io/atlas-db -n atlas --for=condition=Ready --timeout=15m
+#
+# README.md in this directory has the prerequisites, the checks and how to remove it.
+#
+# WHAT IT CREATES, in the namespace given with `-n` (no namespace is written here):
+#   Cluster       atlas-db                      PostgreSQL 16, 2 instances, database `atlas` owned
+#                                               by `atlas`, TLS required, NO backup
+#   Database      atlas-db-atlas                the `atlas` database, declared
+#   NetworkPolicy atlas-database                what the database pods may send and receive
+#   NetworkPolicy atlas-database-from-operator  the CloudNativePG operator's way in
+# and, made by the operator from the Cluster: the pods atlas-db-1 and -2, their volumes, the
+# services atlas-db-rw / -ro / -r, Secret atlas-db-app (the URL, key `fqdn-uri`) and Secret
+# atlas-db-ca (the CA, key `ca.crt`), which is what Atlas reads.
+#
+# LINES TO EDIT are marked `# EDIT:`. Change the value on that line, or remove the `# ` in front
+# of an optional line (keep its indentation). Nothing else needs changing. Change sizes and the
+# storage class BEFORE the first apply: volumes keep the size they were made with.
+#
+# ONE SOURCE. This file is rendered from kustomization.yaml next to it (the components
+# ../components/cnpg and ../components/networkpolicies-database, which the Atlas overlays use
+# too), with these comments added. The repository's lint fails if the two differ by anything but
+# comments. Your own copy, edited at the EDIT lines, is yours: keep it with your install notes.
+apiVersion: postgresql.cnpg.io/v1    # EDIT: postgresql.k8s.enterprisedb.io/v1 on EDB Postgres for Kubernetes
+kind: Cluster
+metadata:
+  labels:
+    app.kubernetes.io/component: database
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/part-of: atlas
+  name: atlas-db    # keep: Atlas reads the Secrets atlas-db-app and atlas-db-ca by this name
+spec:
+  # The two instances on different zones when the cluster has zones (a preferred rule: a cluster
+  # with one zone still schedules both).
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: topology.kubernetes.io/zone
+  bootstrap:
+    initdb:
+      database: atlas
+      encoding: UTF8
+      owner: atlas
+  # The `postgres` superuser gets no password and no Secret; Atlas connects as `atlas`.
+  enableSuperuserAccess: false
+  # PostgreSQL 16, CloudNativePG's `standard` image (it carries pgvector; `minimal` does not), by
+  # tag AND digest. A MIRRORED REGISTRY: copy this exact image by digest and name your copy here,
+  # same tag, same digest (deploy/openshift/FIRST-INSTALL.md, "Your own registry"), for example
+  #   registry.example.com/mirror/postgresql:16.15-202611020810-standard-trixie@sha256:b676...
+  # On EDB, the image the platform team names.
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.15-202611020810-standard-trixie@sha256:b67681006859e6572798d498fc1755016fe4808efecc9fa8bd48059de4efaaeb    # EDIT: your mirror
+  # A REGISTRY THAT NEEDS CREDENTIALS: a Secret of type kubernetes.io/dockerconfigjson in the same
+  # namespace, named here. The operator copies it onto the pods' ServiceAccount (atlas-db).
+  # imagePullSecrets:                    # EDIT: optional, remove the `# ` on this line and the next
+  #   - name: change-me-pull-secret
+  # Copied onto every object the operator makes (pods, services, volumes). The NetworkPolicies
+  # below select the database pods by these labels, under community CloudNativePG and EDB alike.
+  inheritedMetadata:
+    labels:
+      app.kubernetes.io/component: database
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/part-of: atlas
+  instances: 2    # EDIT: 2 = a primary and a hot standby; 3 if your standard says so; 1 only for a trial (no standby)
+  postgresql:
+    pg_hba:
+    # After the operator's own rules: a connection without TLS is refused.
+    - hostnossl all all all reject
+  # Update the standby first, then switch over to it, without waiting for a person.
+  primaryUpdateMethod: switchover
+  primaryUpdateStrategy: unsupervised
+  resources:    # EDIT: per instance
+    limits:
+      cpu: "2"
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  # Data and WAL on separate volumes, per instance (2 instances: 4 volumes, 50Gi in all). Without
+  # a storageClass the cluster's default class is used (`oc get storageclass`).
+  storage:
+    size: 20Gi    # EDIT: data volume per instance
+    # storageClass: change-me-storage-class    # EDIT: optional, remove the `# ` to name a class
+  walStorage:
+    size: 5Gi    # EDIT: WAL volume per instance
+    # storageClass: change-me-storage-class    # EDIT: optional, the same class as above
+  # NO BACKUP here: until backups are set up (deploy/openshift/README.md, "The database",
+  # component cnpg-objectstore-plugin) the standby is the only copy of the data.
+---
+# The `atlas` database, declared. initdb above creates it; this adopts it (same name and owner).
+# `retain`: deleting this object leaves the database and its rows alone. Needs CloudNativePG 1.25
+# or later; on an older operator delete this whole document (down to the next `---`).
+apiVersion: postgresql.cnpg.io/v1    # EDIT: postgresql.k8s.enterprisedb.io/v1 on EDB Postgres for Kubernetes
+kind: Database
+metadata:
+  labels:
+    app.kubernetes.io/component: database
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/part-of: atlas
+  name: atlas-db-atlas
+spec:
+  cluster:
+    name: atlas-db
+  databaseReclaimPolicy: retain
+  ensure: present
+  name: atlas
+  owner: atlas
+---
+# The database pods' traffic. A NetworkPolicy only allows; this one selects the database pods
+# alone, so in a namespace that denies by default they get exactly:
+#   out  the other instances on 5432 and 8000 (replication, joining, switchover);
+#   out  the Kubernetes API on 6443 (each instance's manager reads its Cluster through it);
+#   out  the cluster DNS: OpenShift's DNS pods, namespace openshift-dns, port 5353 (on another
+#        Kubernetes: kube-system, port 53);
+#   in   Atlas (atlas-api, the migrate Job, the audit CronJob) on 5432, by their pod labels;
+#   in   the other instances on 5432 and 8000.
+# The operator's way in is the next policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/component: networkpolicy
+    app.kubernetes.io/name: atlas
+  name: atlas-database
+spec:
+  egress:
+  - ports:
+    - port: 5432
+      protocol: TCP
+    - port: 8000
+      protocol: TCP
+    to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: database
+          app.kubernetes.io/name: atlas
+  - ports:
+    - port: 6443
+      protocol: TCP
+  - ports:
+    - port: 5353
+      protocol: UDP
+    - port: 5353
+      protocol: TCP
+    to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: openshift-dns
+  ingress:
+  - from:
+    - podSelector:
+        matchExpressions:
+        - key: app.kubernetes.io/component
+          operator: In
+          values:
+          - api
+          - migrate
+          - audit-purge
+        matchLabels:
+          app.kubernetes.io/name: atlas
+    ports:
+    - port: 5432
+      protocol: TCP
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: database
+          app.kubernetes.io/name: atlas
+    ports:
+    - port: 5432
+      protocol: TCP
+    - port: 8000
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: database
+      app.kubernetes.io/name: atlas
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# The CloudNativePG operator to the database pods, on 8000 (each instance's status) and 5432.
+# Without it, in a namespace that denies by default, the Cluster reports `Instance Status
+# Extraction Error` and no standby is made. Every pod of the operator's namespace is admitted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/component: networkpolicy
+    app.kubernetes.io/name: atlas
+  name: atlas-database-from-operator
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          # cnpg-system: community CloudNativePG from its manifest or Helm chart.
+          # openshift-operators: an operator from OperatorHub (OLM), community or EDB.
+          kubernetes.io/metadata.name: cnpg-system    # EDIT: the operator's namespace
+    ports:
+    - port: 8000
+      protocol: TCP
+    - port: 5432
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: database
+      app.kubernetes.io/name: atlas
+  policyTypes:
+  - Ingress

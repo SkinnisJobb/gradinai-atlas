@@ -1,0 +1,15 @@
+# A stand-in for deploy/openshift/database/atlas-db.yaml: the build of kustomization.yaml
+# here, with comments the drift check ignores.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: atlas-db
+spec:
+  bootstrap:
+    initdb:
+      database: atlas
+      owner: atlas
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  instances: 2    # a trailing comment, also ignored
+  storage:
+    size: 10Gi

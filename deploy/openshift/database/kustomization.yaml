@@ -1,0 +1,27 @@
+# The SOURCE of atlas-db.yaml, the plain-YAML database install (README.md in this directory).
+# Nothing applies this kustomization: people apply atlas-db.yaml with `oc apply -f`. It exists so
+# atlas-db.yaml is never written twice: its objects are exactly what this renders, from the same
+# component files the overlays use.
+#
+#   ../components/cnpg                     Cluster atlas-db and Database atlas-db-atlas
+#   ../components/networkpolicies-database the database pods' NetworkPolicies (and nothing that
+#                                          selects an Atlas application pod)
+#
+# THE CHECK. tools/ci/openshift/lint.sh builds this directory and compares the result with
+# atlas-db.yaml after removing the comments and blank lines from both: any other difference fails
+# the pull request. After changing either component, run the build, carry the change into
+# atlas-db.yaml by hand (keeping its comments), and run the lint:
+#   kustomize build deploy/openshift/database        (or: oc kustomize deploy/openshift/database)
+#   bash tools/ci/openshift/lint.sh
+#
+# fifo: the objects in the order the components list them (the Cluster first), not kustomize's
+# default order by kind, so the flat file reads top-down.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+sortOptions:
+  order: fifo
+
+components:
+  - ../components/cnpg
+  - ../components/networkpolicies-database
