@@ -493,6 +493,18 @@ not stated in OpenShift's documentation (**unverified**). If it does not, the do
 a `namespaceSelector` on `policy-group.network.openshift.io/host-network: ""`. The OpenShift Local
 run (task 6.3) settles it.
 
+**Built (task 3.4, 2026-11-06)** as the opt-in component `deploy/openshift/components/networkpolicies/`
+until it has run on the company cluster; `deploy/openshift/README.md`, "NetworkPolicies", is the
+current edge list. Three corrections to the above, found while building it: the database pods are
+selected by `app.kubernetes.io/name: atlas` and `app.kubernetes.io/component: database` (copied
+by the Cluster's `inheritedMetadata`, the same under EDB), not `cnpg.io/cluster`; the database
+pods also need **egress to the Kubernetes API** (6443), because CloudNativePG's instance manager
+reads its Cluster through it; and OpenShift's network policy documentation does state that a
+policy "cannot block traffic from localhost or from their resident nodes", so the probes need no
+rule (verified in kind; task 6.3 confirms on OVN-Kubernetes). Next to a project template's
+`allow-same-namespace` the Atlas pods stay isolated from each other through their egress rules,
+but a non-Atlas pod in the namespace is not: the README explains it.
+
 
 ### Question 7. Secrets
 
