@@ -185,6 +185,13 @@ Red Hat OpenShift), which is not finished yet.
   (`deploy/openshift/FIRST-INSTALL.md`). Its overlay still names this release's Debian-based
   images; moving it to the `-ubi` ones is the next step
   ([deploy/openshift/README.md](../../deploy/openshift/README.md#images-and-releases)).
+- **OpenShift NetworkPolicies, opt-in:** `deploy/openshift/components/networkpolicies/`, default
+  deny for every Atlas pod, then one allow per edge Atlas uses (atlas-mcp has no path to the
+  database or to atlas-api). It works next to a project template's own policies and lets the
+  CloudNativePG operator reach the database, which those templates block. The example overlay
+  lists it commented out, and `deploy/openshift/FIRST-INSTALL.md` has a troubleshooting section
+  for a cluster that denies traffic by default
+  ([deploy/openshift/README.md](../../deploy/openshift/README.md#networkpolicies-task-34)).
 - **Startup:** the schema step and the boot seeding hold a PostgreSQL advisory lock, so several
   replicas, or a replica and `atlas-migrate`, starting together no longer race. A single process
   never waits on it. A `postgresql://` database URL with no driver now means psycopg2.
