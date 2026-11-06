@@ -1,0 +1,25 @@
+# 4b. Whose X-Forwarded-For atlas-tls (Caddy) believes (TASK-1496). The router sets the header
+# (the Route's set-forwarded-headers: replace) and Caddy turns it into CF-Connecting-IP for
+# atlas-api, but only when the peer, the router pod, is inside this list. The router pods run on
+# the pod network, so the value is the same pod network CIDR as in patch-trusted-proxy.yaml,
+# SPACE-separated here if there are several (Caddy's syntax), comma-separated there:
+#   oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'
+# If the platform team says the router uses the host network, add the machine network too
+#   oc get network.config cluster -o jsonpath='{.status.machineNetwork}'   (or ask them)
+# and if an Application Gateway or Front Door sits in front of the router, add its range and switch
+# the Route's set-forwarded-headers to `append` (FIRST-INSTALL.md, assumption 5).
+#
+# Wrong here means every client appears as the router's address: sign-ins still work, but the
+# throttle and the audit trail see the router, not the person.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-tls
+spec:
+  template:
+    spec:
+      containers:
+        - name: atlas-tls
+          env:
+            - name: CADDY_TRUSTED_PROXIES
+              value: change-me-pod-network-cidr

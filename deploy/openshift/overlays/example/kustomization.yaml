@@ -1,0 +1,116 @@
+# The example overlay: a first install of Atlas on OpenShift (TASK-1496, ARO 3.7, first step).
+# deploy/openshift/FIRST-INSTALL.md walks through using it, step by step, from PowerShell 7.
+#
+# WHAT IT IS. The smallest overlay that installs Atlas in one namespace on the working
+# assumptions of the ARO epic: images pulled straight from ghcr.io, a community CloudNativePG
+# Cluster on the default storage class with no backup, plain Secrets made by
+# scripts/openshift/new-secrets.py, a re-encrypt Route on the router's default certificate,
+# local accounts. No NetworkPolicies and no optional component yet: the full template (task 3.7,
+# second step) grows THIS directory, after tasks 3.4 and 3.6.
+#
+# FILL IN BEFORE `oc apply -k` (every value to change says `change-me`; FIRST-INSTALL.md step 5):
+#   1. `namespace:` below                    your project
+#   2. `change-me-owner` in `images:` below   the GitHub account that publishes the images
+#   3. atlas.env                              the public host, in four lines (and the privacy text)
+#   4. patch-trusted-proxy.yaml and           the cluster's pod network CIDR, in both (atlas-api
+#      patch-tls-trusted-proxy.yaml           comma-separated, atlas-tls space-separated)
+# The Route's host is copied from ATLAS_PUBLIC_HOST in atlas.env (`replacements:` below), so the
+# host is typed in one file only.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# 1. The project (namespace) Atlas runs in. It must exist already: FIRST-INSTALL.md step 2.
+namespace: change-me-namespace
+
+resources:
+  - ../../base
+
+# The database: a CloudNativePG Cluster `atlas-db`, community API group (postgresql.cnpg.io),
+# default storage class, 2 instances, NO backup. If the cluster runs EDB Postgres for Kubernetes
+# instead, add ../../components/cnpg-edb after it. For backups, replace this line with
+# ../../components/cnpg-objectstore-plugin (never both). deploy/openshift/README.md, "The database".
+components:
+  - ../../components/cnpg
+
+# 2. The images of release v0.0.1-alpha, by tag AND the digest the release published (its
+# release-images.env). The base names a placeholder registry (registry.example.com), because the
+# repository names no account; each entry below matches one base name and moves every container
+# that uses it (atlas-api, its db-url init container, the migrate Job and the audit CronJob all
+# run the api image).
+#
+# `change-me-owner` is the GitHub account the Atlas repository belongs to, in LOWER CASE
+# (ghcr.io refuses capitals): github.com/<Owner>/gradinai-atlas gives ghcr.io/<owner>/....
+# Mirroring to your own registry (ACR, Quay) instead: copy the same digests there and change
+# `newName` only; the digest guarantees the bytes are the same.
+#
+# These are the Debian-based hardened images. The UBI builds (task 1.4) replace them in a later
+# release: change newName, newTag and digest together, and the Job name and version label below.
+images:
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-api
+    newName: ghcr.io/change-me-owner/gradinai-atlas-api
+    newTag: v0.0.1-alpha
+    digest: sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-mcp
+    newName: ghcr.io/change-me-owner/gradinai-atlas-mcp
+    newTag: v0.0.1-alpha
+    digest: sha256:fa24d32824eb485b77c672e845fdcddc994aaf09dfde5c8304cc4a91272a905b
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-tls
+    newName: ghcr.io/change-me-owner/gradinai-atlas-tls
+    newTag: v0.0.1-alpha
+    digest: sha256:8902763650a5a117dda378a228e184a04df25a4dd03d0a43e0dd6ccfdc9f0cb5
+
+# The release these images belong to; moves with them.
+labels:
+  - pairs:
+      app.kubernetes.io/version: v0.0.1-alpha
+    includeSelectors: false
+    includeTemplates: true
+
+# 3. The settings that differ from the base's atlas-env: the public host and the seed. Merged
+# over the base's keys; a key not listed here keeps the base's value (base/atlas.env).
+configMapGenerator:
+  - name: atlas-env
+    behavior: merge
+    envs:
+      - atlas.env
+    options:
+      disableNameSuffixHash: true
+
+patches:
+  # 4. Whose client-address header atlas-api believes: the pod network (patch-trusted-proxy.yaml).
+  - path: patch-trusted-proxy.yaml
+    target:
+      kind: Deployment
+      name: atlas-api
+  # 4b. Whose X-Forwarded-For atlas-tls (Caddy) believes: the same network
+  # (patch-tls-trusted-proxy.yaml).
+  - path: patch-tls-trusted-proxy.yaml
+    target:
+      kind: Deployment
+      name: atlas-tls
+  # The migrate Job is named per release (deploy/openshift/README.md, "Images and releases"). On
+  # v0.0.1-alpha the base's name is already right, so this replaces it with itself; on the next
+  # release change `value` to atlas-migrate-<version, dots as dashes> together with the images.
+  - target:
+      kind: Job
+      name: atlas-migrate-v0-0-1-alpha
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: atlas-migrate-v0-0-1-alpha
+
+# The Route's host is ATLAS_PUBLIC_HOST, copied, so the two can never differ (a request whose
+# Host is not ATLAS_PUBLIC_HOST is refused with 421). The base's Route `atlas` carries
+# atlas.example.com; atlas-tls reads the same key from atlas-env as CADDY_PUBLIC_HOST.
+replacements:
+  - source:
+      kind: ConfigMap
+      name: atlas-env
+      fieldPath: data.ATLAS_PUBLIC_HOST
+    targets:
+      - select:
+          kind: Route
+        fieldPaths:
+          - spec.host
+        options:
+          create: true
