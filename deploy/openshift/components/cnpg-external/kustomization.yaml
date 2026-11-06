@@ -1,0 +1,46 @@
+# Component `cnpg-external`: the database was installed on its own, with the plain YAML file
+# deploy/openshift/database/atlas-db.yaml, and this overlay must not own any of it.
+#
+# HOW TO USE IT. In the overlay's `components:`, remove `../../components/cnpg` (or
+# cnpg-objectstore-plugin) and list this one LAST, after `../../components/networkpolicies` if that
+# is on:
+#   components:
+#     - ../../components/networkpolicies     # optional, as before
+#     - ../../components/cnpg-external       # last
+# The base needs nothing else: it reads Secrets atlas-db-app and atlas-db-ca, which the Cluster
+# from atlas-db.yaml makes under the same names. deploy/openshift/FIRST-INSTALL.md, "Installing the
+# database first, with plain YAML".
+#
+# WHAT IT DOES, to the components listed before it:
+#   - removes the NetworkPolicies atlas-database and atlas-database-from-operator (component
+#     networkpolicies-database, which networkpolicies includes). atlas-db.yaml holds them already;
+#     two owners would undo each other's edits, the operator's namespace above all. The other
+#     policies (default deny, DNS, the application edges) stay the overlay's.
+#   - FAILS THE BUILD if a Cluster is still in the render (`cnpg` or `cnpg-objectstore-plugin`
+#     left in `components:` before this one): the overlay would then apply a second Cluster spec
+#     over the one atlas-db.yaml made. kustomize's message is "testing value /kind failed".
+#     A patch on the Cluster (pull secret, image, storage class, an older operator's Database
+#     delete) then belongs in atlas-db.yaml instead.
+#
+# Alone, or with no NetworkPolicy component, it changes nothing: a patch whose target matches no
+# object is skipped, which is what the lint's base-plus-one build of it shows.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target:
+      kind: NetworkPolicy
+      name: ^atlas-database(-from-operator)?$
+    patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: removed-by-cnpg-external
+  # Any Cluster, community or EDB group. The value never matches the kind, so the build fails.
+  - target:
+      kind: Cluster
+    patch: |-
+      - op: test
+        path: /kind
+        value: cnpg-external is listed, so the Cluster belongs to deploy/openshift/database/atlas-db.yaml; remove ../../components/cnpg from components

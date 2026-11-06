@@ -20,6 +20,7 @@ deploy/openshift/
   base/                 always-on objects, deployable only with a database component and an overlay
   components/<name>/    one opt-in feature each (Kustomize Components)
   overlays/<name>/      an install: namespace, host, images, config, which components are on
+  database/             the database alone as one plain YAML file, atlas-db.yaml, for `oc apply -f`
 ```
 
 Plain YAML, applied with `oc apply -k` (Kustomize is built into `oc`) or rendered by Argo CD.
@@ -28,7 +29,8 @@ tag.
 
 **Linted on every pull request** that touches this directory, by
 `.github/workflows/openshift-lint.yml` (`tools/ci/openshift/lint.sh`): `kustomize build` of the
-base, of the base plus each component on its own, and of each overlay; then kubeconform (strict),
+base, of the base plus each component on its own, of each overlay and of `database/` (whose build
+must equal `database/atlas-db.yaml`, comments aside); then kubeconform (strict),
 kube-linter and Atlas's conftest policies (no secret in the environment, the restricted security
 context, no `runAsUser` in the base or a component, images by digest, no ServiceAccount token,
 no `http://` URL). `tools/ci/check_pins.py` also checks every `image:` here for a tag and a digest.
@@ -268,6 +270,16 @@ ClusterRole). An overlay lists **one** of the first two:
 | `components/cnpg/` | `Cluster` `atlas-db` (PostgreSQL 16, 2 instances, database `atlas` owned by `atlas`, TLS required) and `Database` `atlas-db-atlas`. **No backup.** | the CNPG operator and a default storage class |
 | `components/cnpg-objectstore-plugin/` | everything in `cnpg` (it includes it), plus the Barman Cloud plugin's `ObjectStore` `atlas-backups` (Azure Blob, 30-day recovery window), the Cluster's WAL archive through the plugin, and `ScheduledBackup` `atlas-db-daily` (02:30 every day, the first one at once) | also the Barman Cloud plugin (with cert-manager), the `ObjectStore` role granted to the namespace's admins, the blob container, Secret `atlas-backup-azure` |
 | `components/cnpg-edb/` | nothing of its own: it moves every `postgresql.cnpg.io` object to EDB's group. List it **after** one of the two above | EDB Postgres for Kubernetes instead of community CNPG |
+| `components/cnpg-external/` | nothing: listed **instead of** `cnpg`, last, when the database was installed on its own from `database/atlas-db.yaml`. It removes the database pods' two NetworkPolicies from the overlay and fails the build if a `Cluster` is still in it | the database from `database/atlas-db.yaml` |
+
+**The database on its own, as plain YAML.** [`database/atlas-db.yaml`](database/README.md) is
+the `cnpg` component's `Cluster` and `Database` plus the database pods' NetworkPolicies
+(component `networkpolicies-database`), flattened into one commented file with the lines to edit
+marked, for `oc apply -f atlas-db.yaml -n <project>` before and separately from Atlas. It is
+rendered from `database/kustomization.yaml` and the lint fails if the two differ by anything but
+comments, so the two paths cannot drift apart. An overlay then lists `cnpg-external` instead of
+`cnpg`; the lint also checks that the file plus such an overlay hold exactly the objects of
+`cnpg` plus `networkpolicies`, none of them twice.
 
 `cnpg` is what a first install applies: base plus `cnpg` on a fresh namespace comes up with
 nothing else to create. **Until `cnpg-objectstore-plugin` replaces it there is no backup**, and
@@ -381,6 +393,13 @@ components:
   - ../../components/networkpolicies
 ```
 
+The database pods' two policies (`atlas-database`, `atlas-database-from-operator`) are a
+component of their own, `components/networkpolicies-database/`, which `networkpolicies` includes:
+listing `networkpolicies` gives all of them. The plain-YAML database file (`database/`, "The
+database" above) carries those two alone, and `cnpg-external` removes them from an overlay that
+uses that file. `atlas-database` also allows the database pods DNS, so it holds on its own; next
+to `atlas-dns` the rule is there twice, which changes nothing.
+
 ### The edges
 
 Every policy selects pods by `app.kubernetes.io/name: atlas` and `app.kubernetes.io/component`;
@@ -396,7 +415,7 @@ the database pods carry both through the Cluster's `inheritedMetadata` (componen
 | a database pod | the other database pods | 5432, 8000 | `atlas-database` |
 | the CloudNativePG operator's namespace | the database pods | 8000, 5432 | `atlas-database-from-operator` |
 | the database pods | the Kubernetes API (any address) | 6443 | `atlas-database` |
-| every Atlas pod | the cluster DNS (namespace `openshift-dns`) | 5353 TCP and UDP | `atlas-dns` |
+| every Atlas pod | the cluster DNS (namespace `openshift-dns`) | 5353 TCP and UDP | `atlas-dns`; for the database pods also `atlas-database` |
 
 **The router is matched by the label's key** (`matchExpressions`, `operator: Exists`), not by
 its value. OpenShift's documentation writes the label with an empty value, but clusters carry
@@ -436,7 +455,8 @@ oc get pods -A -l app.kubernetes.io/name=cloudnative-pg
 oc get csv -A | Select-String -Pattern 'cloudnative-pg|cloud-native-postgresql'
 ```
 
-Then set it in the overlay:
+Then set it in the overlay (or, with the database from `database/atlas-db.yaml`, on the line
+marked `# EDIT:` in that file instead):
 
 ```yaml
 patches:
@@ -564,7 +584,7 @@ and the first install settle those.
 | 3.2 | `base/`: the `atlas-mcp` Deployment and Service (it reuses `atlas-scripts` and `atlas-service-ca`) |
 | 3.3 | `base/`: `atlas-tls` (Caddy on the UBI image) and the re-encrypt Route; the OpenShift Caddyfile |
 | 3.4 | `components/networkpolicies/` (done, opt-in): default deny, then one allow per edge; moves into `base/` once proven on the company cluster |
-| 3.5 | `components/cnpg/`: the CloudNativePG `Cluster` `atlas-db` and its backups |
+| 3.5 | `components/cnpg/`: the CloudNativePG `Cluster` `atlas-db` and its backups; `database/`: the same database as one plain YAML file (done) |
 | 3.6 | `components/`: `oidc`, `retrieval`, `mtls`, `external-secrets`, `gitops` |
 | 3.7 | `overlays/example/` and `FIRST-INSTALL.md` (first step, done); then the full overlay and a GitLab CI template for the company pipeline |
 | 3.8 | `base/`: the audit purge CronJob |

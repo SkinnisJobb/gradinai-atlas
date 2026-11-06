@@ -1,0 +1,6 @@
+# A stand-in for deploy/openshift/database/: the plain-YAML database install, whose atlas-db.yaml
+# must equal this build once its comments are removed (the lint's drift check).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+components:
+  - ../components/cnpg

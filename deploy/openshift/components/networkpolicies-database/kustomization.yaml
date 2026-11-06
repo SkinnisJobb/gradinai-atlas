@@ -1,0 +1,22 @@
+# Component `networkpolicies-database` (TASK-1493, ARO 3.4): the NetworkPolicies of the database
+# pods only, the part of component `networkpolicies` that belongs to the database.
+#
+# WHO LISTS IT. Not an overlay, normally: component `networkpolicies` includes it, so listing
+# `networkpolicies` gives every policy as before. It is its own component for the plain-YAML
+# database install, deploy/openshift/database/, whose kustomization renders `cnpg` plus this into
+# database/atlas-db.yaml: one source for both paths, checked by tools/ci/openshift/lint.sh.
+#
+# What it adds (networkpolicies.yaml), each selecting the database pods only
+# (app.kubernetes.io/name: atlas, app.kubernetes.io/component: database):
+#   atlas-database                in: atlas-api, the Job, the CronJob to :5432, and the instances to
+#                                 each other; out: the instances, the Kubernetes API (:6443), which
+#                                 CloudNativePG's instance manager needs, and the cluster DNS (5353)
+#   atlas-database-from-operator  in: the CloudNativePG operator's namespace to :8000 and :5432
+#
+# THE OVERLAY SETS the operator's namespace when it is not `cnpg-system` (README, "The operator's
+# namespace"); the plain-YAML install marks the same line to edit.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - networkpolicies.yaml
