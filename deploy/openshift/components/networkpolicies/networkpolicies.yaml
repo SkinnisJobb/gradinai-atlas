@@ -1,0 +1,301 @@
+# Atlas's NetworkPolicies (TASK-1493; research question 6). The component's kustomization.yaml
+# lists them; deploy/openshift/README.md, "NetworkPolicies", explains how they combine with the
+# policies an OpenShift project template may already have put in the namespace.
+#
+# HOW THEY COMBINE. NetworkPolicies only ever allow. A pod selected by at least one policy for a
+# direction accepts, in that direction, exactly the union of what the policies selecting it allow.
+# atlas-default-deny selects every Atlas pod for both directions, so each pod gets only the edges
+# below (and whatever another policy in the namespace allows it: README).
+#
+# SELECTORS. Pods by app.kubernetes.io/name: atlas plus app.kubernetes.io/component (api, mcp, tls,
+# migrate, audit-purge, database), which the base and the `cnpg` component put on every pod
+# template. Never by pod name or IP: neither is fixed.
+#
+# NOT NEEDED, ON PURPOSE:
+#   - Kubelet probes. Exec probes (atlas-api, atlas-mcp) run inside the pod and dial 127.0.0.1.
+#     atlas-tls's tcpSocket and httpGet probes come from the pod's own node, and a NetworkPolicy
+#     cannot block traffic from the resident node (Kubernetes, and OpenShift's network policy
+#     documentation for OVN-Kubernetes, both say so).
+#   - The Kubernetes API for the Atlas pods: none mounts a ServiceAccount token, none calls it.
+#     Only the database pods (CloudNativePG's instance manager) get it, below.
+---
+# Every Atlas pod: nothing in, nothing out, unless a policy below allows it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-default-deny
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Name resolution for every Atlas pod. OpenShift's DNS pods listen on 5353 (the Service's 53 is
+# translated before the policy is checked, so the pods' port is the one to allow), in namespace
+# openshift-dns. Written as OpenShift's documentation writes it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-dns
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - {protocol: UDP, port: 5353}
+        - {protocol: TCP, port: 5353}
+---
+# atlas-tls (Caddy), the front door.
+#   in  :8443 from the OpenShift router only. `policy-group.network.openshift.io/ingress` is the
+#       label OpenShift puts on the router's namespace (and, for a router on the host network, on
+#       the host network's traffic); `podSelector: {}` beside it is what makes the selector also
+#       match host-network pods (OpenShift's documentation). This is the rule that keeps other
+#       pods from forging X-Forwarded-For: Caddy believes that header from the whole pod
+#       network (CADDY_TRUSTED_PROXIES), so only the router may reach :8443.
+#   in  :9443 from atlas-mcp only (atlas-mcp's way to the API, as in Compose).
+#   out atlas-api :8443 and atlas-mcp :8493, the two upstreams in the Caddyfile.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-tls
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: tls
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              policy-group.network.openshift.io/ingress: ""
+          podSelector: {}
+      ports:
+        - {protocol: TCP, port: 8443}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: mcp
+      ports:
+        - {protocol: TCP, port: 9443}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: api
+      ports:
+        - {protocol: TCP, port: 8443}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: mcp
+      ports:
+        - {protocol: TCP, port: 8493}
+---
+# atlas-api.
+#   in  :8443 from atlas-tls only. ATLAS_TRUSTED_PROXY_CIDRS trusts CF-Connecting-IP from the
+#       whole pod network; this rule is what narrows that trust to atlas-tls.
+#   out the database :5432. (The oidc and retrieval components add their own egress, task 3.6.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-api
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: tls
+      ports:
+        - {protocol: TCP, port: 8443}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: database
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+# atlas-mcp.
+#   in  :8493 from atlas-tls only.
+#   out atlas-tls :9443 only. Nothing reaches atlas-api :8443 or the database from here: atlas-mcp
+#       holds no secret and forwards each caller's own token through the :9443 front.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-mcp
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: mcp
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: tls
+      ports:
+        - {protocol: TCP, port: 8493}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: tls
+      ports:
+        - {protocol: TCP, port: 9443}
+---
+# The migrate Job and the audit purge CronJob: the database :5432, nothing in. (Their db-url init
+# container only rewrites a file; it opens no connection.)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-db-clients
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+    matchExpressions:
+      - {key: app.kubernetes.io/component, operator: In, values: [migrate, audit-purge]}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: database
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+# The CloudNativePG pods of Cluster atlas-db (the `cnpg` component copies app.kubernetes.io/name:
+# atlas and component: database onto them, under community CNPG and EDB alike).
+#   in  :5432 from atlas-api, the migrate Job and the audit CronJob; never from atlas-mcp or
+#       atlas-tls.
+#   in  :5432 and :8000 from the other instances (streaming replication, and the join and
+#       switchover steps). The operator is the next policy.
+#   out the other instances :5432 and :8000.
+#   out the Kubernetes API, :6443 on any address. Each instance's manager watches its Cluster
+#       through the API. The API server runs on the control-plane nodes' host network, which no
+#       pod selector can name, and its address is the cluster's, so the rule names the port only;
+#       the policy is checked after the `kubernetes` Service's 443 is translated to it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-database
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: database
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+            matchExpressions:
+              - {key: app.kubernetes.io/component, operator: In, values: [api, migrate, audit-purge]}
+      ports:
+        - {protocol: TCP, port: 5432}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: database
+      ports:
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8000}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: atlas
+              app.kubernetes.io/component: database
+      ports:
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 8000}
+    - ports:
+        - {protocol: TCP, port: 6443}
+---
+# The CloudNativePG operator to the instances: :8000 (the instance manager's status endpoint) and
+# :5432, as CloudNativePG's networking documentation asks. A policy of its own so an overlay can
+# patch the one value below without counting rule indexes.
+#
+# THE NAMESPACE IS THE OVERLAY'S: `cnpg-system` is community CloudNativePG's default (its manifest
+# and Helm chart); an operator installed from OperatorHub (OLM, community or EDB) usually runs in
+# `openshift-operators`. Any pod of that namespace is admitted, not only the operator's: the
+# operator's pod labels differ between community CNPG and EDB, and a wrong label here would stop
+# the database from coming up. README, "NetworkPolicies", has the patch.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-database-from-operator
+  labels:
+    app.kubernetes.io/name: atlas
+    app.kubernetes.io/component: networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: atlas
+      app.kubernetes.io/component: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+      ports:
+        - {protocol: TCP, port: 8000}
+        - {protocol: TCP, port: 5432}

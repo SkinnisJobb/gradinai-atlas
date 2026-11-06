@@ -1,0 +1,36 @@
+# Component `networkpolicies` (TASK-1493, ARO 3.4; design: docs/oss/research/openshift-aro.md,
+# question 6): the Compose networks' isolation as Kubernetes NetworkPolicies. Default deny for
+# every Atlas pod, ingress and egress, then one allow per edge Atlas really uses.
+#
+# OPT-IN FOR NOW. It is a component, not part of base/, until it has run on the company cluster:
+# a first install may need it at once (a cluster that denies by default), or add it after the
+# trial. Once proven there it moves into base/. deploy/openshift/README.md, "NetworkPolicies",
+# has the edge list, how these sit next to an OpenShift project template's own policies, and the
+# questions for the platform team.
+#
+# What it adds (networkpolicies.yaml), all selecting pods labelled app.kubernetes.io/name: atlas
+# (every Atlas pod, and the database pods through the Cluster's inheritedMetadata):
+#   atlas-default-deny            no ingress, no egress, for every Atlas pod
+#   atlas-dns                     egress to the cluster DNS (openshift-dns, port 5353)
+#   atlas-tls                     in: the router to :8443, atlas-mcp to :9443;
+#                                 out: atlas-api :8443, atlas-mcp :8493
+#   atlas-api                     in: atlas-tls to :8443; out: the database :5432
+#   atlas-mcp                     in: atlas-tls to :8493; out: atlas-tls :9443 only
+#   atlas-db-clients              out: the database :5432, for the migrate Job and the audit CronJob
+#   atlas-database                in: atlas-api, the Job, the CronJob to :5432, and the instances to
+#                                 each other; out: the instances, and the Kubernetes API (:6443),
+#                                 which CloudNativePG's instance manager needs
+#   atlas-database-from-operator  in: the CloudNativePG operator's namespace to :8000 and :5432
+#
+# THE OVERLAY SETS the operator's namespace when it is not `cnpg-system` (community CNPG's
+# default): `openshift-operators` for an operator installed from OperatorHub (OLM), community or
+# EDB. README, "NetworkPolicies", has the patch.
+#
+# NOT HERE: egress to an identity provider or an embeddings endpoint (the oidc and retrieval
+# components, task 3.6); egress from the database to Azure Blob for backups (README has the
+# extra policy for cnpg-objectstore-plugin).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - networkpolicies.yaml

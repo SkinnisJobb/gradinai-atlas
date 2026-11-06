@@ -8,7 +8,8 @@ being built task by task; until the install guide (task 5.1) lands, this page is
 
 **To try an install now**, follow [FIRST-INSTALL.md](FIRST-INSTALL.md): a step-by-step for
 PowerShell 7 and `oc`, with the overlay [`overlays/example/`](overlays/example/kustomization.yaml)
-(no NetworkPolicies, no optional components, no backup yet).
+(no optional components, no backup yet; the NetworkPolicies are one commented line to switch on,
+below).
 
 The Compose install in `deploy/oss/` is unchanged and separate: nothing here is read by it.
 
@@ -57,7 +58,7 @@ no `http://` URL). `tools/ci/check_pins.py` also checks every `image:` here for 
 Every object carries `app.kubernetes.io/name: atlas`, `app.kubernetes.io/part-of: atlas`,
 `app.kubernetes.io/version` and an `app.kubernetes.io/component` (`api`, `mcp`, `tls`, `migrate`,
 `audit-purge`, `config`);
-the selectors use `name` and `component`, which the NetworkPolicies (task 3.4) will select on.
+the selectors use `name` and `component`, which the NetworkPolicies (task 3.4) select on.
 
 ### What the pods need that the base does not create
 
@@ -106,8 +107,8 @@ Job and the CronJob.
   service CA alone (`ATLAS_CA_BUNDLE=/run/config/service-ca/service-ca.crt`). That URL's host and
   port are exactly `ATLAS_INTERNAL_HOSTS` on `atlas-api`, the one Host on which a Bearer request
   needs no cookie: the two are fixed on the containers and change together. atlas-mcp never
-  dials `atlas-api:8443`, and the NetworkPolicies (task 3.4) give it no route to it or to the
-  database.
+  dials `atlas-api:8443`, and the NetworkPolicies (component `networkpolicies`, task 3.4) give it
+  no route to it or to the database.
 - **atlas-mcp holds no secret.** Each tool call forwards its caller's own Bearer token, so the pod
   mounts only its serving certificate, the service-CA bundle, the probe script and `/tmp`: no
   pepper, no database Secret, no database CA. Its exec probe is the same `https_probe.py`, on
@@ -380,13 +381,198 @@ A restore is always a new `Cluster` bootstrapped from the object store (`bootstr
 never in place; question 4 of the research describes the quarterly drill, and task 5.2 writes the
 runbook.
 
+## NetworkPolicies (task 3.4)
+
+`components/networkpolicies/` is the Compose networks' isolation as Kubernetes NetworkPolicies:
+**default deny for every Atlas pod, in and out, then one allow per edge Atlas uses.** It is an
+**opt-in component for now**, not part of `base/`: a first install may need it at once (on a
+cluster whose project template already holds NetworkPolicies, the database does not come up
+without it, below) or add it after the trial. It moves into `base/` once it has run on the
+company cluster. To switch it on, list it in the overlay:
+
+```yaml
+components:
+  - ../../components/cnpg
+  - ../../components/networkpolicies
+```
+
+### The edges
+
+Every policy selects pods by `app.kubernetes.io/name: atlas` and `app.kubernetes.io/component`;
+the database pods carry both through the Cluster's `inheritedMetadata` (component `cnpg`).
+
+| From | To | Port | Policy |
+|---|---|---|---|
+| the OpenShift router (namespace labelled `policy-group.network.openshift.io/ingress`) | atlas-tls | 8443 | `atlas-tls` |
+| atlas-mcp | atlas-tls | 9443 | `atlas-tls`, `atlas-mcp` |
+| atlas-tls | atlas-api | 8443 | `atlas-tls`, `atlas-api` |
+| atlas-tls | atlas-mcp | 8493 | `atlas-tls`, `atlas-mcp` |
+| atlas-api, the migrate Job, the audit purge CronJob | the database pods | 5432 | `atlas-api`, `atlas-db-clients`, `atlas-database` |
+| a database pod | the other database pods | 5432, 8000 | `atlas-database` |
+| the CloudNativePG operator's namespace | the database pods | 8000, 5432 | `atlas-database-from-operator` |
+| the database pods | the Kubernetes API (any address) | 6443 | `atlas-database` |
+| every Atlas pod | the cluster DNS (namespace `openshift-dns`) | 5353 TCP and UDP | `atlas-dns` |
+
+Nothing else. In particular **atlas-mcp reaches neither the database nor `atlas-api:8443`**, no
+other namespace reaches anything but the router to `atlas-tls:8443`, and no Atlas pod but the
+database reaches the Kubernetes API (none mounts a token).
+
+- **Probes need no rule.** atlas-api and atlas-mcp use exec probes (inside the pod, to 127.0.0.1).
+  atlas-tls's tcpSocket and httpGet probes come from the pod's own node, and a NetworkPolicy cannot
+  block traffic from the resident node: Kubernetes says so, and so does OpenShift's network policy
+  documentation for OVN-Kubernetes. Verified in kind (below); the OpenShift Local run (task 6.3)
+  confirms it on OVN-Kubernetes itself.
+- **DNS is port 5353**, the DNS pods' own port: OVN-Kubernetes checks the policy after the
+  Service's 53 is translated.
+- **The database needs the Kubernetes API.** CloudNativePG's instance manager, in every database
+  pod, reads its `Cluster` through the API; without the 6443 rule a new or restarted instance
+  waits forever (`dial tcp ...:443: i/o timeout` in its log). The API server listens on the
+  control-plane nodes' host network, which no pod selector names, so the rule names the port only.
+- **The CloudNativePG operator** polls each instance's status on 8000 and, per CloudNativePG's
+  networking documentation, needs 5432 too. Without it the Cluster's phase reads `Instance Status
+  Extraction Error: HTTP communication issue` and the standby is never created. Every pod of the
+  operator's namespace is admitted (the operator's own pod labels differ between community CNPG
+  and EDB, and a wrong label would stop the database).
+
+### The operator's namespace
+
+The component admits `cnpg-system`, community CloudNativePG's default (its manifest and Helm
+chart). An operator installed from OperatorHub (OLM, community or EDB) usually runs in
+`openshift-operators`. Ask the platform team, or look (either may need more than project rights):
+
+```powershell
+oc get pods -A -l app.kubernetes.io/name=cloudnative-pg
+oc get csv -A | Select-String -Pattern 'cloudnative-pg|cloud-native-postgresql'
+```
+
+Then set it in the overlay:
+
+```yaml
+patches:
+  - target: {kind: NetworkPolicy, name: atlas-database-from-operator}
+    patch: |-
+      - op: replace
+        path: /spec/ingress/0/from/0/namespaceSelector/matchLabels/kubernetes.io~1metadata.name
+        value: openshift-operators
+```
+
+### Backups need one more policy
+
+With `cnpg-objectstore-plugin`, the Barman Cloud sidecar in each database pod writes to Azure Blob
+over HTTPS, which `atlas-database` does not allow. Until the plugin component carries it, add this
+to the overlay's resources. A NetworkPolicy cannot name a host: narrow `0.0.0.0/0` to the storage
+account's address ranges, or to the platform team's egress proxy if they run one.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: atlas-database-backup
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: atlas, app.kubernetes.io/component: database}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ipBlock: {cidr: 0.0.0.0/0}}]
+      ports: [{protocol: TCP, port: 443}]
+```
+
+Without it the `ContinuousArchiving` condition (`oc get clusters.postgresql.cnpg.io atlas-db -o
+yaml`) turns false. The `oidc` and `retrieval` components (task 3.6) bring atlas-api's own egress.
+
+### Next to the project template's own policies
+
+Many OpenShift clusters create every new project from a template that already holds
+NetworkPolicies. The usual set, as OpenShift's "multitenant isolation" documentation writes it:
+
+| Policy | Selects | Allows in |
+|---|---|---|
+| `allow-from-openshift-ingress` | every pod | from the router's namespace, every port |
+| `allow-from-openshift-monitoring` | every pod | from namespaces labelled `network.openshift.io/policy-group: monitoring`, every port |
+| `allow-same-namespace` (or `allow-from-same-namespace`) | every pod | from every pod of the same namespace, every port |
+| `allow-from-kube-apiserver-operator` (sometimes) | every pod | from the kube-apiserver operator (its webhook health check) |
+
+They are ingress only; usually there is no egress policy, so egress stays open. Some templates
+add a `deny-all` (`podSelector: {}` and no rules).
+
+**NetworkPolicies add up.** A pod selected by any policy accepts the union of what the policies
+selecting it allow; no policy can take away what another allows. Next to that template, this
+component:
+
+- **adds egress control**, which the template does not have: each Atlas pod may open only the
+  connections in the table above. Because the sender is checked too, the Atlas pods stay isolated
+  from each other inside the namespace: **atlas-mcp still cannot reach the database or
+  `atlas-api:8443`**, because its own egress allows only `atlas-tls:9443` (verified in kind with
+  the template's three policies applied).
+- **lets the CloudNativePG operator in.** The template admits only the router, monitoring and the
+  namespace itself, not the operator's namespace. **With the template alone the database never
+  becomes healthy**: verified in kind, a fresh `atlas-db` stopped after its first instance with
+  `Instance Status Extraction Error`, and came up 2/2 within minutes of this component being
+  applied. Unless the platform team already admits the operator by a policy of its own, this
+  component (or at least `atlas-database-from-operator`) is needed for the install to work at all.
+- **makes a `deny-all` template workable**: without our allows the Route answers 503, the migrate
+  Job hangs on the database, and the operator cannot reach the instances.
+
+What it **cannot** do while `allow-same-namespace` exists: keep a **non-Atlas pod** of the same
+namespace (a debug pod, anything without the Atlas labels, which no egress policy restricts) away
+from the Atlas ports: `atlas-api:8443`, the database's 5432, and `atlas-tls:8443`. The last one
+matters: atlas-tls believes `X-Forwarded-For` from the whole pod network
+(`CADDY_TRUSTED_PROXIES`), so a pod that reaches `:8443` directly can forge the client address
+the sign-in throttle and the audit trail see. Our router-only rule prevents exactly that. The
+template already keeps other namespaces out, but not the same namespace. Likewise
+`allow-from-openshift-ingress` admits the router's namespace to every port, not only
+`atlas-tls:8443`, which is harmless while only routers run there.
+
+**For the platform team:** keep `allow-from-openshift-ingress` and `allow-from-openshift-monitoring`
+(ours needs neither, and they do no harm); **remove `allow-same-namespace` from the Atlas project,
+or accept** that the namespace is the trust boundary and run nothing but Atlas in it.
+
+### AdminNetworkPolicy and BaselineAdminNetworkPolicy
+
+OVN-Kubernetes also has cluster-wide policies that only cluster administrators write, checked in
+this order: **AdminNetworkPolicy (ANP)**, then the namespace's NetworkPolicies, then the one
+**BaselineAdminNetworkPolicy (BANP)**, named `default`.
+
+- An ANP rule that says **Deny** or **Allow** is final: our policies cannot override an ANP deny
+  (of egress to the Kubernetes API, say, or between namespaces). An ANP **Pass** hands the
+  decision to the NetworkPolicies.
+- The BANP decides only what no NetworkPolicy decided. Once our policies select a pod they decide
+  its traffic, so **a BANP deny is overridden by our allows**, and equally **a BANP allow no
+  longer applies to the Atlas pods**: anything the platform lets through by BANP (monitoring,
+  say) must then be in a NetworkPolicy.
+
+### Verified, and how
+
+`tools/ci/openshift/lint.sh` lints base plus this component, and the example overlay. Live, in
+kind 0.33 (three nodes, kindnet, which enforces NetworkPolicy) with CloudNativePG 1.30.1, the
+component applied before the Cluster, and stand-in pods carrying the Atlas labels and ports:
+
+- the Cluster came up with 2 instances and streaming replication under the policies;
+- atlas-mcp to the database and to `atlas-api:8443`: refused; to `atlas-tls:9443`: open. A
+  `verify-full` `psql` from atlas-mcp times out; from atlas-api and the migrate Job it connects;
+- atlas-tls to atlas-api and atlas-mcp: open; to the database: refused;
+- a pod in a namespace carrying the router's label: `atlas-tls:8443` open, `:9443`, atlas-api and
+  the database refused. A pod in an unlabelled namespace, and an unlabelled pod in the Atlas
+  namespace: everything refused;
+- the httpGet and tcpSocket probes passed under default deny;
+- without the 6443 rule a restarted instance waited on the API; without the operator's policy the
+  Cluster reported `Instance Status Extraction Error`;
+- with the template's three policies added, atlas-mcp to the database and to `atlas-api:8443`
+  stayed refused, while the router's namespace and an unlabelled pod of the namespace reached every
+  port.
+
+Lint only, because kind cannot show them: the real OpenShift labels and namespaces
+(`policy-group.network.openshift.io/ingress` on the real router, `openshift-dns` on 5353, the
+operator's namespace) and OVN-Kubernetes's own enforcement. The OpenShift Local run (task 6.3)
+and the first install settle those.
+
 ## What later tasks add
 
 | Task | Adds |
 |---|---|
 | 3.2 | `base/`: the `atlas-mcp` Deployment and Service (it reuses `atlas-scripts` and `atlas-service-ca`) |
 | 3.3 | `base/`: `atlas-tls` (Caddy on the UBI image) and the re-encrypt Route; the OpenShift Caddyfile |
-| 3.4 | `base/`: the NetworkPolicies (default deny, then one allow per compose network edge) |
+| 3.4 | `components/networkpolicies/` (done, opt-in): default deny, then one allow per edge; moves into `base/` once proven on the company cluster |
 | 3.5 | `components/cnpg/`: the CloudNativePG `Cluster` `atlas-db` and its backups |
 | 3.6 | `components/`: `oidc`, `retrieval`, `mtls`, `external-secrets`, `gitops` |
 | 3.7 | `overlays/example/` and `FIRST-INSTALL.md` (first step, done); then the full overlay and a GitLab CI template for the company pipeline |

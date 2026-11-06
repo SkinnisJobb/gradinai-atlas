@@ -3,7 +3,8 @@
 This is the short path to a first real install of Atlas on Azure Red Hat OpenShift (ARO), so
 that we learn what the cluster accepts before the full template is built. It uses the overlay in
 [`overlays/example/`](overlays/example/kustomization.yaml) and assumes as little as possible: no
-NetworkPolicies, no optional components, no backup, local accounts only. Everything here is
+optional components, no backup, local accounts only, and Atlas's NetworkPolicies off unless the
+project already has policies of its own (step 2).  Everything here is
 written for **PowerShell 7 on Windows**, with `oc` already logged in to the cluster
 (`oc login ...`) and a checkout of this repository as the current directory.
 
@@ -108,6 +109,20 @@ oc new-project atlas
 
 Otherwise use the one you were given. Every later command names it with `-n atlas`.
 
+**Did the project come with NetworkPolicies?** Many clusters create every project from a template
+that adds some:
+
+```powershell
+oc get networkpolicy -n atlas
+```
+
+If this lists anything (typically `allow-from-openshift-ingress`, `allow-from-openshift-monitoring`,
+`allow-same-namespace`, sometimes a `deny-all`), switch on Atlas's own NetworkPolicies in step 5:
+without them the CloudNativePG operator cannot reach the database pods, and the database never
+becomes healthy. Keep the list for the platform team questions in
+[`README.md`](README.md#next-to-the-project-templates-own-policies). If it lists nothing, leave
+them off for this first install, or switch them on anyway: they work either way.
+
 ## 3. The peppers
 
 Atlas has two peppers, random keys mixed into every password and every agent token. They are
@@ -176,6 +191,12 @@ $dir = 'deploy\openshift\overlays\ours'
 (Get-Content "$dir\patch-trusted-proxy.yaml") -replace 'change-me-pod-network-cidr', ($podnet -replace ' ', ',') | Set-Content "$dir\patch-trusted-proxy.yaml"
 (Get-Content "$dir\patch-tls-trusted-proxy.yaml") -replace 'change-me-pod-network-cidr', $podnet | Set-Content "$dir\patch-tls-trusted-proxy.yaml"
 ```
+
+**NetworkPolicies** (if step 2 listed any, or to have them from the start): in
+`kustomization.yaml`, remove the `#` in front of `- ../../components/networkpolicies` under
+`components:`. If the CloudNativePG operator does not run in `cnpg-system` (an operator from
+OperatorHub usually runs in `openshift-operators`; ask the platform team), add the patch from
+[`README.md`, "The operator's namespace"](README.md#the-operators-namespace) under `patches:`.
 
 Also read the two privacy lines and `ATLAS_SEED` in `atlas.env`. `ATLAS_SEED=demo` puts one
 neutral example project on the board of the empty database, which is what you want for a first
@@ -313,6 +334,73 @@ Start with `oc get pods -n atlas` and `oc get events -n atlas --sort-by=.lastTim
 | `atlas-tls` fails to start with a Caddyfile error about `trusted_proxies` | value 4b is not a CIDR list (Caddy wants spaces, not commas) | fix `patch-tls-trusted-proxy.yaml`, `oc apply -k` |
 | Every sign-in in the audit trail shows the same pod address | 4b does not cover the router's address (router on the host network, or a gateway in front) | assumption 5 |
 | Pods `Pending` with `exceeded quota` or a `LimitRange` message | the project's quota or limits are tighter than the manifests' requests (assumption 3) | `oc describe quota -n atlas`, `oc describe limitrange -n atlas`; ask for more, or patch the resources (assumption 3) |
+| The database, the migrate Job or the Route waits and times out instead of failing | a NetworkPolicy blocks the connection | the next section |
+
+### A cluster that restricts traffic (NetworkPolicies)
+
+Traffic between pods can be closed by NetworkPolicies in the project (from the project template,
+or Atlas's own), or by cluster-wide policies the platform team writes (AdminNetworkPolicy, and
+the one BaselineAdminNetworkPolicy). A blocked connection is not refused, it times out, so the
+symptoms are waits rather than errors:
+
+| What you see | Usually blocked |
+|---|---|
+| `oc get clusters.postgresql.cnpg.io -n atlas` shows the phase `Instance Status Extraction Error: HTTP communication issue`, or stops at one instance and no standby (`atlas-db-2`) is ever created | the CloudNativePG operator cannot reach the database pods on 8000 |
+| a database pod stays `0/1 Running`; `oc logs <pod> -n atlas -c postgres` repeats `wait-for-get-cluster` with `i/o timeout` | the database pod cannot reach the Kubernetes API (6443) |
+| the migrate Job runs for minutes and then fails with a connection `timeout` to `atlas-db-rw` (not `connection refused`, not a password error) | atlas-api, the Job or the CronJob cannot reach the database on 5432 |
+| `atlas-api` never becomes ready (`/readyz` fails) and its log shows database timeouts | the same |
+| `oc get route -n atlas` looks right, but the browser gets `503` "Application is not available" | the router cannot reach `atlas-tls:8443`, or atlas-tls is not ready (next line) |
+| `atlas-tls` stays `0/1` (readiness fails) while `atlas-api` is ready | atlas-tls cannot reach `atlas-api:8443` (its readiness goes through to atlas-api) |
+| MCP clients get `502` from `/mcp` while the board works | atlas-tls cannot reach `atlas-mcp:8493`, or atlas-mcp cannot reach `atlas-tls:9443` |
+| any of the above with `could not resolve` or `Name or service not known` | DNS (`openshift-dns`, port 5353) |
+
+**Look at what is in force:**
+
+```powershell
+oc get networkpolicy -n atlas
+oc describe networkpolicy -n atlas
+oc get adminnetworkpolicy,baselineadminnetworkpolicy     # cluster-wide; refused without the right: then ask the platform team
+oc get pods -n atlas --show-labels                       # the policies select on app.kubernetes.io/name and app.kubernetes.io/component
+oc get endpoints atlas-tls -n atlas
+```
+
+**Test one connection by hand**, from inside a pod (a timeout means blocked; refused or an answer
+means the network is open). The atlas-api image has Python:
+
+```powershell
+$pod = oc get pod -n atlas -l app.kubernetes.io/component=api -o jsonpath='{.items[0].metadata.name}'
+oc exec -n atlas $pod -c atlas-api -- python -c "import socket; socket.create_connection(('atlas-db-rw', 5432), 5); print('open')"
+```
+
+**The fix**, in your overlay (`deploy\openshift\overlays\ours\kustomization.yaml`):
+
+1. Switch on Atlas's NetworkPolicies: remove the `#` in front of
+   `- ../../components/networkpolicies` under `components:`. They allow exactly Atlas's own edges,
+   the operator's and the API server's included, on top of whatever the project already has.
+2. Find the operator's namespace and set it if it is not `cnpg-system`:
+
+   ```powershell
+   oc get pods -A -l app.kubernetes.io/name=cloudnative-pg -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name
+   ```
+
+   If that is refused or prints nothing, ask the platform team (OperatorHub installs, community or
+   EDB, usually run in `openshift-operators`). Then add the patch from
+   [`README.md`, "The operator's namespace"](README.md#the-operators-namespace) under `patches:`.
+3. Apply and check:
+
+   ```powershell
+   oc apply -k deploy\openshift\overlays\ours
+   oc get networkpolicy -n atlas
+   oc wait clusters.postgresql.cnpg.io/atlas-db -n atlas --for=condition=Ready --timeout=15m
+   ```
+
+   A migrate Job that already failed: `oc delete job atlas-migrate-v0-0-1-alpha -n atlas`, then
+   `oc apply -k` again.
+
+If it still waits after that, a cluster-wide policy is the likely cause: an AdminNetworkPolicy
+**Deny** cannot be overridden from the project (a BaselineAdminNetworkPolicy deny can, and Atlas's
+policies do). Send the platform team the output of the commands above and the edge list in
+[`README.md`, "NetworkPolicies"](README.md#networkpolicies-task-34).
 
 ## The assumptions and what to change if one is wrong
 
@@ -332,9 +420,10 @@ overlay, without touching the base.
 | 9 | `oc apply -k` by hand (later from GitLab), no GitOps | | Argo CD renders the same overlay; the `gitops` component (task 3.6) adds what it needs |
 | 10 | Image signatures are not enforced | the pods start | If the cluster enforces signatures, mirror the digests and sign them with the organisation's key (the design, question 12) |
 | 11 | Local accounts first; Entra ID later | step 7 | The `oidc` component (task 3.6), with the client secret made by `new-secrets.py --oidc-client-secret` |
-| 12 | Egress open enough later for OIDC | | NetworkPolicy egress rules come with the components (task 3.4 and 3.6) |
+| 12 | Egress open enough later for OIDC | | The `networkpolicies` component closes egress to Atlas's own edges; the `oidc` and `retrieval` components (task 3.6) bring theirs |
 | 13 | The cluster's default logging collects stdout | `oc logs` works | nothing to change in Atlas |
 | 14 | No service mesh | | If the namespace is meshed, keep the Atlas pods out of it (Atlas's own TLS already covers every hop) |
+| 15 | The project's own NetworkPolicies (if any) leave the operator a way in, or Atlas's are switched on | step 2, `oc get networkpolicy` | Switch on `components/networkpolicies` and set the operator's namespace: troubleshooting, "A cluster that restricts traffic" |
 
 ### The patches the table names
 
@@ -376,6 +465,7 @@ The database image from a mirror (assumption 1); the digest of the tag in
         value: <registry>/cloudnative-pg/postgresql:<same tag>@sha256:<same digest>
 ```
 
-**Not in this first install, on purpose:** NetworkPolicies (task 3.4), so nothing yet stops other
-pods in the cluster from reaching `atlas-api` or the database directly; backups; SSO; the
+**Not in this first install, on purpose, unless you switched them on:** Atlas's NetworkPolicies
+(`components/networkpolicies`); without them, and without a project template's policies, nothing
+stops other pods in the cluster from reaching `atlas-api` or the database directly; backups; SSO; the
 retrieval add-on; the GitLab pipeline. Treat this install as a trial until those are in.

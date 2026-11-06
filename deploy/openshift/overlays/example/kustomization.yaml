@@ -5,8 +5,10 @@
 # assumptions of the ARO epic: images pulled straight from ghcr.io, a community CloudNativePG
 # Cluster on the default storage class with no backup, plain Secrets made by
 # scripts/openshift/new-secrets.py, a re-encrypt Route on the router's default certificate,
-# local accounts. No NetworkPolicies and no optional component yet: the full template (task 3.7,
-# second step) grows THIS directory, after tasks 3.4 and 3.6.
+# local accounts. No optional component yet, and the NetworkPolicies are one commented line in
+# `components:` (switch it on when the project template already holds NetworkPolicies:
+# FIRST-INSTALL.md, troubleshooting). The full template (task 3.7, second step) grows THIS
+# directory, after task 3.6.
 #
 # FILL IN BEFORE `oc apply -k` (every value to change says `change-me`; FIRST-INSTALL.md step 5):
 #   1. `namespace:` below                    your project
@@ -31,6 +33,10 @@ resources:
 # ../../components/cnpg-objectstore-plugin (never both). deploy/openshift/README.md, "The database".
 components:
   - ../../components/cnpg
+  # NetworkPolicies: default deny for every Atlas pod, then one allow per edge. Needed at once if
+  # the project came with NetworkPolicies of its own (the operator cannot reach the database
+  # otherwise); set the operator's namespace if it is not cnpg-system (README, "NetworkPolicies").
+  # - ../../components/networkpolicies
 
 # 2. The images of release v0.0.1-alpha, by tag AND the digest the release published (its
 # release-images.env). The base names a placeholder registry (registry.example.com), because the
