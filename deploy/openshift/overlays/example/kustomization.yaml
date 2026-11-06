@@ -7,10 +7,11 @@
 # scripts/openshift/new-secrets.py, a re-encrypt Route on the router's default certificate,
 # local accounts. No optional component yet, and the NetworkPolicies are one commented line in
 # `components:` (switch it on when the project template already holds NetworkPolicies:
-# FIRST-INSTALL.md, troubleshooting). The full template (task 3.7, second step) grows THIS
+# FIRST-INSTALL.md, choice d). The full template (task 3.7, second step) grows THIS
 # directory, after task 3.6.
 #
-# FILL IN BEFORE `oc apply -k` (every value to change says `change-me`; FIRST-INSTALL.md step 5):
+# FILL IN BEFORE `oc apply -k` (every value to change says `change-me`; FIRST-INSTALL.md, step 9,
+# writes an overlay like this one from its values sheet):
 #   1. `namespace:` below                    your project
 #   2. `change-me-owner` in `images:` below   the GitHub account that publishes the images
 #   3. atlas.env                              the public host, in four lines (and the privacy text)
@@ -21,7 +22,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# 1. The project (namespace) Atlas runs in. It must exist already: FIRST-INSTALL.md step 2.
+# 1. The project (namespace) Atlas runs in. It must exist already: FIRST-INSTALL.md, step 2.
 namespace: change-me-namespace
 
 resources:
@@ -33,12 +34,12 @@ resources:
 # ../../components/cnpg-objectstore-plugin (never both). deploy/openshift/README.md, "The database".
 #
 # DATABASE INSTALLED SEPARATELY, with the plain YAML file ../../database/atlas-db.yaml
-# (FIRST-INSTALL.md, "Installing the database first, with plain YAML"): this overlay must not own
+# (FIRST-INSTALL.md, choice c and step 10): this overlay must not own
 # it too. Remove the `- ../../components/cnpg` line and uncomment `- ../../components/cnpg-external`,
 # which stays the LAST line of `components:`. It drops the database pods' two NetworkPolicies (the
 # database file has them) and fails the build if a Cluster is still here. Every patch below on
 # Cluster atlas-db or Database atlas-db-atlas then goes into atlas-db.yaml instead (its `# EDIT:`
-# lines); FIRST-INSTALL.md lists which.
+# lines); FIRST-INSTALL.md, step 10, writes them.
 components:
   - ../../components/cnpg
   # NetworkPolicies: default deny for every Atlas pod, then one allow per edge. Needed at once if
@@ -59,7 +60,7 @@ components:
 # Mirroring to your own registry (ACR, Quay, an internal mirror) instead: copy the same digests
 # there and change `newName` only; the digest guarantees the bytes are the same. The database
 # image and a pull secret are the commented entries at the end of `patches:` (FIRST-INSTALL.md,
-# "Your own registry").
+# step 7).
 #
 # A later release: change newTag and digest together (from that release's _UBI lines), and the
 # Job name and version label below.
@@ -83,7 +84,7 @@ labels:
       app.kubernetes.io/version: v0.0.2-alpha
     includeSelectors: false
     includeTemplates: true
-  # LABELS YOUR ORGANISATION REQUIRES (optional; FIRST-INSTALL.md, step 6): some clusters refuse,
+  # LABELS YOUR ORGANISATION REQUIRES (optional; FIRST-INSTALL.md, V10): some clusters refuse,
   # by an admission policy, any object or pod without certain labels. Uncomment and put the
   # platform team's keys and values in place of the two examples. includeSelectors: false keeps
   # them out of the selectors (a Deployment's selector cannot change after it is created);
@@ -129,7 +130,7 @@ patches:
       - op: replace
         path: /metadata/name
         value: atlas-migrate-v0-0-2-alpha
-  # OWN REGISTRY (optional; FIRST-INSTALL.md, "Your own registry"), for a cluster that cannot pull
+  # OWN REGISTRY (optional; FIRST-INSTALL.md, step 7), for a cluster that cannot pull
   # from ghcr.io. The three images above: change `newName` only, the digest stays. The database
   # image: uncomment the second entry and give it the mirrored name with the SAME tag and digest
   # as `imageName` in components/cnpg/cluster.yaml. A registry that needs credentials: uncomment
@@ -141,7 +142,7 @@ patches:
   #     - op: replace
   #       path: /spec/imageName
   #       value: <registry>/<path>/postgresql:<same tag>@sha256:<same digest>
-  # OLDER CLOUDNATIVEPG (optional; FIRST-INSTALL.md, step 1, "The CloudNativePG version"): an
+  # OLDER CLOUDNATIVEPG (optional; FIRST-INSTALL.md, step 5 and row T12): an
   # operator whose app Secret has no `fqdn-uri` key (before 1.25.3, or 1.26.0), or that has no
   # `Database` resource (before 1.25.0). Uncomment both entries: patch-older-cnpg.yaml switches
   # atlas-api and the audit CronJob to the `uri` key (still mounted as /run/secrets/db/fqdn-uri,

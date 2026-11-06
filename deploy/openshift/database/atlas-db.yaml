@@ -46,7 +46,7 @@ spec:
   enableSuperuserAccess: false
   # PostgreSQL 16, CloudNativePG's `standard` image (it carries pgvector; `minimal` does not), by
   # tag AND digest. A MIRRORED REGISTRY: copy this exact image by digest and name your copy here,
-  # same tag, same digest (deploy/openshift/FIRST-INSTALL.md, "Your own registry"), for example
+  # same tag, same digest (deploy/openshift/FIRST-INSTALL.md, step 7), for example
   #   registry.example.com/mirror/postgresql:16.15-202611020810-standard-trixie@sha256:b676...
   # On EDB, the image the platform team names.
   imageName: ghcr.io/cloudnative-pg/postgresql:16.15-202611020810-standard-trixie@sha256:b67681006859e6572798d498fc1755016fe4808efecc9fa8bd48059de4efaaeb    # EDIT: your mirror
@@ -62,6 +62,10 @@ spec:
       app.kubernetes.io/name: atlas
       app.kubernetes.io/part-of: atlas
   instances: 2    # EDIT: 2 = a primary and a hot standby; 3 if your standard says so; 1 only for a trial (no standby)
+  # With ONE instance, CloudNativePG's PodDisruptionBudget for the primary blocks every drain of its
+  # node (a single instance cannot be switched over), so a trial turns the PDBs off. Never with 2+.
+  # https://cloudnative-pg.io/docs/1.30/kubernetes_upgrade ("PostgreSQL Clusters used for Development or Testing")
+  # enablePDB: false    # EDIT: optional, ONLY with instances: 1; remove the `# ` on this line
   postgresql:
     pg_hba:
     # After the operator's own rules: a connection without TLS is refused.

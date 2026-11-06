@@ -10,7 +10,7 @@
 # A wrong or unparsable entry is only logged at startup and trusts nothing: sign-ins still work,
 # but every one is counted against Caddy's address instead of the client's, so one person's
 # failed sign-ins can throttle everybody. Check the log line after the first start
-# (FIRST-INSTALL.md, troubleshooting).
+# (FIRST-INSTALL.md, step 15).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

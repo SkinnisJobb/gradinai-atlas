@@ -8,8 +8,8 @@
 #     - ../../components/networkpolicies     # optional, as before
 #     - ../../components/cnpg-external       # last
 # The base needs nothing else: it reads Secrets atlas-db-app and atlas-db-ca, which the Cluster
-# from atlas-db.yaml makes under the same names. deploy/openshift/FIRST-INSTALL.md, "Installing the
-# database first, with plain YAML".
+# from atlas-db.yaml makes under the same names. deploy/openshift/FIRST-INSTALL.md, choice c
+# (`file`) and step 10.
 #
 # WHAT IT DOES, to the components listed before it:
 #   - removes the NetworkPolicies atlas-database and atlas-database-from-operator (component

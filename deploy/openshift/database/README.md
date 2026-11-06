@@ -53,7 +53,7 @@ oc get deploy -n cnpg-system -o jsonpath='{.items[*].spec.template.spec.containe
 No `databases`: the operator is older than 1.25. Delete the `Database` document from the file
 (from its comment block down to the next `---`); `initdb` still creates the database. Older than
 1.25.3 or 1.26.1: the database comes up, but Atlas then needs the `OLDER CLOUDNATIVEPG` patches
-in its overlay (`../FIRST-INSTALL.md`, step 1).
+in its overlay (`../FIRST-INSTALL.md`, step 5 and troubleshooting row T12).
 
 **Your rights in the project:**
 
@@ -77,6 +77,7 @@ apply**: volumes keep the size and class they were made with.
 | storage class | the two `# storageClass:` lines under `storage:` and `walStorage:`: remove the `# ` and name the class (`oc get storageclass`) | the cluster's default class |
 | sizes | `size:` under `storage:` (data) and `walStorage:` (WAL), per instance | 20Gi and 5Gi |
 | instances | `instances:` | 2; 1 only for a trial (no standby: losing the volume loses the data) |
+| PodDisruptionBudgets | the `# enablePDB: false` line under `instances:`: remove the `# ` **only with `instances: 1`** | on. With one instance CloudNativePG's PDB for the primary blocks every drain of its node, because a single instance cannot be switched over ([CloudNativePG 1.30](https://cloudnative-pg.io/docs/1.30/kubernetes_upgrade), "PostgreSQL Clusters used for Development or Testing") |
 | CPU and memory | `resources:`, per instance | 500m / 1Gi requested, 2 / 2Gi limit |
 | the operator's namespace | the last policy, `kubernetes.io/metadata.name:` | `cnpg-system` (community, manifest or Helm); `openshift-operators` for an operator from OperatorHub, community or EDB |
 | a mirrored registry | `imageName:` | `ghcr.io/cloudnative-pg/postgresql:<tag>@sha256:<digest>` |
@@ -92,7 +93,7 @@ oc get pods -A -l app.kubernetes.io/name=cloudnative-pg -o custom-columns=NAMESP
 
 **A mirrored registry.** Copy the image in `imageName:` to your registry **by digest**, and write
 your copy's name with the same tag and the same digest; the digest proves the bytes are the same.
-[`../FIRST-INSTALL.md`, "Your own registry"](../FIRST-INSTALL.md#your-own-registry), has the copy
+[`../FIRST-INSTALL.md`, step 7](../FIRST-INSTALL.md#7-check-that-the-cluster-can-pull-the-images), has the copy
 commands (`oc image mirror`, checked with `oc image info`). Keep a `standard` image: `minimal`
 has no pgvector. If the registry needs credentials, create the pull secret first and name it in
 the `imagePullSecrets:` lines (the operator puts it on the database pods' own ServiceAccount,
@@ -141,7 +142,7 @@ one) and shows the standby streaming.
 
 If it does not come up: `oc describe clusters.postgresql.cnpg.io atlas-db -n atlas` and
 `oc get events -n atlas --sort-by=.lastTimestamp`. The usual causes, and what they look like, are
-in [`../FIRST-INSTALL.md`, troubleshooting](../FIRST-INSTALL.md#troubleshooting):
+in [`../FIRST-INSTALL.md`, troubleshooting](../FIRST-INSTALL.md#appendix-b-troubleshooting), rows T7 to T9:
 `Pending` volumes (storage class or quota), no status at all (the operator does not watch the
 project), `Instance Status Extraction Error` (the operator's namespace in the last policy is
 wrong).
@@ -149,7 +150,7 @@ wrong).
 ## Then install Atlas, without its own database
 
 Follow [`../FIRST-INSTALL.md`](../FIRST-INSTALL.md) in the same project, with the changes in its
-section [Installing the database first, with plain YAML](../FIRST-INSTALL.md#installing-the-database-first-with-plain-yaml):
+choice c, `file`, which installs this file in [step 10](../FIRST-INSTALL.md#10-install-the-database-first-database-file-only):
 in the overlay, `../../components/cnpg` is removed and `../../components/cnpg-external` is listed
 last. Atlas finds the database by the Secrets' names, which are the same.
 

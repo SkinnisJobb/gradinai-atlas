@@ -1,5 +1,5 @@
-# OPTIONAL: for a CloudNativePG operator older than the base expects (FIRST-INSTALL.md, step 1,
-# "The CloudNativePG version"). Not applied until its two entries under `patches:` in
+# OPTIONAL: for a CloudNativePG operator older than the base expects (FIRST-INSTALL.md, step 5,
+# and troubleshooting row T12). Not applied until its two entries under `patches:` in
 # kustomization.yaml are uncommented (this file, and the inline one for the migrate Job).
 #
 # WHAT THE BASE EXPECTS. The app Secret `atlas-db-app` with the key `fqdn-uri`, which community
