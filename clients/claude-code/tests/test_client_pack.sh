@@ -255,8 +255,11 @@ if [ "${CLIENT_PACK_E2E_CLAUDE:-0}" = 1 ]; then
         HOME="$H" USERPROFILE="$H_NATIVE" CLAUDE_CONFIG_DIR="$CC" NODE_EXTRA_CA_CERTS="$CA_NATIVE" \
             timeout 90 claude mcp list > "$WORK/list.out" 2>&1 || true
         redact < "$WORK/list.out" | sed 's/^/     claude mcp list: /'
-        if grep -E '^atlas:' "$WORK/list.out" | grep -qi 'connected' \
-                && ! grep -E '^atlas:' "$WORK/list.out" | grep -qi 'failed' \
+        # A variable, never `grep | grep -qi` under pipefail: the first grep can die of SIGPIPE
+        # once grep -q has matched, and the pipeline then reports a miss (TASK-1504).
+        atlas_line=$(grep -E '^atlas:' "$WORK/list.out" || true)
+        if grep -qi 'connected' <<< "$atlas_line" \
+                && ! grep -qi 'failed' <<< "$atlas_line" \
                 && grep -q '^initialize 200' "$STUB_LOG"; then
             pass "claude mcp list: atlas connected with the helper's token (stub: $(grep -c '^initialize 200' "$STUB_LOG") authorised initialize)"
         else

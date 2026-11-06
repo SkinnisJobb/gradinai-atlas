@@ -258,9 +258,12 @@ jobs:
               'id -u; cat /app/Dockerfile.build >/dev/null && echo readable; touch "$HOME/.probe" /tmp/.probe && echo writable; if touch /app/.probe 2>/dev/null; then echo app-writable; else echo app-readonly; fi')
             echo "$out" | sed "s|^|$img: |"
             [ "$(echo "$out" | sed -n 1p)" = 1000770000 ] || bad=1
-            echo "$out" | grep -qx readable || { echo "::error::$img: an arbitrary UID cannot read /app"; bad=1; }
-            echo "$out" | grep -qx writable || { echo "::error::$img: an arbitrary UID cannot write HOME or /tmp"; bad=1; }
-            echo "$out" | grep -qx app-readonly || { echo "::error::$img: /app is writable at run time"; bad=1; }
+            # Here-strings, never `echo | grep -q` under pipefail: grep -q exits at its first match,
+            # the writer can die of SIGPIPE, and the pipeline's status turns the match into a miss
+            # (TASK-1504).
+            grep -qx readable <<< "$out" || { echo "::error::$img: an arbitrary UID cannot read /app"; bad=1; }
+            grep -qx writable <<< "$out" || { echo "::error::$img: an arbitrary UID cannot write HOME or /tmp"; bad=1; }
+            grep -qx app-readonly <<< "$out" || { echo "::error::$img: /app is writable at run time"; bad=1; }
           done
           [ "$bad" = 0 ]
 
@@ -426,8 +429,11 @@ jobs:
           code=$(curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:18443/api/x)
           [ "$code" = 404 ] || fail "the readiness door served more than /healthz (got $code)"
           [ "$(docker inspect -f '{{.State.Running}}' ubi-tls)" = true ] || fail "caddy exited"
-          if docker logs ubi-tls 2>&1 | grep -qi acme; then fail "caddy tried ACME"; fi
-          if docker logs ubi-tls 2>&1 | grep -q ':80"'; then fail "caddy opened a :80 listener"; fi
+          # The log read whole first: `docker logs | grep -q` under pipefail can miss the match it
+          # found (docker logs dies of SIGPIPE; TASK-1504), and both checks fail on a match.
+          ubi_log=$(docker logs ubi-tls 2>&1)
+          if grep -qi acme <<<"$ubi_log"; then fail "caddy tried ACME"; fi
+          if grep -q ':80"' <<<"$ubi_log"; then fail "caddy opened a :80 listener"; fi
           echo "$img: the OpenShift Caddyfile serves as uid $(docker exec ubi-tls id -u) with a read-only root"
 
       # The report names are what an `in` list in tools/ci/sca-accepted.json matches, so an image
@@ -614,7 +620,9 @@ jobs:
             echo "ATLAS_IMAGE_TLS=$(ref "$TLS")"
           } > "$out"
           # Every line carries a digest: a failed push output would leave `@` with nothing after.
-          if grep '^ATLAS_IMAGE_' "$out" | grep -vqE '@sha256:[0-9a-f]{64}$'; then
+          # The second grep has no -q, so it reads to the end and its writer never meets SIGPIPE
+          # under pipefail, which would turn a line without a digest into a pass (TASK-1504).
+          if grep '^ATLAS_IMAGE_' "$out" | grep -vE '@sha256:[0-9a-f]{64}$' > /dev/null; then
             cat "$out"; echo "::error::an image reference without a digest"; exit 1
           fi
           {
@@ -680,7 +688,8 @@ jobs:
             echo "ATLAS_IMAGE_POSTGRES=ghcr.io/$owner/gradinai-atlas-postgres:$tag@$POSTGRES_DIGEST"
             echo "ATLAS_IMAGE_TLS=ghcr.io/$owner/gradinai-atlas-tls:$tag@$TLS_DIGEST"
           } > "$env_file"
-          if grep '^ATLAS_IMAGE_' "$env_file" | grep -vqE '@sha256:[0-9a-f]{64}$'; then
+          # No -q on the second grep, so a line without a digest cannot pass on SIGPIPE (TASK-1504).
+          if grep '^ATLAS_IMAGE_' "$env_file" | grep -vE '@sha256:[0-9a-f]{64}$' > /dev/null; then
             cat "$env_file"; echo "::error::an image reference without a digest"; exit 1
           fi
           notes="$RUNNER_TEMP/notes.md"
