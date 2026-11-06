@@ -12,13 +12,14 @@
 # rolls the Deployments. Starting atlas-api alongside it is also safe: the boot and this command
 # take the same Postgres advisory lock (backend/main.py boot_lock), so one waits for the other.
 #
-# It loads atlas-env and gets the database URL (through the same db-url init container as
-# atlas-api), its CA and the peppers (importing the gate needs the peppers), and nothing else: it drops the sign-in settings itself (backend/migrate_cli.py),
-# so no OIDC Secret is mounted. No probes: it serves nothing. Same security context as atlas-api.
+# It loads atlas-env and gets the database URL (CloudNativePG's `fqdn-uri`, as atlas-api reads it),
+# its CA and the peppers (importing the gate needs the peppers), and nothing else: it drops the
+# sign-in settings itself (backend/migrate_cli.py), so no OIDC Secret is mounted. No probes: it
+# serves nothing. Same security context as atlas-api.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: atlas-migrate-v0-0-1-alpha
+  name: atlas-migrate-v0-0-2-alpha
   labels:
     app.kubernetes.io/name: atlas
     app.kubernetes.io/component: migrate
@@ -40,42 +41,10 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-      initContainers:
-        # Rewrites CNPG's postgresql:// URL to the psycopg2 driver the image ships; db_url.py
-        # (the atlas-scripts ConfigMap) says why. Only this container mounts the CNPG Secret.
-        - name: db-url
-          # Always the same image as the main container.
-          image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
-          imagePullPolicy: IfNotPresent
-          command: ["python", "-I", "/run/config/scripts/db_url.py"]
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 250m
-              memory: 128Mi
-          securityContext:
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
-            seccompProfile:
-              type: RuntimeDefault
-          volumeMounts:
-            - name: db
-              mountPath: /run/secrets/db
-              readOnly: true
-            - name: db-url
-              mountPath: /run/db-url
-            - name: scripts
-              mountPath: /run/config/scripts
-              readOnly: true
       containers:
         - name: atlas-migrate
           # The same image as atlas-api (deployment-api.yaml); one `images:` entry moves both.
-          image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-api-ubi:v0.0.2-alpha@sha256:351309bef465f82977ddc0c2983978fe89cba976ad2f356e7855bc3c39423f60
           imagePullPolicy: IfNotPresent
           command: ["atlas-migrate", "upgrade"]
           envFrom:
@@ -83,7 +52,7 @@ spec:
                 name: atlas-env
           env:
             - name: ATLAS_DB_URL_FILE
-              value: /run/db-url/url
+              value: /run/secrets/db/fqdn-uri
             - name: ATLAS_PASSWORD_PEPPER_FILE
               value: /run/secrets/peppers/password_pepper
             - name: ATLAS_TOKEN_PEPPER_FILE
@@ -111,8 +80,8 @@ spec:
             - name: peppers
               mountPath: /run/secrets/peppers
               readOnly: true
-            - name: db-url
-              mountPath: /run/db-url
+            - name: db
+              mountPath: /run/secrets/db
               readOnly: true
             - name: db-ca
               mountPath: /run/secrets/db-ca
@@ -143,13 +112,6 @@ spec:
             items:
               - key: ca.crt
                 path: ca.crt
-        - name: db-url
-          emptyDir:
-            medium: Memory
-            sizeLimit: 1Mi
-        - name: scripts
-          configMap:
-            name: atlas-scripts
         - name: tmp
           emptyDir:
             medium: Memory

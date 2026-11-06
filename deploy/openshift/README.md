@@ -40,7 +40,7 @@ no `http://` URL). `tools/ci/check_pins.py` also checks every `image:` here for 
 | `kustomization.yaml` | | the resource list, the common labels, the ConfigMap generators |
 | `serviceaccount.yaml` | ServiceAccount `atlas` | no token mounted, no Role bound: Atlas never calls the Kubernetes API |
 | `atlas.env` | ConfigMap `atlas-env` | the non-secret settings, loaded with `envFrom` (the counterpart of `.env`) |
-| `https_probe.py`, `db_url.py` | ConfigMap `atlas-scripts` | the exec probe and the database-URL init container, mounted at `/run/config/scripts/` |
+| `https_probe.py` | ConfigMap `atlas-scripts` | the exec probe of atlas-api and atlas-mcp, mounted at `/run/config/scripts/` |
 | `configmap-service-ca.yaml` | ConfigMap `atlas-service-ca` | the OpenShift service CA bundle, injected as `service-ca.crt` |
 | `service-api.yaml` | Service `atlas-api` | `:8443`, TLS only; its annotation makes the service CA issue Secret `atlas-api-tls` |
 | `deployment-api.yaml` | Deployment `atlas-api` | 2 replicas, uvicorn TLS on `:8443`, every secret a file, read-only root filesystem |
@@ -80,13 +80,12 @@ Job and the CronJob.
   the keys needed), read through the `*_FILE` settings, and `ATLAS_REQUIRE_SECRET_FILES=1` makes
   Atlas refuse the plain forms. The database TLS settings are `PGSSLMODE=verify-full` and
   `PGSSLROOTCERT=/run/secrets/db-ca/ca.crt`, which libpq reads; they are not secrets.
-- **The database URL goes through an init container.** CloudNativePG writes `postgresql://...`,
-  which SQLAlchemy 2.1 resolves to psycopg 3; the image ships psycopg2. The `db-url` init
-  container rewrites the scheme to `postgresql+psycopg2://` into a memory-backed `emptyDir`, and
-  only it mounts the CNPG Secret. `base/db_url.py` explains it, and what removes it.
-- **The `db-url` bridge goes once the base references a release containing TASK-1501**, which
-  makes Atlas itself read a `postgresql://` URL as psycopg2 (`backend/dsn.py`); then
-  `ATLAS_DB_URL_FILE` points at the CNPG Secret's `fqdn-uri` directly.
+- **The database URL is CloudNativePG's own, unchanged.** `ATLAS_DB_URL_FILE` names
+  `/run/secrets/db/fqdn-uri`, the `fqdn-uri` item of the CNPG app Secret, mounted read-only.
+  The operator writes `postgresql://...` with no driver; from `v0.0.2-alpha` on Atlas reads a
+  driver-less URL as psycopg2, the driver the image ships (`backend/dsn.py`, TASK-1501). Before
+  that release a `db-url` init container rewrote the scheme into an `emptyDir`; it is gone
+  (TASK-1503), so the base needs a release from `v0.0.2-alpha` on.
 - **Probes are exec probes that verify the certificate.** The kubelet's HTTPS `httpGet` probe
   does not verify certificates. `base/https_probe.py`, run with the image's Python, dials the
   pod's own `:8443`, verifies the certificate and its name (`atlas-api.<namespace>.svc`) against
@@ -116,11 +115,11 @@ Job and the CronJob.
   outside the MCP transport's Host check).
 - **One atlas-mcp replica, stateful transport, no PDB.** atlas-mcp keeps each MCP session in the
   memory of the pod that answered `initialize`, so a second replica would refuse the requests that
-  land on it. `ATLAS_MCP_STATELESS_HTTP=1` lifts that, but the release this base names
-  (`v0.0.1-alpha`) predates the switch and ignores it, so the base pins it to `0` on the container
-  and runs one replica; a PodDisruptionBudget on one replica would block every node drain. A
-  restart or a rollout ends the open sessions and clients start new ones. Running two is an
-  overlay change, below.
+  land on it. The image has `ATLAS_MCP_STATELESS_HTTP` from `v0.0.2-alpha` on; it is available
+  but not used: the base pins it to `0` on the container and runs one replica, by decision
+  ("One atlas-mcp replica", below). A PodDisruptionBudget on one replica would block every node
+  drain, so there is none. A restart or a rollout ends the open sessions and clients start new
+  ones.
 
 ### The audit purge (task 3.8)
 
@@ -129,8 +128,8 @@ CronJob `atlas-audit-purge` enforces `ATLAS_AUDIT_RETENTION_DAYS` (365 in `atlas
 `graph_event` or `auth_event`. With the setting removed it deletes nothing. It is the cron line the
 Compose install documents (`0 3 * * *`, see
 [Operations](../../docs/oss/guides/operations.md#8-audit-export)), at 03:00 UTC, with
-`concurrencyPolicy: Forbid`. It has the migrate Job's wiring: `atlas-env`, the `db-url` init
-container, the database CA and the peppers. To run it once now, for example to check the
+`concurrencyPolicy: Forbid`. It has the migrate Job's wiring: `atlas-env`, the database URL
+from the CNPG Secret, the database CA and the peppers. To run it once now, for example to check the
 retention after changing it:
 
 ```sh
@@ -169,11 +168,9 @@ every door and leg; the decisions:
   `tools/ci/check_oss_headers.py` (which fails if the two copies differ). The Route has no
   `hsts_header` annotation, so the header is sent once.
 - **No ACME.** `auto_https off`: every certificate is a file, and Caddy has no `:80` listener.
-- **The image.** The base names the released Compose Caddy (`gradinai-atlas-tls`, Alpine, with
-  an unused Cloudflare DNS plugin), which runs this Caddyfile unchanged under an arbitrary UID.
-  From `v0.0.2-alpha` on, a release also publishes the UBI build of Caddy
-  (`deploy/caddy/Dockerfile.ubi`) as `gradinai-atlas-tls-ubi`; the overlay moves to it
-  ("Images and releases" below).
+- **The image.** The base names the UBI build of Caddy, `gradinai-atlas-tls-ubi`
+  (`deploy/caddy/Dockerfile.ubi`: stock Caddy, no plugin, on `ubi-micro`, `USER 10001:0`). It
+  needs no root: it writes only the `/config` and `/data` emptyDirs and listens on 8443 and 9443.
 - **Probes are not exec probes**: the image has no shell, Python or HTTP client. Startup and
   liveness are `tcpSocket :8443`; readiness is an HTTPS `httpGet` of `/healthz`, which the
   Caddyfile's catch-all `:8443` site sends through its verified leg to atlas-api, so a front that
@@ -196,42 +193,40 @@ every door and leg; the decisions:
 | a pull secret (a registry that needs credentials) | `imagePullSecrets` on ServiceAccount `atlas` (every Atlas pod runs as it; the pods' `automountServiceAccountToken: false` does not stop pull secrets) and `spec.imagePullSecrets` on Cluster `atlas-db` (CloudNativePG copies it to the database pods' own ServiceAccount). The example overlay has both in `patch-pull-secret.yaml`, commented out in its `patches:`; [FIRST-INSTALL.md, "Your own registry"](FIRST-INSTALL.md#your-own-registry) |
 | labels the organisation requires | a second entry in `labels:` with `includeSelectors: false`, `includeTemplates: true`, and `fields` adding `spec/inheritedMetadata/labels` of the `Cluster` so the database pods carry them too; the example overlay has it commented out |
 | one replica instead of two | a `replicas` patch on `atlas-api` or `atlas-tls`, and delete its PDB (a `minAvailable: 1` on one replica blocks node drains) |
-| two `atlas-mcp` replicas (optional) | only on a release that has `ATLAS_MCP_STATELESS_HTTP`; see "Two atlas-mcp replicas" |
+| `atlas-mcp` replicas | nothing: one replica, stateful transport; see "One atlas-mcp replica" |
 
 ### Images and releases
 
-The base names the Debian-based hardened API image of release `v0.0.1-alpha` by tag and by the
-digest that release published (`ghcr.io/<owner>/gradinai-atlas-api`, listed in the release's
-`release-images.env`; see [Releases](../../docs/oss/RELEASES.md)). Its registry,
-`registry.example.com/gradinai-atlas`, is a placeholder, because the repository names no
-account: **every overlay sets the image**, to GHCR or to the organisation's mirror of the same
-digest. A cluster that may not pull from ghcr.io copies the release's images (and the database
-image) to its own registry by digest and changes `newName` only: [FIRST-INSTALL.md, "Your own
-registry"](FIRST-INSTALL.md#your-own-registry) has the commands.
+**The `-ubi` images are the ones OpenShift runs.** The base names the three UBI images of release
+`v0.0.2-alpha` by tag and by the digest that release published: `gradinai-atlas-api-ubi`
+(atlas-api, the migrate Job, the audit CronJob), `gradinai-atlas-mcp-ubi` and
+`gradinai-atlas-tls-ubi`, on Red Hat UBI 9, non-root under any UID in group 0, checked with Red
+Hat's preflight, with `/licenses` and their own labels (task 1.4;
+[Releases](../../docs/oss/RELEASES.md#what-a-release-publishes)). Their digests are the release's
+`release-images.env` lines `ATLAS_IMAGE_API_UBI`, `ATLAS_IMAGE_MCP_UBI` and
+`ATLAS_IMAGE_TLS_UBI` (the part after `@`); the lines without `_UBI` are the Compose images,
+which the OpenShift manifests do not use. `v0.0.2-alpha` is also the first release whose API
+image reads CloudNativePG's driver-less URL itself, which the base relies on (no `db-url`
+bridge): do not point the base at an older release.
 
-**The `-ubi` images are the ones to run on OpenShift.** From `v0.0.2-alpha` on, every release
-publishes them beside the Compose images (task 1.4; [Releases](../../docs/oss/RELEASES.md#what-a-release-publishes)):
-`gradinai-atlas-api-ubi`, `gradinai-atlas-mcp-ubi` and `gradinai-atlas-tls-ubi`, on Red Hat UBI 9,
-non-root under any UID in group 0, checked with Red Hat's preflight, with `/licenses` and their
-own labels. An overlay switches to them by changing `newName` to the `-ubi` name; the `name:`
-it matches stays the base's (`gradinai-atlas-api`, `-mcp`, `-tls`), because that is what the
-manifests say. Their digests are the release's `release-images.env` lines
-`ATLAS_IMAGE_API_UBI`, `ATLAS_IMAGE_MCP_UBI` and `ATLAS_IMAGE_TLS_UBI` (the part after `@`); the
-lines without `_UBI` are the Compose images. The example overlay still names the `v0.0.1-alpha`
-Compose images until it is moved in its own change. Three things belong to one release and move
-together in the overlay:
+The registry, `registry.example.com/gradinai-atlas`, is a placeholder, because the repository
+names no account: **every overlay sets the image**, to GHCR or to the organisation's mirror of
+the same digest. A cluster that may not pull from ghcr.io copies the release's images (and the
+database image) to its own registry by digest and changes `newName` only: [FIRST-INSTALL.md,
+"Your own registry"](FIRST-INSTALL.md#your-own-registry) has the commands. Three things belong
+to one release and move together in the overlay:
 
 ```yaml
 images:
-  - name: registry.example.com/gradinai-atlas/gradinai-atlas-api    # matches the base, the Job and the init containers
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-api-ubi    # matches atlas-api, the Job and the CronJob
     newName: registry.example.com/atlas/gradinai-atlas-api-ubi
     newTag: v0.2.0
     digest: sha256:<the release's digest>
-  - name: registry.example.com/gradinai-atlas/gradinai-atlas-mcp    # matches the atlas-mcp Deployment
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-mcp-ubi    # matches the atlas-mcp Deployment
     newName: registry.example.com/atlas/gradinai-atlas-mcp-ubi
     newTag: v0.2.0
     digest: sha256:<the release's digest>
-  - name: registry.example.com/gradinai-atlas/gradinai-atlas-tls    # matches the atlas-tls Deployment
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-tls-ubi    # matches the atlas-tls Deployment
     newName: registry.example.com/atlas/gradinai-atlas-tls-ubi
     newTag: v0.2.0
     digest: sha256:<the release's digest>
@@ -240,7 +235,7 @@ labels:
     includeSelectors: false
     includeTemplates: true
 patches:
-  - target: {kind: Job, name: atlas-migrate-v0-0-1-alpha}
+  - target: {kind: Job, name: atlas-migrate-v0-0-2-alpha}
     patch: |-
       - op: replace
         path: /metadata/name
@@ -255,34 +250,12 @@ Forgetting the rename is loud: `oc apply` refuses the changed pod template. Runn
 again after its TTL is harmless (the upgrade is idempotent), and an `atlas-api` replica starting
 alongside it waits on the same Postgres advisory lock.
 
-### Two atlas-mcp replicas
+### One atlas-mcp replica
 
-On a release that has the stateless transport (`ATLAS_MCP_STATELESS_HTTP`, after `v0.0.1-alpha`),
-an overlay may run two `atlas-mcp` replicas. Three things go together, in one change: the switch
-(no session is kept and each request stands alone, so any replica can answer it), the replica
-count, and a PodDisruptionBudget so a drain keeps one serving. Never two replicas without the
-switch: a request that lands on the pod that did not answer `initialize` is refused.
-
-```yaml
-patches:
-  - target: {kind: Deployment, name: atlas-mcp}
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata: {name: atlas-mcp}
-      spec:
-        replicas: 2
-        template:
-          spec:
-            containers:
-              - name: atlas-mcp
-                env:
-                  - {name: ATLAS_MCP_STATELESS_HTTP, value: "1"}
-resources:
-  - pdb-mcp.yaml   # the overlay's own: base/pdb-api.yaml with `mcp` in place of `api`
-```
-
-The spread and anti-affinity rules for two replicas are already in the base Deployment.
+`atlas-mcp` runs **one replica with the stateful transport** (`ATLAS_MCP_STATELESS_HTTP=0`), by
+decision. The stateless transport is in the image from `v0.0.2-alpha` on: available, but not
+used, and no overlay here switches it on. Never raise the replica count alone: with the stateful
+transport a request that lands on the pod that did not answer `initialize` is refused.
 
 ## The database (task 3.5)
 
@@ -304,7 +277,7 @@ not offered: it is deprecated since CNPG 1.26 and removed in 1.32.
 
 **What the Cluster makes, and the base mounts.** Secret `atlas-db-app` (the base reads only
 `fqdn-uri`, `postgresql://atlas:<password>@atlas-db-rw.<namespace>.svc.<cluster domain>:5432/atlas`,
-through the `db-url` init container) and Secret `atlas-db-ca` (the base reads only `ca.crt`, never
+as the file `ATLAS_DB_URL_FILE` names) and Secret `atlas-db-ca` (the base reads only `ca.crt`, never
 `ca.key`). The operator's own CA signs a server certificate for every service name, so
 `PGSSLMODE=verify-full` against `ca.crt` holds for the host in `fqdn-uri`. A `pg_hba` rule refuses
 any connection without TLS. The `postgres` superuser has no password, and `atlas` has no

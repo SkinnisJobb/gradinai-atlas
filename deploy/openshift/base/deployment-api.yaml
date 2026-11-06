@@ -9,12 +9,11 @@
 #   /run/secrets/peppers/{password_pepper,token_pepper}  Secret atlas-peppers
 #                                                        (scripts/openshift/new-secrets.py)
 #   /run/secrets/db/fqdn-uri                             the CloudNativePG app Secret, ONLY the
-#                                                        `fqdn-uri` item, mounted in the db-url
-#                                                        init container only
-#   /run/db-url/url                                      that URL with the psycopg2 driver named,
-#                                                        written by the init container to a
-#                                                        memory emptyDir (db_url.py says why)
-#   /run/secrets/db-ca/ca.crt                            the CloudNativePG CA Secret, ONLY
+#                                                        `fqdn-uri` item: the URL exactly as the
+#                                                        operator writes it, `postgresql://...`,
+#                                                        which Atlas reads as psycopg2 itself
+#                                                        (backend/dsn.py, from v0.0.2-alpha on)
+#   /run/secrets/db-ca/ca.crt                           the CloudNativePG CA Secret, ONLY
 #                                                        `ca.crt` (the Secret also holds ca.key)
 #   /run/secrets/api-tls/{tls.crt,tls.key}               Secret atlas-api-tls (service CA)
 # The database Secrets are named for a Cluster called `atlas-db` (atlas-db-app, atlas-db-ca), the
@@ -80,50 +79,18 @@ spec:
                   matchLabels:
                     app.kubernetes.io/name: atlas
                     app.kubernetes.io/component: api
-      initContainers:
-        # Rewrites CNPG's postgresql:// URL to the psycopg2 driver the image ships; db_url.py
-        # (the atlas-scripts ConfigMap) says why. Only this container mounts the CNPG Secret.
-        - name: db-url
-          # Always the same image as the main container.
-          image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
-          imagePullPolicy: IfNotPresent
-          command: ["python", "-I", "/run/config/scripts/db_url.py"]
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 250m
-              memory: 128Mi
-          securityContext:
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ["ALL"]
-            seccompProfile:
-              type: RuntimeDefault
-          volumeMounts:
-            - name: db
-              mountPath: /run/secrets/db
-              readOnly: true
-            - name: db-url
-              mountPath: /run/db-url
-            - name: scripts
-              mountPath: /run/config/scripts
-              readOnly: true
       containers:
         - name: atlas-api
-          # The hardened API image of release v0.0.1-alpha, by tag and digest: the digest is the
+          # The UBI API image of release v0.0.2-alpha (gradinai-atlas-api-ubi: Red Hat UBI 9,
+          # Python 3.12, non-root under any UID in group 0), by tag and digest: the digest is the
           # one the release published to GitHub's container registry (ghcr.io/<owner>/
-          # gradinai-atlas-api, the release's release-images.env; docs/oss/RELEASES.md). The
-          # registry is a placeholder, because the repository names no account: the overlay
-          # names the registry it pulls from (GHCR, or the organisation's mirror of the same
-          # digest) with a Kustomize `images:` entry matching this name, which moves this
-          # container, the init container and the Job together. Task 1.4 publishes the UBI build
-          # (gradinai-atlas-api-ubi), the one to run on OpenShift. deploy/openshift/README.md,
-          # "Images and releases".
-          image: registry.example.com/gradinai-atlas/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
+          # gradinai-atlas-api-ubi, ATLAS_IMAGE_API_UBI in the release's release-images.env;
+          # docs/oss/RELEASES.md). The registry is a placeholder, because the repository names no
+          # account: the overlay names the registry it pulls from (GHCR, or the organisation's
+          # mirror of the same digest) with a Kustomize `images:` entry matching this name, which
+          # moves this container, the migrate Job and the audit CronJob together.
+          # deploy/openshift/README.md, "Images and releases".
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-api-ubi:v0.0.2-alpha@sha256:351309bef465f82977ddc0c2983978fe89cba976ad2f356e7855bc3c39423f60
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn
@@ -150,8 +117,9 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # CloudNativePG's own URL, unchanged: a bare postgresql:// means psycopg2.
             - name: ATLAS_DB_URL_FILE
-              value: /run/db-url/url
+              value: /run/secrets/db/fqdn-uri
             - name: ATLAS_PASSWORD_PEPPER_FILE
               value: /run/secrets/peppers/password_pepper
             - name: ATLAS_TOKEN_PEPPER_FILE
@@ -212,8 +180,8 @@ spec:
             - name: peppers
               mountPath: /run/secrets/peppers
               readOnly: true
-            - name: db-url
-              mountPath: /run/db-url
+            - name: db
+              mountPath: /run/secrets/db
               readOnly: true
             - name: db-ca
               mountPath: /run/secrets/db-ca
@@ -266,10 +234,6 @@ spec:
         - name: scripts
           configMap:
             name: atlas-scripts
-        - name: db-url
-          emptyDir:
-            medium: Memory
-            sizeLimit: 1Mi
         - name: tmp
           emptyDir:
             medium: Memory

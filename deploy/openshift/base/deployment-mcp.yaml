@@ -22,11 +22,10 @@
 #
 # ONE REPLICA, and the stateful transport. atlas-mcp keeps each MCP session in the memory of the
 # pod that answered `initialize` (research F6), so a second replica would refuse every request
-# that lands on it with another pod's session id. ATLAS_MCP_STATELESS_HTTP=1 (TASK-1480) lifts
-# that, but the release this base names (v0.0.1-alpha) predates it and ignores the switch, so the
-# base cannot turn it on safely. An overlay on a release that has it moves to two replicas in one
-# change: the switch, `replicas: 2` and a PodDisruptionBudget (deploy/openshift/README.md, "Two
-# atlas-mcp replicas"). With one replica there is no PDB: a minAvailable of 1 would block every
+# that lands on it with another pod's session id. ATLAS_MCP_STATELESS_HTTP=1 (TASK-1480, in the
+# image from v0.0.2-alpha on) would lift that; it is available but not used: the install runs one
+# replica with the stateful transport, by decision (deploy/openshift/README.md, "One atlas-mcp
+# replica"). With one replica there is no PDB: a minAvailable of 1 would block every
 # node drain. A rolling update briefly runs two pods, and a session on the old pod ends with it:
 # the client starts a new one (`initialize`), as after any atlas-mcp restart.
 #
@@ -70,7 +69,7 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-      # Inert with one replica; spreads the two of an overlay that runs the stateless transport.
+      # Inert with one replica; kept so the Deployment matches atlas-api and atlas-tls.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -91,14 +90,13 @@ spec:
                     app.kubernetes.io/component: mcp
       containers:
         - name: atlas-mcp
-          # The hardened MCP image of release v0.0.1-alpha, by tag and digest: the digest is the
-          # one the release published to GitHub's container registry (ghcr.io/<owner>/
-          # gradinai-atlas-mcp, ATLAS_IMAGE_MCP in the release's release-images.env;
-          # docs/oss/RELEASES.md). The registry is a placeholder, as for atlas-api: the overlay
-          # names the registry it pulls from with a Kustomize `images:` entry matching this name.
-          # Task 1.4 publishes the UBI build (gradinai-atlas-mcp-ubi), the one to run on
-          # OpenShift. deploy/openshift/README.md, "Images and releases".
-          image: registry.example.com/gradinai-atlas/gradinai-atlas-mcp:v0.0.1-alpha@sha256:fa24d32824eb485b77c672e845fdcddc994aaf09dfde5c8304cc4a91272a905b
+          # The UBI MCP image of release v0.0.2-alpha (gradinai-atlas-mcp-ubi), by tag and digest:
+          # the digest is the one the release published to GitHub's container registry
+          # (ghcr.io/<owner>/gradinai-atlas-mcp-ubi, ATLAS_IMAGE_MCP_UBI in the release's
+          # release-images.env; docs/oss/RELEASES.md). The registry is a placeholder, as for
+          # atlas-api: the overlay names the registry it pulls from with a Kustomize `images:`
+          # entry matching this name. deploy/openshift/README.md, "Images and releases".
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-mcp-ubi:v0.0.2-alpha@sha256:d3ad435cae231327c4cbd96aef3afb5fa60b96b7e0d04e464f4b1d971d1e56e7
           imagePullPolicy: IfNotPresent
           command:
             - python

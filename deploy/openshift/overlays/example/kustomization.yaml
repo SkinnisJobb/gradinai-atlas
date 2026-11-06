@@ -2,7 +2,7 @@
 # deploy/openshift/FIRST-INSTALL.md walks through using it, step by step, from PowerShell 7.
 #
 # WHAT IT IS. The smallest overlay that installs Atlas in one namespace on the working
-# assumptions of the ARO epic: images pulled straight from ghcr.io, a community CloudNativePG
+# assumptions of the ARO epic: the release's UBI images pulled straight from ghcr.io, a community CloudNativePG
 # Cluster on the default storage class with no backup, plain Secrets made by
 # scripts/openshift/new-secrets.py, a re-encrypt Route on the router's default certificate,
 # local accounts. No optional component yet, and the NetworkPolicies are one commented line in
@@ -38,11 +38,12 @@ components:
   # otherwise); set the operator's namespace if it is not cnpg-system (README, "NetworkPolicies").
   # - ../../components/networkpolicies
 
-# 2. The images of release v0.0.1-alpha, by tag AND the digest the release published (its
-# release-images.env). The base names a placeholder registry (registry.example.com), because the
-# repository names no account; each entry below matches one base name and moves every container
-# that uses it (atlas-api, its db-url init container, the migrate Job and the audit CronJob all
-# run the api image).
+# 2. The OpenShift (UBI) images of release v0.0.2-alpha, by tag AND the digest the release
+# published: the lines ATLAS_IMAGE_API_UBI, ATLAS_IMAGE_MCP_UBI and ATLAS_IMAGE_TLS_UBI of its
+# release-images.env (the lines without _UBI are the Compose images; not these). The base names a
+# placeholder registry (registry.example.com), because the repository names no account; each
+# entry below matches one base name and moves every container that uses it (atlas-api, the
+# migrate Job and the audit CronJob all run the api image).
 #
 # `change-me-owner` is the GitHub account the Atlas repository belongs to, in LOWER CASE
 # (ghcr.io refuses capitals): github.com/<Owner>/gradinai-atlas gives ghcr.io/<owner>/....
@@ -51,26 +52,26 @@ components:
 # image and a pull secret are the commented entries at the end of `patches:` (FIRST-INSTALL.md,
 # "Your own registry").
 #
-# These are the Debian-based hardened images. The UBI builds (task 1.4) replace them in a later
-# release: change newName, newTag and digest together, and the Job name and version label below.
+# A later release: change newTag and digest together (from that release's _UBI lines), and the
+# Job name and version label below.
 images:
-  - name: registry.example.com/gradinai-atlas/gradinai-atlas-api
-    newName: ghcr.io/change-me-owner/gradinai-atlas-api
-    newTag: v0.0.1-alpha
-    digest: sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9
-  - name: registry.example.com/gradinai-atlas/gradinai-atlas-mcp
-    newName: ghcr.io/change-me-owner/gradinai-atlas-mcp
-    newTag: v0.0.1-alpha
-    digest: sha256:fa24d32824eb485b77c672e845fdcddc994aaf09dfde5c8304cc4a91272a905b
-  - name: registry.example.com/gradinai-atlas/gradinai-atlas-tls
-    newName: ghcr.io/change-me-owner/gradinai-atlas-tls
-    newTag: v0.0.1-alpha
-    digest: sha256:8902763650a5a117dda378a228e184a04df25a4dd03d0a43e0dd6ccfdc9f0cb5
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-api-ubi
+    newName: ghcr.io/change-me-owner/gradinai-atlas-api-ubi
+    newTag: v0.0.2-alpha
+    digest: sha256:351309bef465f82977ddc0c2983978fe89cba976ad2f356e7855bc3c39423f60
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-mcp-ubi
+    newName: ghcr.io/change-me-owner/gradinai-atlas-mcp-ubi
+    newTag: v0.0.2-alpha
+    digest: sha256:d3ad435cae231327c4cbd96aef3afb5fa60b96b7e0d04e464f4b1d971d1e56e7
+  - name: registry.example.com/gradinai-atlas/gradinai-atlas-tls-ubi
+    newName: ghcr.io/change-me-owner/gradinai-atlas-tls-ubi
+    newTag: v0.0.2-alpha
+    digest: sha256:1c80ebfe57035a851aaa10bede3e98b1943f0453ab7a7ec17b116e39d02f27ad
 
 # The release these images belong to; moves with them.
 labels:
   - pairs:
-      app.kubernetes.io/version: v0.0.1-alpha
+      app.kubernetes.io/version: v0.0.2-alpha
     includeSelectors: false
     includeTemplates: true
   # LABELS YOUR ORGANISATION REQUIRES (optional; FIRST-INSTALL.md, step 6): some clusters refuse,
@@ -110,15 +111,15 @@ patches:
       kind: Deployment
       name: atlas-tls
   # The migrate Job is named per release (deploy/openshift/README.md, "Images and releases"). On
-  # v0.0.1-alpha the base's name is already right, so this replaces it with itself; on the next
+  # v0.0.2-alpha the base's name is already right, so this replaces it with itself; on the next
   # release change `value` to atlas-migrate-<version, dots as dashes> together with the images.
   - target:
       kind: Job
-      name: atlas-migrate-v0-0-1-alpha
+      name: atlas-migrate-v0-0-2-alpha
     patch: |-
       - op: replace
         path: /metadata/name
-        value: atlas-migrate-v0-0-1-alpha
+        value: atlas-migrate-v0-0-2-alpha
   # OWN REGISTRY (optional; FIRST-INSTALL.md, "Your own registry"), for a cluster that cannot pull
   # from ghcr.io. The three images above: change `newName` only, the digest stays. The database
   # image: uncomment the second entry and give it the mirrored name with the SAME tag and digest
@@ -134,8 +135,9 @@ patches:
   # OLDER CLOUDNATIVEPG (optional; FIRST-INSTALL.md, step 1, "The CloudNativePG version"): an
   # operator whose app Secret has no `fqdn-uri` key (before 1.25.3, or 1.26.0), or that has no
   # `Database` resource (before 1.25.0). Uncomment both entries: patch-older-cnpg.yaml switches
-  # atlas-api and the audit CronJob to the `uri` key and drops the Database; the inline one does
-  # the same for the migrate Job (by kind, so it holds whatever the Job is named).
+  # atlas-api and the audit CronJob to the `uri` key (still mounted as /run/secrets/db/fqdn-uri,
+  # the file ATLAS_DB_URL_FILE names) and drops the Database; the inline one does the same for
+  # the migrate Job (by kind, so it holds whatever the Job is named).
   # - path: patch-older-cnpg.yaml
   # - target: {kind: Job}
   #   patch: |-

@@ -83,17 +83,15 @@ spec:
                     app.kubernetes.io/component: tls
       containers:
         - name: atlas-tls
-          # The Caddy front of release v0.0.1-alpha, by tag and digest: the digest is the one the
-          # release published to GitHub's container registry (ghcr.io/<owner>/gradinai-atlas-tls,
-          # ATLAS_IMAGE_TLS in the release's release-images.env; docs/oss/RELEASES.md). That is
-          # the compose install's Caddy (deploy/caddy/Dockerfile: Alpine, with the Cloudflare DNS
-          # plugin this Caddyfile never uses); it runs this Caddyfile unchanged under an arbitrary
-          # UID. The UBI build (deploy/caddy/Dockerfile.ubi, gradinai-atlas-tls-ubi, stock Caddy)
-          # is the one to run on OpenShift; no release has published it yet (task 1.4). The
-          # registry is a placeholder, as for atlas-api: the overlay names the registry and the
-          # image with a Kustomize `images:` entry matching this name. deploy/openshift/README.md,
-          # "Images and releases".
-          image: registry.example.com/gradinai-atlas/gradinai-atlas-tls:v0.0.1-alpha@sha256:8902763650a5a117dda378a228e184a04df25a4dd03d0a43e0dd6ccfdc9f0cb5
+          # The UBI Caddy front of release v0.0.2-alpha (gradinai-atlas-tls-ubi, built from
+          # deploy/caddy/Dockerfile.ubi: stock Caddy, no plugin, on ubi-micro, USER 10001:0), by
+          # tag and digest: the digest is the one the release published to GitHub's container
+          # registry (ghcr.io/<owner>/gradinai-atlas-tls-ubi, ATLAS_IMAGE_TLS_UBI in the release's
+          # release-images.env; docs/oss/RELEASES.md). It needs no root: it writes only the two
+          # emptyDirs below, and listens on 8443 and 9443. The registry is a placeholder, as for
+          # atlas-api: the overlay names the registry and the image with a Kustomize `images:`
+          # entry matching this name. deploy/openshift/README.md, "Images and releases".
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-tls-ubi:v0.0.2-alpha@sha256:1c80ebfe57035a851aaa10bede3e98b1943f0453ab7a7ec17b116e39d02f27ad
           imagePullPolicy: IfNotPresent
           # Both images' own CMD, stated so that either runs the same way.
           command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

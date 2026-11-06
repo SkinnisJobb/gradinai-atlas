@@ -102,8 +102,7 @@ oc describe limitrange -n atlas
 ```
 
 No output means no quota or no LimitRange. Otherwise compare the `Hard` column with what Atlas
-asks for (from the manifests; a pod's request is that of its main container, the init containers
-being smaller):
+asks for (from the manifests; every Atlas pod has one container):
 
 | Part | Pods | CPU request (limit) per pod | Memory request (limit) per pod | Storage |
 |---|---|---|---|---|
@@ -147,12 +146,12 @@ oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'
 oc get ingresses.config cluster -o jsonpath='{.spec.domain}'
 ```
 
-**Can the cluster pull from ghcr.io?** Start one throwaway pod from the released API image,
+**Can the cluster pull from ghcr.io?** Start one throwaway pod from the released UBI API image,
 with `<owner>` the GitHub account the Atlas repository belongs to, in lower case
 (`github.com/<Owner>/gradinai-atlas` gives `ghcr.io/<owner>/...`):
 
 ```powershell
-oc run atlas-pull-test -n atlas --restart=Never --image=ghcr.io/<owner>/gradinai-atlas-api:v0.0.1-alpha@sha256:fe919e98baf5375eeee650e746d98d4a240e470da11f29b37f2690e548d8afb9 --command -- python -c "print('pulled')"
+oc run atlas-pull-test -n atlas --restart=Never --image=ghcr.io/<owner>/gradinai-atlas-api-ubi:v0.0.2-alpha@sha256:351309bef465f82977ddc0c2983978fe89cba976ad2f356e7855bc3c39423f60 --command -- python -c "print('pulled')"
 oc get pod atlas-pull-test -n atlas -w     # Ctrl+C once it says Completed or an error
 oc logs atlas-pull-test -n atlas           # prints: pulled
 oc delete pod atlas-pull-test -n atlas
@@ -313,8 +312,8 @@ wait for each part, in order:
 
 ```powershell
 oc wait clusters.postgresql.cnpg.io/atlas-db -n atlas --for=condition=Ready --timeout=15m
-oc wait job/atlas-migrate-v0-0-1-alpha -n atlas --for=condition=complete --timeout=10m
-oc logs job/atlas-migrate-v0-0-1-alpha -n atlas -c atlas-migrate
+oc wait job/atlas-migrate-v0-0-2-alpha -n atlas --for=condition=complete --timeout=10m
+oc logs job/atlas-migrate-v0-0-2-alpha -n atlas -c atlas-migrate
 oc rollout status deploy/atlas-api -n atlas --timeout=10m
 oc rollout status deploy/atlas-mcp -n atlas --timeout=5m
 oc rollout status deploy/atlas-tls -n atlas --timeout=5m
@@ -411,20 +410,21 @@ pull secret if the registry needs one. Do this between steps 4 and 6; the comman
 
 | Image | Used by | Its digest comes from |
 |---|---|---|
-| `ghcr.io/<owner>/gradinai-atlas-api` | atlas-api, its init container, the migrate Job, the audit CronJob | the release's `release-images.env`, line `ATLAS_IMAGE_API` |
-| `ghcr.io/<owner>/gradinai-atlas-mcp` | atlas-mcp | line `ATLAS_IMAGE_MCP` |
-| `ghcr.io/<owner>/gradinai-atlas-tls` | atlas-tls | line `ATLAS_IMAGE_TLS` |
+| `ghcr.io/<owner>/gradinai-atlas-api-ubi` | atlas-api, the migrate Job, the audit CronJob | the release's `release-images.env`, line `ATLAS_IMAGE_API_UBI` |
+| `ghcr.io/<owner>/gradinai-atlas-mcp-ubi` | atlas-mcp | line `ATLAS_IMAGE_MCP_UBI` |
+| `ghcr.io/<owner>/gradinai-atlas-tls-ubi` | atlas-tls | line `ATLAS_IMAGE_TLS_UBI` |
 | `ghcr.io/cloudnative-pg/postgresql` | the database pods | `imageName` in `components/cnpg/cluster.yaml` (not in `release-images.env`) |
 
 `release-images.env` is attached to every GitHub release of the Atlas repository; each line is
-`NAME=<image>:<tag>@sha256:<digest>`, and the digests are the same ones the example overlay
-carries. An overlay that runs the `-ubi` images ([`README.md`](README.md#images-and-releases))
-takes the `ATLAS_IMAGE_API_UBI`, `_MCP_UBI` and `_TLS_UBI` lines instead. Read them, and the
-database image, into variables (`gh` is the GitHub CLI; without it, save the file from the
-release page into the repository root):
+`NAME=<image>:<tag>@sha256:<digest>`, and the digests of the three `_UBI` lines are the ones the
+example overlay carries. **Use the `_UBI` lines only**: the lines without `_UBI`
+(`ATLAS_IMAGE_API`, `ATLAS_IMAGE_MCP`, `ATLAS_IMAGE_TLS`, and the backup and Postgres images)
+are the Compose install's, and OpenShift runs none of them. Read the three, and the database
+image, into variables (`gh` is the GitHub CLI; without it, save the file from the release page
+into the repository root):
 
 ```powershell
-$tag   = 'v0.0.1-alpha'                      # the overlay's newTag
+$tag   = 'v0.0.2-alpha'                      # the overlay's newTag
 $owner = 'yourowner'                         # as in step 5, lower case
 $dest  = 'registry.example.com/team/atlas'   # your registry and path, no trailing /
 gh release download $tag -R "$owner/gradinai-atlas" -p release-images.env
@@ -432,7 +432,7 @@ $img = @{}
 foreach ($line in Get-Content release-images.env) {
   if ($line -match '^(ATLAS_IMAGE_\w+)=(.+)$') { $img[$Matches[1]] = $Matches[2] }
 }
-$sources = @($img['ATLAS_IMAGE_API'], $img['ATLAS_IMAGE_MCP'], $img['ATLAS_IMAGE_TLS'])
+$sources = @($img['ATLAS_IMAGE_API_UBI'], $img['ATLAS_IMAGE_MCP_UBI'], $img['ATLAS_IMAGE_TLS_UBI'])
 $sources += (Select-String -Path deploy\openshift\components\cnpg\cluster.yaml -Pattern '^\s*imageName:\s*(\S+)').Matches[0].Groups[1].Value
 $sources                                     # four lines, each <image>:<tag>@sha256:<digest>
 ```
@@ -457,7 +457,7 @@ digest and pushes it under the same tag; ghcr.io needs no credentials to read:
 ```powershell
 foreach ($src in $sources) {
   $repo, $digest = $src -split '@'
-  $name = ($repo -split '/')[-1]                  # gradinai-atlas-api:v0.0.1-alpha, postgresql:<tag>
+  $name = ($repo -split '/')[-1]                  # gradinai-atlas-api-ubi:v0.0.2-alpha, postgresql:<tag>
   oc image mirror -a secrets\openshift\registry-auth.json --keep-manifest-list=true "$($repo -replace ':[^:/]+$', '')@$digest" "$dest/$name"
   oc image info -a secrets\openshift\registry-auth.json --filter-by-os=linux/amd64 "$dest/$(($name -split ':')[0])@$digest" | Select-Object -First 2
 }
@@ -523,13 +523,13 @@ Start with `oc get pods -n atlas` and `oc get events -n atlas --sort-by=.lastTim
 |---|---|---|
 | `atlas-api` keeps restarting; `oc describe pod` shows the startup or liveness probe failing with `421` | the request's Host is not `ATLAS_PUBLIC_HOST`. The probes send `Host: $ATLAS_PUBLIC_HOST`, and Atlas refuses any other Host with 421 | `oc get configmap atlas-env -n atlas -o yaml`: all four host lines must carry the same host. Fix `atlas.env`, `oc apply -k` again, then `oc rollout restart deploy/atlas-api deploy/atlas-mcp deploy/atlas-tls -n atlas` (atlas-env changes do not roll the pods by themselves) |
 | `421` in the browser | the Route's host and `ATLAS_PUBLIC_HOST` differ (someone edited the Route by hand) | `oc apply -k` again: the overlay copies the host into the Route |
-| `ModuleNotFoundError: No module named 'psycopg'` in `atlas-api` or the migrate Job | the database URL reached Atlas without the `+psycopg2` driver: the image ships psycopg2, and CloudNativePG writes a plain `postgresql://` URL. The `db-url` init container exists to rewrite it | `oc logs <pod> -n atlas -c db-url`. Check that nothing mounts the CNPG Secret into the main container or sets `ATLAS_DB_URL_FILE` to another path than `/run/db-url/url`; [`base/db_url.py`](base/db_url.py) explains the bridge |
+| `ModuleNotFoundError: No module named 'psycopg'` in `atlas-api`, the migrate Job or the audit CronJob | the image is older than `v0.0.2-alpha`: CloudNativePG writes a plain `postgresql://` URL, which only `v0.0.2-alpha` and later read as psycopg2, the driver the image ships. The base reads that URL as it is, with no rewriting step | `oc get deploy atlas-api -n atlas -o jsonpath='{.spec.template.spec.containers[0].image}'` must show `v0.0.2-alpha` or later; fix `newTag` and `digest` in the overlay's `images:` (from the release's `_UBI` lines), `oc apply -k` |
 | `ImagePullBackOff` / `ErrImagePull` | `oc describe pod` names the image and the reason. From ghcr.io: `unauthorized` or `not found` means the owner in `newName` is wrong or has capitals; `i/o timeout`, `connection refused` or a policy refusal means the cluster may not pull from ghcr.io (assumption 1). From your own registry: `unauthorized` means no pull secret reached the pod; `manifest unknown` means the copy lacks that digest | owner: fix value 2. Not from ghcr.io: [Your own registry](#your-own-registry). No pull secret: `oc get pod <pod> -n atlas -o jsonpath='{.spec.imagePullSecrets}'` must name it; if not, enable `patch-pull-secret.yaml` (it covers the database pods too) and delete the stuck pods so they are made again. Wrong digest: copy again, by digest |
 | `atlas-api`, the migrate Job or the audit CronJob stay in `ContainerCreating`; `oc describe pod` shows `FailedMount` with `couldn't find key fqdn-uri in Secret atlas-db-app` | the CloudNativePG operator is older than the base expects | step 1, "The CloudNativePG version": enable the `OLDER CLOUDNATIVEPG` entries, `oc apply -k`, delete the waiting pods |
 | `oc apply` is refused by an admission webhook or policy naming a missing label | the cluster requires labels of its own | step 5, "Labels your organisation requires" |
 | `atlas-db` stays in a setting-up phase, its PVCs `Pending` | no default storage class, or the quota allows no more storage (assumption 6) | `oc describe pvc -n atlas` says which. Name a class, assumption 6 in the table, or ask for quota |
 | `oc get clusters.postgresql.cnpg.io -n atlas` shows no status at all | the operator does not watch this namespace | ask the platform team to include the namespace in the operator's watch list |
-| The migrate Job shows `Failed` | it ran before the database accepted connections | `oc logs job/atlas-migrate-v0-0-1-alpha -n atlas -c atlas-migrate` to confirm, then `oc delete job atlas-migrate-v0-0-1-alpha -n atlas` and `oc apply -k` again: the step is idempotent |
+| The migrate Job shows `Failed` | it ran before the database accepted connections | `oc logs job/atlas-migrate-v0-0-2-alpha -n atlas -c atlas-migrate` to confirm, then `oc delete job atlas-migrate-v0-0-2-alpha -n atlas` and `oc apply -k` again: the step is idempotent |
 | Pods `CreateContainerConfigError` or stuck in `ContainerCreating` on a missing Secret | `atlas-peppers` was created in another project, or a TLS Secret is not issued yet | `oc get secrets -n atlas`. `atlas-peppers`: rerun step 3 with the right `-n`. The `*-tls` Secrets come from the service CA within a minute of the Service; if they never appear, ask the platform team whether the service CA operator is healthy |
 | Route answers `503` "Application is not available" | the router has no ready `atlas-tls` endpoint, or cannot complete the re-encrypt leg | `oc get endpoints atlas-tls -n atlas` must list addresses. If it does: `oc get route -n atlas -o yaml` must have `termination: reencrypt` and **no** `destinationCACertificate` (left empty, the router verifies `atlas-tls` against the service CA, including its name); `oc logs deploy/atlas-tls -n atlas` shows a TLS handshake error if not |
 | `unparseable entry` in the `atlas-api` log | value 4 is not a CIDR | fix `patch-trusted-proxy.yaml`, `oc apply -k`; the Deployment rolls by itself |
@@ -596,7 +596,7 @@ oc exec -n atlas $pod -c atlas-api -- python -c "import socket; socket.create_co
    oc wait clusters.postgresql.cnpg.io/atlas-db -n atlas --for=condition=Ready --timeout=15m
    ```
 
-   A migrate Job that already failed: `oc delete job atlas-migrate-v0-0-1-alpha -n atlas`, then
+   A migrate Job that already failed: `oc delete job atlas-migrate-v0-0-2-alpha -n atlas`, then
    `oc apply -k` again.
 
 If it still waits after that, a cluster-wide policy is the likely cause: an AdminNetworkPolicy
