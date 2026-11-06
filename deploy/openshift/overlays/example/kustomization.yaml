@@ -46,8 +46,10 @@ components:
 #
 # `change-me-owner` is the GitHub account the Atlas repository belongs to, in LOWER CASE
 # (ghcr.io refuses capitals): github.com/<Owner>/gradinai-atlas gives ghcr.io/<owner>/....
-# Mirroring to your own registry (ACR, Quay) instead: copy the same digests there and change
-# `newName` only; the digest guarantees the bytes are the same.
+# Mirroring to your own registry (ACR, Quay, an internal mirror) instead: copy the same digests
+# there and change `newName` only; the digest guarantees the bytes are the same. The database
+# image and a pull secret are the commented entries at the end of `patches:` (FIRST-INSTALL.md,
+# "Your own registry").
 #
 # These are the Debian-based hardened images. The UBI builds (task 1.4) replace them in a later
 # release: change newName, newTag and digest together, and the Job name and version label below.
@@ -71,6 +73,19 @@ labels:
       app.kubernetes.io/version: v0.0.1-alpha
     includeSelectors: false
     includeTemplates: true
+  # LABELS YOUR ORGANISATION REQUIRES (optional; FIRST-INSTALL.md, step 6): some clusters refuse,
+  # by an admission policy, any object or pod without certain labels. Uncomment and put the
+  # platform team's keys and values in place of the two examples. includeSelectors: false keeps
+  # them out of the selectors (a Deployment's selector cannot change after it is created);
+  # includeTemplates puts them on the pods; `fields` also on the database pods, which
+  # CloudNativePG labels from the Cluster's inheritedMetadata.
+  # - pairs:
+  #     example.com/environment: change-me-environment
+  #     example.com/cost-center: change-me-cost-center
+  #   includeSelectors: false
+  #   includeTemplates: true
+  #   fields:
+  #     - {kind: Cluster, path: spec/inheritedMetadata/labels, create: true}
 
 # 3. The settings that differ from the base's atlas-env: the public host and the seed. Merged
 # over the base's keys; a key not listed here keeps the base's value (base/atlas.env).
@@ -104,6 +119,30 @@ patches:
       - op: replace
         path: /metadata/name
         value: atlas-migrate-v0-0-1-alpha
+  # OWN REGISTRY (optional; FIRST-INSTALL.md, "Your own registry"), for a cluster that cannot pull
+  # from ghcr.io. The three images above: change `newName` only, the digest stays. The database
+  # image: uncomment the second entry and give it the mirrored name with the SAME tag and digest
+  # as `imageName` in components/cnpg/cluster.yaml. A registry that needs credentials: uncomment
+  # the first entry too (patch-pull-secret.yaml: imagePullSecrets on ServiceAccount `atlas` and
+  # on Cluster `atlas-db`).
+  # - path: patch-pull-secret.yaml
+  # - target: {kind: Cluster, name: atlas-db}
+  #   patch: |-
+  #     - op: replace
+  #       path: /spec/imageName
+  #       value: <registry>/<path>/postgresql:<same tag>@sha256:<same digest>
+  # OLDER CLOUDNATIVEPG (optional; FIRST-INSTALL.md, step 1, "The CloudNativePG version"): an
+  # operator whose app Secret has no `fqdn-uri` key (before 1.25.3, or 1.26.0), or that has no
+  # `Database` resource (before 1.25.0). Uncomment both entries: patch-older-cnpg.yaml switches
+  # atlas-api and the audit CronJob to the `uri` key and drops the Database; the inline one does
+  # the same for the migrate Job (by kind, so it holds whatever the Job is named).
+  # - path: patch-older-cnpg.yaml
+  # - target: {kind: Job}
+  #   patch: |-
+  #     apiVersion: batch/v1
+  #     kind: Job
+  #     metadata: {name: atlas-migrate}
+  #     spec: {template: {spec: {volumes: [{name: db, secret: {items: [{key: uri, path: fqdn-uri}]}}]}}}
 
 # The Route's host is ATLAS_PUBLIC_HOST, copied, so the two can never differ (a request whose
 # Host is not ATLAS_PUBLIC_HOST is refused with 421). The base's Route `atlas` carries

@@ -193,6 +193,8 @@ every door and leg; the decisions:
 | the Route's host | a patch on Route `atlas`: `spec.host` is `ATLAS_PUBLIC_HOST`. A certificate of the organisation's own goes on the Route too (`spec.tls.certificate`, `key`); without one the router serves the platform's default |
 | the trusted proxy ranges | two env patches, usually the same value: `CADDY_TRUSTED_PROXIES` on the `atlas-tls` container (the router's range, space-separated) and `ATLAS_TRUSTED_PROXY_CIDRS` on the `atlas-api` container (atlas-tls's range, comma-separated). On ARO the router and atlas-tls are both on the pod network, so both are the pod network CIDR (`oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'`; ARO's default is the /14 that starts the 10.128 block). A router on the host network (`HostNetwork` strategy) is seen from the node's address: add the machine network. A gateway in front of the router (Application Gateway, Front Door): set the Route's `set-forwarded-headers` to `append` and add the gateway's range to `CADDY_TRUSTED_PROXIES` |
 | the images and the release | see the next section; the base's registry is a placeholder |
+| a pull secret (a registry that needs credentials) | `imagePullSecrets` on ServiceAccount `atlas` (every Atlas pod runs as it; the pods' `automountServiceAccountToken: false` does not stop pull secrets) and `spec.imagePullSecrets` on Cluster `atlas-db` (CloudNativePG copies it to the database pods' own ServiceAccount). The example overlay has both in `patch-pull-secret.yaml`, commented out in its `patches:`; [FIRST-INSTALL.md, "Your own registry"](FIRST-INSTALL.md#your-own-registry) |
+| labels the organisation requires | a second entry in `labels:` with `includeSelectors: false`, `includeTemplates: true`, and `fields` adding `spec/inheritedMetadata/labels` of the `Cluster` so the database pods carry them too; the example overlay has it commented out |
 | one replica instead of two | a `replicas` patch on `atlas-api` or `atlas-tls`, and delete its PDB (a `minAvailable: 1` on one replica blocks node drains) |
 | two `atlas-mcp` replicas (optional) | only on a release that has `ATLAS_MCP_STATELESS_HTTP`; see "Two atlas-mcp replicas" |
 
@@ -203,7 +205,9 @@ digest that release published (`ghcr.io/<owner>/gradinai-atlas-api`, listed in t
 `release-images.env`; see [Releases](../../docs/oss/RELEASES.md)). Its registry,
 `registry.example.com/gradinai-atlas`, is a placeholder, because the repository names no
 account: **every overlay sets the image**, to GHCR or to the organisation's mirror of the same
-digest.
+digest. A cluster that may not pull from ghcr.io copies the release's images (and the database
+image) to its own registry by digest and changes `newName` only: [FIRST-INSTALL.md, "Your own
+registry"](FIRST-INSTALL.md#your-own-registry) has the commands.
 
 **The `-ubi` images are the ones to run on OpenShift.** From `v0.0.2-alpha` on, every release
 publishes them beside the Compose images (task 1.4; [Releases](../../docs/oss/RELEASES.md#what-a-release-publishes)):
@@ -306,6 +310,14 @@ through the `db-url` init container) and Secret `atlas-db-ca` (the base reads on
 any connection without TLS. The `postgres` superuser has no password, and `atlas` has no
 `CREATEDB`.
 
+**The operator's version.** Community CloudNativePG writes `fqdn-uri` from 1.25.3 (1.25 line),
+1.26.1 (1.26 line) and every 1.27 or later, and has the `Database` resource from 1.25.0. For an
+older operator the example overlay carries `patch-older-cnpg.yaml` (commented out in its
+`patches:`, with an inline entry for the migrate Job): the three workloads read the `uri` key,
+whose host `atlas-db-rw.<namespace>` is also on the server certificate (the operator puts the
+service name, `.<namespace>`, `.<namespace>.svc` and the full name on it), and the `Database` is
+left out. [FIRST-INSTALL.md](FIRST-INSTALL.md), step 1, has the check.
+
 **Community or EDB.** The manifests are written for community CloudNativePG,
 `postgresql.cnpg.io/v1`, the default. On EDB Postgres for Kubernetes
 (`postgresql.k8s.enterprisedb.io/v1`, open question 6 of the research), add the switch:
@@ -403,7 +415,7 @@ the database pods carry both through the Cluster's `inheritedMetadata` (componen
 
 | From | To | Port | Policy |
 |---|---|---|---|
-| the OpenShift router (namespace labelled `policy-group.network.openshift.io/ingress`) | atlas-tls | 8443 | `atlas-tls` |
+| the OpenShift router (namespace carrying the label key `policy-group.network.openshift.io/ingress`, any value) | atlas-tls | 8443 | `atlas-tls` |
 | atlas-mcp | atlas-tls | 9443 | `atlas-tls`, `atlas-mcp` |
 | atlas-tls | atlas-api | 8443 | `atlas-tls`, `atlas-api` |
 | atlas-tls | atlas-mcp | 8493 | `atlas-tls`, `atlas-mcp` |
@@ -412,6 +424,12 @@ the database pods carry both through the Cluster's `inheritedMetadata` (componen
 | the CloudNativePG operator's namespace | the database pods | 8000, 5432 | `atlas-database-from-operator` |
 | the database pods | the Kubernetes API (any address) | 6443 | `atlas-database` |
 | every Atlas pod | the cluster DNS (namespace `openshift-dns`) | 5353 TCP and UDP | `atlas-dns` |
+
+**The router is matched by the label's key** (`matchExpressions`, `operator: Exists`), not by
+its value. OpenShift's documentation writes the label with an empty value, but clusters carry
+other values too (`ingress` has been seen), and a `matchLabels` on the wrong value admits no
+router: the Route answers 503. `oc get namespace openshift-ingress --show-labels` shows the key
+(FIRST-INSTALL.md, step 1).
 
 Nothing else. In particular **atlas-mcp reaches neither the database nor `atlas-api:8443`**, no
 other namespace reaches anything but the router to `atlas-tls:8443`, and no Atlas pod but the

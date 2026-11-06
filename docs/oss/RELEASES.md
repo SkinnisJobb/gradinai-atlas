@@ -191,7 +191,13 @@ Red Hat OpenShift), which is not finished yet.
   CloudNativePG operator reach the database, which those templates block. The example overlay
   lists it commented out, and `deploy/openshift/FIRST-INSTALL.md` has a troubleshooting section
   for a cluster that denies traffic by default
-  ([deploy/openshift/README.md](../../deploy/openshift/README.md#networkpolicies-task-34)).
+  ([deploy/openshift/README.md](../../deploy/openshift/README.md#networkpolicies-task-34)). The
+  router is admitted by its namespace label's key, whatever value the cluster gives it.
+- **OpenShift first install, more clusters:** `deploy/openshift/FIRST-INSTALL.md` shows how to
+  copy the images to a registry the cluster may pull from, by digest, and checks the
+  CloudNativePG version and the project's quota first. The example overlay has optional,
+  commented-out patches for a pull secret, for an older CloudNativePG operator, and for
+  labels an organisation requires.
 - **Startup:** the schema step and the boot seeding hold a PostgreSQL advisory lock, so several
   replicas, or a replica and `atlas-migrate`, starting together no longer race. A single process
   never waits on it. A `postgresql://` database URL with no driver now means psycopg2.
