@@ -7,9 +7,10 @@ and the reasons behind every choice here, are in
 being built task by task; until the install guide (task 5.1) lands, this page is the map.
 
 **To try an install now**, follow [FIRST-INSTALL.md](FIRST-INSTALL.md): a step-by-step for
-PowerShell 7 and `oc`, with the overlay [`overlays/example/`](overlays/example/kustomization.yaml)
-(no optional components, no backup yet; the NetworkPolicies are one commented line to switch on,
-below).
+PowerShell 7 and `oc` that writes an install's own overlay (in `overlays/ours/`, which git
+ignores) from a values sheet, with the NetworkPolicies on by default and no backup yet.
+[`overlays/example/`](overlays/example/kustomization.yaml) is the same overlay with every value a
+`change-me` placeholder, for reading and for the lint.
 
 The Compose install in `deploy/oss/` is unchanged and separate: nothing here is read by it.
 
@@ -192,7 +193,7 @@ every door and leg; the decisions:
 | the Route's host | a patch on Route `atlas`: `spec.host` is `ATLAS_PUBLIC_HOST`. A certificate of the organisation's own goes on the Route too (`spec.tls.certificate`, `key`); without one the router serves the platform's default |
 | the trusted proxy ranges | two env patches, usually the same value: `CADDY_TRUSTED_PROXIES` on the `atlas-tls` container (the router's range, space-separated) and `ATLAS_TRUSTED_PROXY_CIDRS` on the `atlas-api` container (atlas-tls's range, comma-separated). On ARO the router and atlas-tls are both on the pod network, so both are the pod network CIDR (`oc get network.config cluster -o jsonpath='{.spec.clusterNetwork[*].cidr}'`; ARO's default is the /14 that starts the 10.128 block). A router on the host network (`HostNetwork` strategy) is seen from the node's address: add the machine network. A gateway in front of the router (Application Gateway, Front Door): set the Route's `set-forwarded-headers` to `append` and add the gateway's range to `CADDY_TRUSTED_PROXIES` |
 | the images and the release | see the next section; the base's registry is a placeholder |
-| a pull secret (a registry that needs credentials) | `imagePullSecrets` on ServiceAccount `atlas` (every Atlas pod runs as it; the pods' `automountServiceAccountToken: false` does not stop pull secrets) and `spec.imagePullSecrets` on Cluster `atlas-db` (CloudNativePG copies it to the database pods' own ServiceAccount). The example overlay has both in `patch-pull-secret.yaml`, commented out in its `patches:`; [FIRST-INSTALL.md, "Your own registry"](FIRST-INSTALL.md#your-own-registry) |
+| a pull secret (a registry that needs credentials) | `imagePullSecrets` on ServiceAccount `atlas` (every Atlas pod runs as it; the pods' `automountServiceAccountToken: false` does not stop pull secrets) and `spec.imagePullSecrets` on Cluster `atlas-db` (CloudNativePG copies it to the database pods' own ServiceAccount). The example overlay has both in `patch-pull-secret.yaml`, commented out in its `patches:`; [FIRST-INSTALL.md, step 7](FIRST-INSTALL.md#7-check-that-the-cluster-can-pull-the-images) |
 | labels the organisation requires | a second entry in `labels:` with `includeSelectors: false`, `includeTemplates: true`, and `fields` adding `spec/inheritedMetadata/labels` of the `Cluster` so the database pods carry them too; the example overlay has it commented out |
 | one replica instead of two | a `replicas` patch on `atlas-api` or `atlas-tls`, and delete its PDB (a `minAvailable: 1` on one replica blocks node drains) |
 | `atlas-mcp` replicas | nothing: one replica, stateful transport; see "One atlas-mcp replica" |
@@ -215,7 +216,7 @@ The registry, `registry.example.com/gradinai-atlas`, is a placeholder, because t
 names no account: **every overlay sets the image**, to GHCR or to the organisation's mirror of
 the same digest. A cluster that may not pull from ghcr.io copies the release's images (and the
 database image) to its own registry by digest and changes `newName` only: [FIRST-INSTALL.md,
-"Your own registry"](FIRST-INSTALL.md#your-own-registry) has the commands. Three things belong
+step 7](FIRST-INSTALL.md#7-check-that-the-cluster-can-pull-the-images) has the commands. Three things belong
 to one release and move together in the overlay:
 
 ```yaml
@@ -301,7 +302,7 @@ older operator the example overlay carries `patch-older-cnpg.yaml` (commented ou
 `patches:`, with an inline entry for the migrate Job): the three workloads read the `uri` key,
 whose host `atlas-db-rw.<namespace>` is also on the server certificate (the operator puts the
 service name, `.<namespace>`, `.<namespace>.svc` and the full name on it), and the `Database` is
-left out. [FIRST-INSTALL.md](FIRST-INSTALL.md), step 1, has the check.
+left out. [FIRST-INSTALL.md](FIRST-INSTALL.md), step 5, has the check.
 
 **Community or EDB.** The manifests are written for community CloudNativePG,
 `postgresql.cnpg.io/v1`, the default. On EDB Postgres for Kubernetes
@@ -421,7 +422,7 @@ the database pods carry both through the Cluster's `inheritedMetadata` (componen
 its value. OpenShift's documentation writes the label with an empty value, but clusters carry
 other values too (`ingress` has been seen), and a `matchLabels` on the wrong value admits no
 router: the Route answers 503. `oc get namespace openshift-ingress --show-labels` shows the key
-(FIRST-INSTALL.md, step 1).
+(FIRST-INSTALL.md, step 6).
 
 Nothing else. In particular **atlas-mcp reaches neither the database nor `atlas-api:8443`**, no
 other namespace reaches anything but the router to `atlas-tls:8443`, and no Atlas pod but the

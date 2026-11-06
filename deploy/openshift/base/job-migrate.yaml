@@ -24,7 +24,12 @@ metadata:
     app.kubernetes.io/name: atlas
     app.kubernetes.io/component: migrate
 spec:
-  backoffLimit: 1
+  # RETRIES. On a first install the Job, the Cluster and its app Secret are created at once, and
+  # CloudNativePG writes the Secret before PostgreSQL accepts connections, so the first runs meet
+  # `Connection refused`. Six retries, 10 s apart and doubling, wait out a database that comes up
+  # within about five minutes; the deadline below still ends the Job at ten. The upgrade is
+  # idempotent, so a retry after a real failure is harmless.
+  backoffLimit: 6
   activeDeadlineSeconds: 600
   ttlSecondsAfterFinished: 604800
   template:

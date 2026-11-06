@@ -33,3 +33,8 @@ deploy/oss/gateway/
 # holds password verifiers and token digests) belong to the install, never to the repo.
 deploy/oss/atlas.mcp.json
 deploy/oss/atlas-backup.sql
+
+# deploy/openshift/FIRST-INSTALL.md, step 9, writes an install's own overlay here (namespace, host,
+# registry, pod network, and on the plain-YAML database path its copy of atlas-db.yaml). It belongs
+# to that install, never to the repo.
+deploy/openshift/overlays/ours/
