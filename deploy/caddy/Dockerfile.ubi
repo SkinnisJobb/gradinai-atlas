@@ -38,7 +38,7 @@ RUN go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}" \
 # Caddy's own licence (Apache-2.0), from the module the binary was built from, for /licenses.
 RUN cp "$(go env GOMODCACHE)/github.com/caddyserver/caddy/v2@${CADDY_VERSION}/LICENSE" /tmp/caddy-LICENSE
 
-FROM registry.access.redhat.com/ubi9/ubi-micro:9.8@sha256:6d9eff186ce3ccf399c1835265e7fd3f83bd112cc3422da2d39fd44e234aab59
+FROM registry.access.redhat.com/ubi9/ubi-micro:9.8@sha256:d3499a0896e2d6a1642f922615831bc5c2fd513bbb34f3446cabba530d9d54a2
 COPY --from=builder /tmp/caddy /usr/bin/caddy
 RUN mkdir -p /config /data /etc/caddy \
  && chgrp 0 /config /data \

@@ -57,7 +57,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # (/opt/app-root, first on PATH) with --require-hashes; every file group 0 and not
 # group-writable (the venv too), HOME=/home/atlas, numeric USER, the python HEALTHCHECK of
 # `hardened` (the image has no curl to need). Pinned tag@digest; Dependabot follows `9.8` (/mcp).
-FROM registry.access.redhat.com/ubi9/python-312-minimal:9.8@sha256:d0ac54e77cd0be473b22fb274493526027f2746ec503b4a97ca08257813f0d4b AS hardened-ubi
+FROM registry.access.redhat.com/ubi9/python-312-minimal:9.8@sha256:31681124f9877c8d2db90fd6e1782d0006043cc18678ba917b3468f5288100f2 AS hardened-ubi
 USER 0
 WORKDIR /app
 COPY --from=base /app /app
