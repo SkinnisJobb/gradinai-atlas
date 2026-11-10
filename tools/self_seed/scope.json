@@ -8,6 +8,11 @@
   "atlas-caddy-lan-test": "one estate's test proxy",
   "atlas-ci-runner": "one estate's self-hosted CI runners",
   "atlas-cloudflared": "one estate's tunnel to its public host",
+  "atlas-delivery-check": "a script of one estate's own delivery tooling, not shipped in the product repository; an install delivers with its own procedure (deploy/oss, deploy/openshift)",
+  "atlas-delivery-deploy": "a script of one estate's own delivery tooling, not shipped in the product repository; an install delivers with its own procedure (deploy/oss, deploy/openshift)",
+  "atlas-delivery-fork": "a script of one estate's own delivery tooling, not shipped in the product repository; an install delivers with its own procedure (deploy/oss, deploy/openshift)",
+  "atlas-delivery-snapshot": "a script of one estate's own delivery tooling, not shipped in the product repository; an install delivers with its own procedure (deploy/oss, deploy/openshift)",
+  "atlas-delivery-stage": "a script of one estate's own delivery tooling, not shipped in the product repository; an install delivers with its own procedure (deploy/oss, deploy/openshift)",
   "atlas-postgres-staging": "one estate's staging database",
   "atlas-postgres-test": "one estate's test database"
  }
