@@ -15,7 +15,7 @@ kind: Kustomization
 labels:
   - pairs:
       app.kubernetes.io/part-of: atlas
-      app.kubernetes.io/version: v0.0.2-alpha
+      app.kubernetes.io/version: v0.0.3-alpha
     includeSelectors: false
     includeTemplates: true
 

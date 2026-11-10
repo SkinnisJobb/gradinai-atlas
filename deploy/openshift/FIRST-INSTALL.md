@@ -81,7 +81,7 @@ them.
   `Set-Alias python py` in each new terminal.
 - `curl.exe`, which Windows 10 and 11 ship.
 - A checkout of this repository at the release you install (its tag, for example
-  `v0.0.2-alpha`).
+  `v0.0.3-alpha`).
 - **Path: images `mirror`**: credentials that may push to your registry.
 
 The steps need no cluster-wide rights. Step 3 checks the project rights.
@@ -165,7 +165,7 @@ if ($leftover) { Write-Warning ("Still change-me: " + ($leftover.Name -join ', '
 "release $release, job $job, host $atlasHost, namespace $ns"
 ```
 
-**Expected:** one line such as `release v0.0.2-alpha, job atlas-migrate-v0-0-2-alpha, host
+**Expected:** one line such as `release v0.0.3-alpha, job atlas-migrate-v0-0-3-alpha, host
 atlas.apps..., namespace atlas`, and no warning.
 
 **If not:** `WARNING: Still change-me: ...` names the values you have not filled in. An error from
@@ -639,19 +639,19 @@ components:
 images:
   - name: registry.example.com/gradinai-atlas/gradinai-atlas-api-ubi
     newName: ghcr.io/<owner>/gradinai-atlas-api-ubi
-    newTag: v0.0.2-alpha
-    digest: sha256:351309bef465f82977ddc0c2983978fe89cba976ad2f356e7855bc3c39423f60
+    newTag: v0.0.3-alpha
+    digest: sha256:abfec73fe0e6d47a5fd7c4cee2c09184f43dafc86c48e3006715b3d859acbad8
   - name: registry.example.com/gradinai-atlas/gradinai-atlas-mcp-ubi
     newName: ghcr.io/<owner>/gradinai-atlas-mcp-ubi
-    newTag: v0.0.2-alpha
-    digest: sha256:d3ad435cae231327c4cbd96aef3afb5fa60b96b7e0d04e464f4b1d971d1e56e7
+    newTag: v0.0.3-alpha
+    digest: sha256:fad2c7542c581f684e01e73a67d2b6d58924a94cb187b8dda0c391ff07108ffc
   - name: registry.example.com/gradinai-atlas/gradinai-atlas-tls-ubi
     newName: ghcr.io/<owner>/gradinai-atlas-tls-ubi
-    newTag: v0.0.2-alpha
-    digest: sha256:1c80ebfe57035a851aaa10bede3e98b1943f0453ab7a7ec17b116e39d02f27ad
+    newTag: v0.0.3-alpha
+    digest: sha256:42feb54540eabd0fccb398dfc4a240b74d81184d2cbec33b99a5fc6bdd73e33e
 
 labels:
-  - pairs: {app.kubernetes.io/version: v0.0.2-alpha}
+  - pairs: {app.kubernetes.io/version: v0.0.3-alpha}
     includeSelectors: false
     includeTemplates: true
 
@@ -774,7 +774,7 @@ allowlist** (`$ipAllowlist` set):
 
 ```diff
  labels:
-   - pairs: {app.kubernetes.io/version: v0.0.2-alpha}
+   - pairs: {app.kubernetes.io/version: v0.0.3-alpha}
      includeSelectors: false
      includeTemplates: true
 +  - pairs: {example.com/cost-center: 'change-me'}

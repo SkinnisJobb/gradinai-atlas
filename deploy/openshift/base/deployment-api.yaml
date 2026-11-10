@@ -81,7 +81,7 @@ spec:
                     app.kubernetes.io/component: api
       containers:
         - name: atlas-api
-          # The UBI API image of release v0.0.2-alpha (gradinai-atlas-api-ubi: Red Hat UBI 9,
+          # The UBI API image of release v0.0.3-alpha (gradinai-atlas-api-ubi: Red Hat UBI 9,
           # Python 3.12, non-root under any UID in group 0), by tag and digest: the digest is the
           # one the release published to GitHub's container registry (ghcr.io/<owner>/
           # gradinai-atlas-api-ubi, ATLAS_IMAGE_API_UBI in the release's release-images.env;
@@ -90,7 +90,7 @@ spec:
           # mirror of the same digest) with a Kustomize `images:` entry matching this name, which
           # moves this container, the migrate Job and the audit CronJob together.
           # deploy/openshift/README.md, "Images and releases".
-          image: registry.example.com/gradinai-atlas/gradinai-atlas-api-ubi:v0.0.2-alpha@sha256:351309bef465f82977ddc0c2983978fe89cba976ad2f356e7855bc3c39423f60
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-api-ubi:v0.0.3-alpha@sha256:abfec73fe0e6d47a5fd7c4cee2c09184f43dafc86c48e3006715b3d859acbad8
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn
