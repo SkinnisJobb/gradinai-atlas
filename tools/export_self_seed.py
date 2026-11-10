@@ -39,6 +39,16 @@ WHAT IS LEFT OUT, AND HOW
     (blank-line separated); a paragraph that matches is dropped, and a document or field that is
     left empty is dropped. The report names the node, the field and the pattern, never the text.
     An intent that matches is dropped whole. Fix the text on the source Atlas and re-export.
+  * BEFORE that, REVIEWED REWRITES (`tools/self_seed/rewrites.json`). The source keeps its own
+    estate detail (addresses, hosts, people); what leaves is rewritten with examples rather than
+    dropped. `paragraphs` maps `<where>|<sha256[:16] of the source paragraph>` (where is
+    `<node>.<field>` or `<node>:<doc path>`, as the report prints it) to the replacement, or to
+    null to remove it; `intents` maps `<node>:<slug>|<hash of the statement>` to a replacement
+    `title`/`statement`. Only hashes enter the repo, never source text. A replacement is held to
+    every pattern like any paragraph. A key that matches nothing is listed as stale in the report.
+  * WORK REFERENCES (`TASK-12`, `STORY-some-slug`, `OSS-24`, `PR #82`): forbidden in the profile
+    and in the rewrites. A fresh install keeps its own id counter and has none of the source's
+    items; write a format example as a placeholder (`TASK-<n>`, `STORY-<slug>`).
 
 FORBIDDEN PATTERNS
   The scrub gate's generic patterns (private IPv4, `<host>.local`, email addresses, imported
@@ -80,6 +90,7 @@ SCOPE_FILE = CONFIG_DIR / "scope.json"
 INTENTS_FILE = CONFIG_DIR / "intents.json"
 REVIEW_FILE = CONFIG_DIR / "INTENTS-REVIEW.md"
 REPORT_FILE = CONFIG_DIR / "EXPORT-REPORT.md"
+REWRITES_FILE = CONFIG_DIR / "rewrites.json"
 DATA_FILE = REPO / "backend" / "self_seed_data.py"
 
 WORLD_FAMILIES = "object,bridge"
@@ -96,6 +107,26 @@ EXTRA_PATTERNS: dict[str, str] = {
 #: Work identifiers: not forbidden (the prose may cite a decision), but counted in the report,
 #: because a fresh install has none of these items and the reference reads as a dangling link.
 WORK_REF = re.compile(r"\b(?:TASK|STORY|EPIC|BUG)-[A-Za-z0-9-]*\d[A-Za-z0-9-]*\b")
+
+#: Work references are FORBIDDEN in the profile itself: a fresh install keeps its own id counter
+#: and has none of the source's items, so a cited id is a dangling link. Case-sensitive, and held
+#: to the profile and the rewrites only: the review file quotes excluded intents verbatim. An id
+#: used as a format example is written as a placeholder (`TASK-<n>`, `STORY-<slug>`).
+WORK_REF_PATTERN = scan.Pattern(
+    "work-ref",
+    re.compile(r"\b(?:TASK|BUG|OSS)-[A-Za-z0-9-]*\d[A-Za-z0-9-]*\b|\b(?:STORY|EPIC)-[A-Za-z0-9][A-Za-z0-9-]*\b"
+               r"|\bPR ?#\d+\b|\bDS0\d\d\b"),
+    True)
+
+
+def para_key(where: str, para: str) -> str:
+    """A rewrite's key: where the paragraph lives and a hash of the SOURCE paragraph.
+
+    The hash, not the text, is what the committed rewrites file names, so the source's own detail
+    never enters the repo. A source paragraph that changes no longer matches, and its rewrite is
+    reported as stale rather than applied to text it was not written for."""
+    import hashlib
+    return f"{where}|{hashlib.sha256(para.strip().encode('utf-8')).hexdigest()[:16]}"
 
 
 # --------------------------------------------------------------------------- #
@@ -231,13 +262,26 @@ def subtree(root: str, kept: set[str], contains: list[tuple[str, str]]) -> set[s
     return out
 
 
-def scrub_prose(text: str | None, patterns, where: str, dropped: list) -> str | None:
-    """Drop every paragraph that matches a pattern; None when nothing is left."""
+def scrub_prose(text: str | None, patterns, where: str, dropped: list,
+                rewrites: dict | None = None, used: set | None = None) -> str | None:
+    """Rewrite, then drop every paragraph that matches a pattern; None when nothing is left.
+
+    A paragraph whose `para_key` is in `rewrites` is replaced by the reviewed text first (an empty
+    or null rewrite removes it on purpose); the replacement is then held to the same patterns, so a
+    rewrite cannot carry a forbidden term in."""
     if not text:
         return None
     paras = re.split(r"\n[ \t]*\n", text.strip("\n"))
     keep = []
     for i, para in enumerate(paras):
+        if rewrites:
+            key = para_key(where, para)
+            if key in rewrites:
+                if used is not None:
+                    used.add(key)
+                para = rewrites[key]
+                if not para:
+                    continue
         h = hits(para, patterns)
         if h:
             dropped.append((where, f"paragraph {i + 1} of {len(paras)}", ", ".join(h)))
@@ -248,7 +292,12 @@ def scrub_prose(text: str | None, patterns, where: str, dropped: list) -> str | 
     return "\n\n".join(keep).strip() + ("\n" if text.endswith("\n") else "")
 
 
-def build(snap: dict, patterns, scope: dict, decisions: dict) -> tuple[dict, dict]:
+def build(snap: dict, patterns, scope: dict, decisions: dict,
+          rewrites: dict | None = None) -> tuple[dict, dict]:
+    rewrites = rewrites or {}
+    para_rw = rewrites.get("paragraphs", {})
+    intent_rw = rewrites.get("intents", {})
+    used: set[str] = set()
     root = snap["root"]
     edges = [tuple(e) for e in snap["edges"]]
     excluded = set(scope.get("exclude_nodes", {}))
@@ -274,13 +323,13 @@ def build(snap: dict, patterns, scope: dict, decisions: dict) -> tuple[dict, dic
                              f"add it to scope.json exclude_nodes or rename it on the source")
         out = {"id": nid, "type": n["type"], "name": n["name"] or nid}
         for f in ("summary", "abstract", "detail"):
-            v = scrub_prose(n.get(f), patterns, f"{nid}.{f}", report["dropped_prose"])
+            v = scrub_prose(n.get(f), patterns, f"{nid}.{f}", report["dropped_prose"], para_rw, used)
             if v:
                 out[f] = v
         docs = []
         for d in sorted((n.get("attributes") or {}).get("docs") or [], key=lambda d: d["path"]):
             content = scrub_prose(snap["docs"].get(nid, {}).get(d["path"]), patterns,
-                                  f"{nid}:{d['path']}", report["dropped_prose"])
+                                  f"{nid}:{d['path']}", report["dropped_prose"], para_rw, used)
             if hits(d.get("title") or "", patterns):
                 content = None
             if not content:
@@ -311,6 +360,10 @@ def build(snap: dict, patterns, scope: dict, decisions: dict) -> tuple[dict, dic
         if it["node_id"] not in kept:
             continue
         key = f"{it['node_id']}:{it['slug']}"
+        rkey = para_key(key, it.get("statement") or "")
+        if rkey in intent_rw:
+            used.add(rkey)
+            it = {**it, **{k: v for k, v in intent_rw[rkey].items() if k in ("title", "statement")}}
         dec = decisions.get(key, {"decision": "pending", "reason": "new on the source; not reviewed"})
         h = hits(" ".join(str(it.get(k) or "") for k in ("title", "statement")), patterns)
         review.append({**it, "key": key, "decision": dec["decision"], "reason": dec.get("reason", ""),
@@ -329,6 +382,8 @@ def build(snap: dict, patterns, scope: dict, decisions: dict) -> tuple[dict, dic
             report["work_refs"][n["id"]] = len(refs)
     stale = sorted(set(decisions) - {r["key"] for r in review})
     report["stale_decisions"] = stale
+    report["rewrites_applied"] = len(used)
+    report["stale_rewrites"] = sorted((set(para_rw) | set(intent_rw)) - used)
     profile = {"root": root, "nodes": nodes, "edges": kept_edges, "intents": intents}
     return profile, {"report": report, "review": review}
 
@@ -337,7 +392,7 @@ def build(snap: dict, patterns, scope: dict, decisions: dict) -> tuple[dict, dic
 # writers
 # --------------------------------------------------------------------------- #
 
-DATA_HEADER = '''"""The `self` seed profile's data: Atlas's own world model (TASK-1461). GENERATED.
+DATA_HEADER = '''"""The `self` seed profile's data: Atlas's own world model. GENERATED.
 
 Do not edit by hand. Regenerate with `tools/export_self_seed.py` (its docstring has the steps)
 and commit the diff; `backend/self_seed.py` loads it into a fresh graph under ATLAS_SEED=self.
@@ -434,6 +489,9 @@ def render_report(report: dict, profile: dict, deny_state: str) -> str:
     section("Included intents dropped (matched a forbidden pattern)",
             [f"`{k}`: {h}" for k, h in report["dropped_intents"]])
     section("Decisions in intents.json with no intent on the source", report["stale_decisions"])
+    out.extend([f"Rewrites applied from `tools/self_seed/rewrites.json`: {report.get('rewrites_applied', 0)}.", ""])
+    section("Rewrites whose source paragraph or intent is gone or changed (review and re-key)",
+            report.get("stale_rewrites", []))
     section("Nodes whose prose cites work ids (none exist on a fresh install)",
             [f"`{k}`: {v} distinct id(s)" for k, v in sorted(report["work_refs"].items())])
     return "\n".join(out).rstrip() + "\n"
@@ -441,7 +499,8 @@ def render_report(report: dict, profile: dict, deny_state: str) -> str:
 
 def committed_text() -> list[tuple[str, str]]:
     return [(str(p.relative_to(REPO)), p.read_text(encoding="utf-8"))
-            for p in (DATA_FILE, REVIEW_FILE, REPORT_FILE, SCOPE_FILE, INTENTS_FILE) if p.is_file()]
+            for p in (DATA_FILE, REVIEW_FILE, REPORT_FILE, SCOPE_FILE, INTENTS_FILE, REWRITES_FILE)
+            if p.is_file()]
 
 
 def self_check(patterns, data_only=()) -> list[str]:
@@ -454,7 +513,8 @@ def self_check(patterns, data_only=()) -> list[str]:
     # The review file quotes excluded intents verbatim for a person to read. It is not seed
     # data, but it ships in the repo, so it is held to the same bar as the profile.
     for rel, text in committed_text():
-        pats = list(patterns) + (list(data_only) if Path(rel) == DATA_FILE.relative_to(REPO) else [])
+        held = (DATA_FILE.relative_to(REPO), REWRITES_FILE.relative_to(REPO))
+        pats = list(patterns) + (list(data_only) if Path(rel) in held else [])
         for name in hits(text, pats):
             probs.append(f"{rel}: {name}")
     # The profile must also be loadable Python data of the documented shape.
@@ -525,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
         snap = json.loads(args.snapshot.expanduser().read_text(encoding="utf-8"))
     # The outside ids and the extra terms are checked against the profile only: scope.json and
     # the report name the excluded instances (an estate's tunnel, its staging copies) on purpose.
-    data_only = list(extras)
+    data_only = list(extras) + [WORK_REF_PATTERN]
     if snap is not None:
         scope = _load_json(SCOPE_FILE, {})
         data_only += outside_id_pattern(list(snap.get("outside_world_ids", []))
@@ -534,7 +594,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "build":
         scope = _load_json(SCOPE_FILE, {})
         decisions = _load_json(INTENTS_FILE, {}).get("decisions", {})
-        profile, extra = build(snap, patterns + extras, scope, decisions)
+        rewrites = _load_json(REWRITES_FILE, {})
+        profile, extra = build(snap, patterns + extras + [WORK_REF_PATTERN], scope, decisions, rewrites)
         DATA_FILE.write_text(render_data(profile), encoding="utf-8", newline="\n")
         REVIEW_FILE.write_text(render_review(extra["review"]), encoding="utf-8", newline="\n")
         REPORT_FILE.write_text(render_report(extra["report"], profile, deny_state), encoding="utf-8",
