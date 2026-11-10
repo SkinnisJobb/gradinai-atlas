@@ -90,13 +90,13 @@ spec:
                     app.kubernetes.io/component: mcp
       containers:
         - name: atlas-mcp
-          # The UBI MCP image of release v0.0.2-alpha (gradinai-atlas-mcp-ubi), by tag and digest:
+          # The UBI MCP image of release v0.0.3-alpha (gradinai-atlas-mcp-ubi), by tag and digest:
           # the digest is the one the release published to GitHub's container registry
           # (ghcr.io/<owner>/gradinai-atlas-mcp-ubi, ATLAS_IMAGE_MCP_UBI in the release's
           # release-images.env; docs/oss/RELEASES.md). The registry is a placeholder, as for
           # atlas-api: the overlay names the registry it pulls from with a Kustomize `images:`
           # entry matching this name. deploy/openshift/README.md, "Images and releases".
-          image: registry.example.com/gradinai-atlas/gradinai-atlas-mcp-ubi:v0.0.2-alpha@sha256:d3ad435cae231327c4cbd96aef3afb5fa60b96b7e0d04e464f4b1d971d1e56e7
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-mcp-ubi:v0.0.3-alpha@sha256:fad2c7542c581f684e01e73a67d2b6d58924a94cb187b8dda0c391ff07108ffc
           imagePullPolicy: IfNotPresent
           command:
             - python

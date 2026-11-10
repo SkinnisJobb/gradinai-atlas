@@ -83,7 +83,7 @@ spec:
                     app.kubernetes.io/component: tls
       containers:
         - name: atlas-tls
-          # The UBI Caddy front of release v0.0.2-alpha (gradinai-atlas-tls-ubi, built from
+          # The UBI Caddy front of release v0.0.3-alpha (gradinai-atlas-tls-ubi, built from
           # deploy/caddy/Dockerfile.ubi: stock Caddy, no plugin, on ubi-micro, USER 10001:0), by
           # tag and digest: the digest is the one the release published to GitHub's container
           # registry (ghcr.io/<owner>/gradinai-atlas-tls-ubi, ATLAS_IMAGE_TLS_UBI in the release's
@@ -91,7 +91,7 @@ spec:
           # emptyDirs below, and listens on 8443 and 9443. The registry is a placeholder, as for
           # atlas-api: the overlay names the registry and the image with a Kustomize `images:`
           # entry matching this name. deploy/openshift/README.md, "Images and releases".
-          image: registry.example.com/gradinai-atlas/gradinai-atlas-tls-ubi:v0.0.2-alpha@sha256:1c80ebfe57035a851aaa10bede3e98b1943f0453ab7a7ec17b116e39d02f27ad
+          image: registry.example.com/gradinai-atlas/gradinai-atlas-tls-ubi:v0.0.3-alpha@sha256:42feb54540eabd0fccb398dfc4a240b74d81184d2cbec33b99a5fc6bdd73e33e
           imagePullPolicy: IfNotPresent
           # Both images' own CMD, stated so that either runs the same way.
           command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

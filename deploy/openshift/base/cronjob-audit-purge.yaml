@@ -57,7 +57,7 @@ spec:
           containers:
             - name: atlas-audit-purge
               # The same image as atlas-api (deployment-api.yaml); one `images:` entry moves both.
-              image: registry.example.com/gradinai-atlas/gradinai-atlas-api-ubi:v0.0.2-alpha@sha256:351309bef465f82977ddc0c2983978fe89cba976ad2f356e7855bc3c39423f60
+              image: registry.example.com/gradinai-atlas/gradinai-atlas-api-ubi:v0.0.3-alpha@sha256:abfec73fe0e6d47a5fd7c4cee2c09184f43dafc86c48e3006715b3d859acbad8
               imagePullPolicy: IfNotPresent
               command: ["atlas-admin", "audit", "purge"]
               envFrom:

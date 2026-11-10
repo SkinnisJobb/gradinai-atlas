@@ -10,7 +10,8 @@ being built task by task; until the install guide (task 5.1) lands, this page is
 PowerShell 7 and `oc` that writes an install's own overlay (in `overlays/ours/`, which git
 ignores) from a values sheet, with the NetworkPolicies on by default and no backup yet.
 [`overlays/example/`](overlays/example/kustomization.yaml) is the same overlay with every value a
-`change-me` placeholder, for reading and for the lint.
+`change-me` placeholder, for reading and for the lint. **To upgrade an install** to a new
+release, follow [UPGRADE.md](UPGRADE.md).
 
 The Compose install in `deploy/oss/` is unchanged and separate: nothing here is read by it.
 
@@ -201,7 +202,7 @@ every door and leg; the decisions:
 ### Images and releases
 
 **The `-ubi` images are the ones OpenShift runs.** The base names the three UBI images of release
-`v0.0.2-alpha` by tag and by the digest that release published: `gradinai-atlas-api-ubi`
+`v0.0.3-alpha` by tag and by the digest that release published: `gradinai-atlas-api-ubi`
 (atlas-api, the migrate Job, the audit CronJob), `gradinai-atlas-mcp-ubi` and
 `gradinai-atlas-tls-ubi`, on Red Hat UBI 9, non-root under any UID in group 0, checked with Red
 Hat's preflight, with `/licenses` and their own labels (task 1.4;
@@ -238,7 +239,7 @@ labels:
     includeSelectors: false
     includeTemplates: true
 patches:
-  - target: {kind: Job, name: atlas-migrate-v0-0-2-alpha}
+  - target: {kind: Job, name: atlas-migrate-v0-0-3-alpha}
     patch: |-
       - op: replace
         path: /metadata/name
