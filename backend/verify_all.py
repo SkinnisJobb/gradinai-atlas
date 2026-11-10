@@ -48,6 +48,7 @@ their business.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -74,6 +75,39 @@ NOT_SUITE_MEMBERS: dict[str, str] = {}
 # faster" explicitly out of scope. This exists so a hung script fails the run
 # instead of hanging it forever, which matters the moment this runs unattended.
 DEFAULT_TIMEOUT_S = 1800
+
+
+# SHARDS (2026-11-10). CI splits each suite over several jobs, each running this file with
+# `--shard K/N` on its own runner and therefore its own disposable Postgres: the isolation rule
+# above still holds, because a shard is a separate run, not a worker inside one. The split is a
+# deterministic greedy on measured seconds (verify_weights.json): every job computes the same
+# partition, and `shard_of` proves on every run that each script lands in exactly one shard.
+# A script missing from the weights gets the median, which costs balance, never coverage.
+WEIGHTS_FILE = HERE / "verify_weights.json"
+
+
+def _weights(names: list[str]) -> dict[str, float]:
+    try:
+        known = json.loads(WEIGHTS_FILE.read_text(encoding="utf-8")).get("seconds", {})
+    except (OSError, ValueError):
+        known = {}
+    values = sorted(float(v) for v in known.values()) or [1.0]
+    median = values[len(values) // 2]
+    return {n: float(known.get(n, median)) for n in names}
+
+
+def shard_of(scripts: list[Path], k: int, n: int) -> list[Path]:
+    """The scripts of shard k (1-based) out of n; every script is in exactly one shard."""
+    w = _weights([p.name for p in scripts])
+    loads = [0.0] * n
+    owner: dict[str, int] = {}
+    for p in sorted(scripts, key=lambda p: (-w[p.name], p.name)):
+        i = min(range(n), key=lambda j: (loads[j], j))
+        loads[i] += w[p.name]
+        owner[p.name] = i + 1
+    if sorted(owner) != sorted(p.name for p in scripts):
+        raise SystemExit("FATAL: the shard split lost or duplicated a script")
+    return [p for p in scripts if owner[p.name] == k]
 
 
 def discover(only: str | None) -> tuple[list[Path], list[Path]]:
@@ -129,12 +163,24 @@ def failure_digest(output: str, tail_lines: int = 12) -> list[str]:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Run every backend/verify_*.py against one disposable Postgres.")
     ap.add_argument("--only", metavar="SUBSTR", help="run only scripts whose filename contains SUBSTR")
+    ap.add_argument("--shard", metavar="K/N", help="run only shard K of N (CI; each shard is its own run with its own database)")
     ap.add_argument("--verbose", action="store_true", help="print each script's full output, not just failures")
     ap.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S, metavar="SECONDS",
                     help=f"per-script timeout (default {DEFAULT_TIMEOUT_S})")
     args = ap.parse_args()
 
     scripts, excluded = discover(args.only)
+    shard_note = ""
+    if args.shard:
+        try:
+            k, n = (int(x) for x in args.shard.split("/"))
+            assert 1 <= k <= n
+        except (ValueError, AssertionError):
+            print(f"FATAL: --shard wants K/N with 1 <= K <= N, got {args.shard!r}")
+            return 1
+        total = len(scripts)
+        scripts = shard_of(scripts, k, n)
+        shard_note = f", shard {k}/{n} of {total}"
     if not scripts:
         # Never green. An empty suite is a broken runner, not a passing one.
         print(f"FATAL: no verify_*.py scripts found in {HERE}"
@@ -142,7 +188,7 @@ def main() -> int:
         return 1
 
     print("=" * 78)
-    print(f"Atlas verify suite — {len(scripts)} script(s)")
+    print(f"Atlas verify suite — {len(scripts)} script(s){shard_note}")
     for p in excluded:
         print(f"  excluded: {p.name} — {NOT_SUITE_MEMBERS[p.name]}")
     print("=" * 78)

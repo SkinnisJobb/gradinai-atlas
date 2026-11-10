@@ -69,10 +69,20 @@ permissions:
   contents: read
 
 jobs:
+  # SHARDED (2026-11-10): four jobs, each running `verify_all.py --shard K/4` on its own runner
+  # with its own disposable Postgres, so no two shards share a database (the 2026-08-10 rule
+  # holds: a shard is a separate run). The split is balanced on measured seconds
+  # (backend/verify_weights.json) and proven complete on every run. One pass of the whole
+  # suite took 13-18 min on a GitHub-hosted runner; a shard takes about a quarter of that.
+  # fail-fast off: a red shard must not cancel the others, or their failures go unseen.
   suite:
-    name: backend suite
+    name: backend suite (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
 
@@ -106,9 +116,9 @@ jobs:
       # as it does on a workstation. Runners have Docker. The cost is one image
       # pull per run; the benefit is that a green CI run means the same thing as
       # a green local run.
-      - name: run the suite
+      - name: run the suite (shard ${{ matrix.shard }} of 4)
         working-directory: backend
-        run: python verify_all.py
+        run: python verify_all.py --shard ${{ matrix.shard }}/4
 
   # STORY-oss-08: the same suite again with every personal/homelab feature switched off, so
   # "off" is proven not to break anything else. Scripts whose subject IS one of these features
@@ -117,22 +127,26 @@ jobs:
   # ITS OWN JOB, in parallel with `suite` (2026-10-29). It used to be a second STEP of `suite`
   # so that the check's name would not change for branch protection; that made one job run
   # the suite twice back to back (11-13 min of a 15 min timeout, ~5.5 min per pass). The
-  # master-gate ruleset is disabled for now, and the default job keeps the name
-  # "backend suite" anyway, so a rule requiring that check still finds it. If the ruleset is
-  # re-enabled, add "backend suite (features disabled)" to its required checks as well.
-  # Each job's verify_all.py starts its own disposable Postgres, so the two never share a
+  # master-gate ruleset requires "backend suite" and "backend suite (features disabled)"; since
+  # the split (2026-11-10) those names belong to the two result jobs below the shards.
+  # Each job's verify_all.py starts its own disposable Postgres, so no two share a
   # database. A red default half cannot hide this half: they report separately, which is
   # what the old step's `if: always()` was for.
   #
-  # TIMEOUT 30 (suite) and 35 (this job): one pass took 4.9-7.1 min over the last 8 green
+  # TIMEOUT 15 per shard since the split (2026-11-10). Before it, 30 and 35: one pass took
+  # 4.9-7.1 min over the last 8 green
   # runs on the self-hosted pool; the limit leaves room for a busy runner and a growing suite
   # without letting a hung script hold a runner for long. On GitHub-hosted runners (the public
   # repository's first run, 2026-11-03) the default half took 12 min and this half 19.6 min, past
   # the old 20 after all 70 scripts had passed, so both were raised.
   suite-features-disabled:
-    name: backend suite (features disabled)
+    name: backend suite (features disabled, ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
 
@@ -157,7 +171,29 @@ jobs:
         working-directory: backend
         env:
           ATLAS_DISABLED_FEATURES: github_link,save_work,deploy_status,deploy_warning,attention_probes
-        run: python verify_all.py
+        run: python verify_all.py --shard ${{ matrix.shard }}/4
+
+  # THE REQUIRED CHECKS KEEP THEIR NAMES. The master-gate ruleset requires "backend suite" and
+  # "backend suite (features disabled)"; since the split those are these two jobs, green only
+  # when all four shards of their suite are. `if: always()` so a red or cancelled shard turns
+  # them red instead of skipping them (a skipped required check would let a merge through).
+  suite-result:
+    name: backend suite
+    needs: suite
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: test "${{ needs.suite.result }}" = success
+
+  suite-features-disabled-result:
+    name: backend suite (features disabled)
+    needs: suite-features-disabled
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: test "${{ needs.suite-features-disabled.result }}" = success
 
   routes:
     name: route table matches routes.snapshot.txt
