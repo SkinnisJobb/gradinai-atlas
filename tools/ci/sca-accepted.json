@@ -2,14 +2,34 @@
   "//": "Fixable critical/high SCA findings accepted FOR A LIMITED TIME (tools/ci/sca_gate.py). Each entry: id, pkg, in (the artefacts it holds for, named as their report files: see sca_gate.py's docstring), until (YYYY-MM-DD, at most 30 days out), reason. After `until` the finding fails the sbom-sca job again. The same finding in an artefact not in `in` fails, and an entry that matches no finding fails as stale. Triage rules: SECURITY.md.",
   "accepted": [
     {
-      "id": "CVE-2026-78669",
-      "pkg": "golang.org/x/net",
+      "id": "CVE-2026-85091",
+      "pkg": "zlib1g",
       "until": "2026-11-24",
       "severity": "HIGH",
       "in": [
-        "atlas-caddy"
+        "atlas-api",
+        "atlas-mcp",
+        "atlas-postgres",
+        "atlas-postgres-pgvector",
+        "atlas-api-hardened",
+        "atlas-mcp-hardened"
       ],
-      "reason": "deploy/caddy binary (atlas-caddy; images.yml's atlas-tls is reported under that name; Caddy v2.11.7 + caddy-dns/cloudflare via xcaddy): internet-facing TLS front. Checked 2026-10-26 (TASK-1381): v2.11.7 (2026-10-03) is the latest stable Caddy and its go.mod pins x/net v0.59.0; caddy master has v0.60.0 since 2026-10-09 (#8179), so the next Caddy release (2.11.8 or v2.12.0, no date set) fixes it. The other 4 caddy stdlib entries were fixed by 2.11.7 (#134) and removed."
+      "reason": "Debian trixie base images (python:3.12-slim, postgres:16-trixie, pgvector 0.8.7-pg16-trixie): checked 2026-11-10, the newest digest of each still ships zlib1g 1:1.3.dfsg+really1.3.1-1+b1, so no fixed base image exists yet; the build stays offline (no apt upgrade). The OpenShift (ARO) images are UBI-based and do not carry it. zlib gz_vacate() heap overflow (gz* file API)."
+    },
+    {
+      "id": "CVE-2026-76844",
+      "pkg": "zlib1g",
+      "until": "2026-11-24",
+      "severity": "HIGH",
+      "in": [
+        "atlas-api",
+        "atlas-mcp",
+        "atlas-postgres",
+        "atlas-postgres-pgvector",
+        "atlas-api-hardened",
+        "atlas-mcp-hardened"
+      ],
+      "reason": "Debian trixie base images (python:3.12-slim, postgres:16-trixie, pgvector 0.8.7-pg16-trixie): checked 2026-11-10, the newest digest of each still ships zlib1g 1:1.3.dfsg+really1.3.1-1+b1, so no fixed base image exists yet; the build stays offline (no apt upgrade). The OpenShift (ARO) images are UBI-based and do not carry it. Trivy maps this id to zlib1g though its title is a webpack-dev-middleware path traversal (no webpack in these images); fixed by the same zlib1g deb13u1."
     }
   ]
 }
