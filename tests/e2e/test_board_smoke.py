@@ -73,7 +73,8 @@ def test_login_file_a_story_and_see_it_on_the_board(shared_project):
             # 3. The card on the work board.
             board = page.locator("#paneBoard")
             if not board.is_visible():
-                page.get_by_role("button", name="Work board", exact=True).click()
+                # A collapsed work board is its bar alone; a click on the bar expands it.
+                page.locator('[data-split="board"]').click()
             card = board.locator(f'.wcard[data-id="{story_id}"]')
             expect(card).to_be_visible(timeout=30_000)
             expect(card).to_contain_text(story_name)

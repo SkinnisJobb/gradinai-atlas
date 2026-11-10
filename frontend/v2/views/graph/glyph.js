@@ -45,7 +45,7 @@ export function drawGlyph(g, n, r, extra) {
   g.appendChild(svgEl("path", { class: "ico", d: iconPath(n.type), transform: `scale(${s}) translate(-12,-12)`, "stroke-width": 2.1 }));
 
   if (n.attentionCount > 0) {
-    const br = Math.max(5.5, r * 0.45), b = svgEl("g", { class: "badge", transform: `translate(${r * 0.78},${-r * 0.78})` });
+    const br = Math.max(5.5, r * 0.45), b = svgEl("g", { class: "badge", transform: `translate(${-r * 0.78},${-r * 0.78})` });
     b.appendChild(svgEl("circle", { r: br }));
     const t = svgEl("text", { dy: "0.35em", "font-size": br * 1.15 });
     t.textContent = n.attentionCount > 99 ? "99+" : String(n.attentionCount);

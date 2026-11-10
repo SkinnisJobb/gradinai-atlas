@@ -1,8 +1,8 @@
 // @ts-check
 // views/access/access.js — groups and project role bindings (STORY-oss-11, ADR 0041 §3).
 //
-// A self-contained overlay, lazy-imported from the bar's "Access" button, which
-// app.js shows to an instance owner only (a member never issues a request that
+// The "Groups & roles" tab in Settings, lazy-imported when the tab is first
+// shown. app.js adds the tab for an instance owner only (a member never issues a request that
 // 403s, the legacy Settings rule). It owns its DOM and its stylesheet, and
 // talks to four routes in backend/routers/access.py:
 //   GET  /api/access/groups                      groups and their members
@@ -13,7 +13,7 @@
 // core/access-model.js holds the rules the draft follows.
 //
 // The bindings are inert until ATLAS_RBAC=projects (they can be prepared before
-// the switch is flipped), and the overlay says which mode the server is in.
+// the switch is flipped), and the tab says which mode the server is in.
 
 import { el, button } from "../../ui/dom.js";
 import { sendJSON } from "../../core/api.js";
@@ -37,41 +37,25 @@ function ensureStyles() {
   document.head.append(l);
 }
 
-/** @type {{overlay: HTMLElement, body: HTMLElement}|null} */
-let ui = null;
+/** Where the view draws: the Settings tab's pane. @type {HTMLElement|null} */
+let host = null;
 /** @type {{project: string|null}} */
 const view = { project: null };
 
-function build() {
-  const overlay = el("div", "settings-overlay");
-  overlay.id = "accessOverlay";
-  overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-modal", "true");
-  overlay.setAttribute("aria-label", "Access: groups and project roles");
-  const sheet = el("div", "settings-sheet acc-sheet");
-  const head = el("div", "settings-head");
-  const close = button("×", () => { overlay.hidden = true; }, "settings-close");
-  close.setAttribute("aria-label", "Close");
-  head.append(el("h2", null, "Access: groups and project roles"), close);
-  const body = el("div", "settings-body");
-  sheet.append(head, body);
-  overlay.append(sheet);
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.hidden = true; });
-  overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") overlay.hidden = true; });
-  document.body.append(overlay);
-  return { overlay, body };
-}
-
-export function openAccess() {
+/**
+ * Draw groups and project roles into `into` (the "Groups & roles" Settings
+ * tab, views/settings/tabs.js). Every later redraw goes to the same place.
+ * @param {HTMLElement} into
+ */
+export function renderAccess(into) {
   ensureStyles();
-  if (!ui) ui = build();
-  ui.overlay.hidden = false;
+  host = into;
   return render();
 }
 
 async function render() {
-  if (!ui) return;
-  const body = ui.body;
+  if (!host) return;
+  const body = host;
   body.replaceChildren(el("p", "acc-empty", "Loading…"));
   let projects, groups;
   try {

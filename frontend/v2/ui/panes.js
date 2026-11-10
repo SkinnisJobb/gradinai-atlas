@@ -15,8 +15,10 @@
 // A pane is one entry in `PANES` plus one in `MIN`, and a bar + section pair in
 // index.html, so another pane is added there and nowhere else here.
 //
-// The dashboard (TASK-1447) is the leftmost pane and hidden until the person
-// opens it from the top bar. The graph still flexes while it is expanded, so the
+// The dashboard (TASK-1447) is the leftmost pane. Like the work board it is
+// always there, its bar at least: a collapsed bar is how it is "off", and a click
+// on the bar opens it (the top bar's Dashboard and Work board buttons are gone).
+// The graph still flexes while it is expanded, so the
 // dashboard has a width of its own. Its own bar sits on the stage's left edge,
 // where a drag can only narrow it, so the graph's bar, which is the edge between
 // the two, resizes the pane on its left (`dragTarget`).
@@ -116,7 +118,8 @@ export const isClick = (farthest) => farthest < CLICK_SLOP;
 /**
  * @param {HTMLElement} stage  a grid holding, in order, a bar then a pane for each of `PANES`
  * @param {ReturnType<typeof import("../core/prefs.js").createPrefs>} prefs
- * @param {{onSettle?: () => void}} [opts]  called when a resize ends (the graph re-fits)
+ * @param {{onSettle?: () => void, onToggle?: (name: string, collapsed: boolean) => void}} [opts]
+ *   `onSettle`: a resize ended (the graph re-fits). `onToggle`: a pane was collapsed or expanded.
  */
 export function mountPanes(stage, prefs, opts = {}) {
   const el = (sel) => /** @type {HTMLElement} */ (stage.querySelector(sel));
@@ -136,7 +139,8 @@ export function mountPanes(stage, prefs, opts = {}) {
 
   function apply() {
     // On a phone, and in a pop-out window, the stacking stays as it was: no bars, nothing collapsed.
-    const narrow = window.matchMedia("(max-width: 760px)").matches || document.documentElement.hasAttribute("data-only");
+    const phone = window.matchMedia("(max-width: 760px)").matches;
+    const narrow = phone || document.documentElement.hasAttribute("data-only");
     /** @type {Record<string, unknown>} */
     const state = { board: want.board, panel: want.panel, dashboard: want.dashboard, collapsed };
     for (const n of PANES) {
@@ -144,7 +148,10 @@ export function mountPanes(stage, prefs, opts = {}) {
       state[n + "On"] = shown;
       bar[n].hidden = narrow || !shown;
       // `hidden` is the pane's owner's (app.js); collapsed is the bar's, and a separate attribute.
-      pane[n].toggleAttribute("data-collapsed", !narrow && collapsed[n]);
+      // On a phone the board and the dashboard cover the graph, so collapsed
+      // still hides them there; their switch is in the user menu (ui/usermenu.js).
+      const hide = collapsed[n] && (!narrow || (phone && (n === "board" || n === "dashboard")));
+      pane[n].toggleAttribute("data-collapsed", hide);
       const label = NAMES[/** @type {keyof typeof NAMES} */ (n)] || n;
       bar[n].setAttribute("aria-expanded", String(!collapsed[n]));
       bar[n].setAttribute("aria-label", collapsed[n] ? `Expand ${label}` : `Collapse ${label}; drag to resize it`);
@@ -170,6 +177,7 @@ export function mountPanes(stage, prefs, opts = {}) {
     // Nothing stored is the default (expanded), so expanding clears the key.
     prefs.remember(collapsedKey(which), collapsed[which] ? true : undefined);
     apply();
+    if (opts.onToggle) opts.onToggle(which, collapsed[which]);
     if (opts.onSettle) opts.onSettle();
   }
   /** What a drag on this bar resizes, if anything. @param {string} which */
@@ -227,7 +235,11 @@ export function mountPanes(stage, prefs, opts = {}) {
   for (const n of PANES) wire(bar[n], n);
   window.addEventListener("resize", apply);
   apply();
-  /** Expand a collapsed pane (the top bar's Dashboard button). @param {string} which */
+  /** Expand a collapsed pane. @param {string} which */
   const expand = (which) => { if (collapsed[which]) toggle(which); };
-  return { apply, expand };
+  /** Collapse or expand a pane to match `on`; nothing when it already does. @param {string} which @param {boolean} c */
+  const setCollapsed = (which, c) => { if (!!collapsed[which] !== !!c) toggle(which); };
+  /** @param {string} which */
+  const isCollapsed = (which) => !!collapsed[which];
+  return { apply, expand, setCollapsed, isCollapsed };
 }

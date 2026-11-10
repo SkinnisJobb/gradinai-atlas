@@ -8,7 +8,8 @@
 //
 // `parse` and `format` are pure. Only `bindUrl` touches `window`.
 
-const STEPS_MIN = 1, STEPS_MAX = 4;
+// The slider reaches as deep as the graph goes; 64 is the graph's search bound (views/graph/graph.js).
+const STEPS_MIN = 1, STEPS_MAX = 64;
 
 /**
  * @param {string} search  e.g. location.search

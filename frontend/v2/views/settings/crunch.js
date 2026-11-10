@@ -12,9 +12,8 @@
 //
 // WHERE IT LIVES: Settings is the LEGACY overlay (frontend/settings.js, frozen by
 // ADR 0043), reused by board v2 as it is. That file cannot change, so this
-// module ADDS ONE TAB to the rail settings.js has just built, in the same
-// shape as its own (`settingsNav-<key>` / `settingsPane-<key>`, role=tab /
-// tabpanel). It is only ever imported for the instance owner in a browser
+// module ADDS ONE TAB to the rail settings.js has just built (views/settings/
+// tabs.js). It is only ever imported for the instance owner in a browser
 // session (`crunchTabVisible`, decided from /api/me), so for everyone else the
 // tab is absent from the DOM, and no request that 403s is made.
 //
@@ -24,6 +23,7 @@
 
 import { el, button, svgEl } from "../../ui/dom.js";
 import { toast } from "../../ui/toast.js";
+import { addSettingsTab } from "./tabs.js";
 import {
   crunchTabVisible, offeredEnvs, buildConfig, extendConfig, configOf, summaryLines, errorText, wireConfig,
   durationText, defaultFmt, toLocalInput, listText, BACKUP_POLICIES,
@@ -75,50 +75,7 @@ const announce = () => window.dispatchEvent(new CustomEvent("atlas:crunch-change
 export function addCrunchTab(me) {
   if (!crunchTabVisible(me)) return;
   csrf = (me && me.csrf_token) || csrf;
-  const root = document.getElementById("settingsBody");
-  const nav = root && root.querySelector(".settings-nav");
-  const content = root && root.querySelector(".settings-content");
-  if (!nav || !content || document.getElementById("settingsNav-" + KEY)) return;
-  ensureStyles();
-
-  const btn = /** @type {HTMLButtonElement} */ (el("button", "settings-nav-btn"));
-  btn.type = "button";
-  btn.id = "settingsNav-" + KEY;
-  btn.setAttribute("role", "tab");
-  btn.setAttribute("aria-selected", "false");
-  btn.tabIndex = -1;
-  btn.textContent = "Crunch";
-  const panel = el("div", "settings-pane crunch-pane");
-  panel.id = "settingsPane-" + KEY;
-  panel.setAttribute("role", "tabpanel");
-  panel.setAttribute("aria-labelledby", btn.id);
-  btn.setAttribute("aria-controls", panel.id);
-  panel.hidden = true;
-  nav.append(btn);
-  content.append(panel);
-
-  let loaded = false;
-  btn.addEventListener("click", () => {
-    for (const b of nav.querySelectorAll(".settings-nav-btn")) {
-      b.setAttribute("aria-selected", "false"); /** @type {HTMLElement} */ (b).tabIndex = -1; b.classList.remove("is-active");
-    }
-    for (const p of content.querySelectorAll(".settings-pane")) /** @type {HTMLElement} */ (p).hidden = true;
-    btn.setAttribute("aria-selected", "true"); btn.tabIndex = 0; btn.classList.add("is-active");
-    panel.hidden = false;
-    if (!loaded) { loaded = true; renderCrunchPage(panel); }
-  });
-  // settings.js's own tabs select themselves and know nothing of this one, so
-  // when one of them is chosen (click, or its arrow keys), this one steps aside.
-  const stepAside = () => {
-    panel.hidden = true; btn.setAttribute("aria-selected", "false"); btn.tabIndex = -1; btn.classList.remove("is-active");
-  };
-  nav.addEventListener("click", (e) => {
-    const t = /** @type {HTMLElement} */ (e.target).closest(".settings-nav-btn");
-    if (t && t !== btn) stepAside();
-  });
-  nav.addEventListener("keydown", (e) => {
-    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(/** @type {KeyboardEvent} */ (e).key)) stepAside();
-  });
+  if (addSettingsTab(KEY, "Crunch", renderCrunchPage, { cls: "crunch-pane" })) ensureStyles();
 }
 
 // ------------------------------------------------------------------ the page

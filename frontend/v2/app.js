@@ -19,7 +19,9 @@ import { mountPanes } from "./ui/panes.js";
 import { el } from "./ui/dom.js";
 import { mountGraph } from "./views/graph/graph.js";
 import { searchBox } from "./views/search.js";
-import { viewPrefControls } from "./ui/viewprefs.js";
+import { viewPrefControls, themeControl } from "./ui/viewprefs.js";
+import { mountUserMenu } from "./ui/usermenu.js";
+import { addSettingsTab } from "./views/settings/tabs.js";
 import { mirror, SHARED_KEYS } from "./core/sync.js";
 import { toast } from "./ui/toast.js";
 import { crunchTabVisible } from "./views/settings/crunch-model.js";
@@ -40,27 +42,34 @@ if (ONLY) document.documentElement.setAttribute("data-only", ONLY);
 
 const store = createStore({
   ...INITIAL,
-  // The work board starts open only where there is room for it beside the graph.
+  // `board` and `dashboard` say whether that pane is EXPANDED: both are always
+  // there, a collapsed one as its bar (ui/panes.js). The work board starts
+  // expanded only where there is room for it beside the graph.
   board: prefs.recall("board.on", window.innerWidth >= 1400),
-  // The dashboard pane (TASK-1447) is hidden until the person opens it.
+  // The dashboard pane (TASK-1447) starts collapsed until the person opens it.
   dashboard: prefs.recall("dashboard.on", false),
   links: prefs.recall("graph.links", "contains"),
   rel: prefs.recall("graph.rel", "hover"),
   work: prefs.recall("graph.work", false),
   hideTypes: prefs.recall("graph.hideTypes", []),
   stars: prefs.recall("stars", []),
+  collapsed: prefs.recall("graph.collapsed", []),
+  views: prefs.recall("graph.views", []),
   me: null,
   role: null,
 });
 bindUrl(store);
-for (const [key, pref] of [["board", "board.on"], ["dashboard", "dashboard.on"], ["links", "graph.links"], ["rel", "graph.rel"], ["work", "graph.work"], ["hideTypes", "graph.hideTypes"], ["stars", "stars"]]) {
+for (const [key, pref] of [["board", "board.on"], ["dashboard", "dashboard.on"], ["links", "graph.links"], ["rel", "graph.rel"], ["work", "graph.work"], ["hideTypes", "graph.hideTypes"], ["stars", "stars"], ["collapsed", "graph.collapsed"], ["views", "graph.views"]]) {
   store.subscribe([key], (s) => prefs.remember(pref, s[key]));
 }
 
 const $ = (/** @type {string} */ id) => /** @type {HTMLElement} */ (document.getElementById(id));
 const dashPane = $("paneDashboard");
 const stage = $("stage"), graphPane = $("paneGraph"), boardPane = $("paneBoard"), panelPane = $("panePanel");
-const panes = mountPanes(stage, prefs);
+// A click on a pane's bar is the board's and the dashboard's on/off switch.
+const panes = mountPanes(stage, prefs, {
+  onToggle: (name, collapsed) => { if (!ONLY && (name === "board" || name === "dashboard")) store.set({ [name]: !collapsed }); },
+});
 
 /** @param {HTMLElement} slot @param {string} title @param {string} what */
 function placeholder(slot, title, what) {
@@ -69,8 +78,9 @@ function placeholder(slot, title, what) {
   slot.replaceChildren(box);
 }
 
-// Pane visibility: the board by its toggle, the panel by a selection. A pane
-// that is open in its own window is hidden here.
+// Pane visibility: the board and the dashboard are always there (collapsed
+// when off), the panel shows on a selection. A pane that is open in its own
+// window is hidden here.
 // In a pop-out, only that one pane shows.
 /** @type {{board: boolean, panel: boolean}} */
 const outside = { board: false, panel: false };
@@ -82,9 +92,11 @@ function syncVisibility() {
     boardPane.hidden = ONLY !== "board";
     panelPane.hidden = ONLY !== "panel";
   } else {
-    boardPane.hidden = !s.board || outside.board;
-    dashPane.hidden = !s.dashboard;
+    boardPane.hidden = outside.board;
+    dashPane.hidden = false;
     panelPane.hidden = !s.selected || outside.panel;
+    panes.setCollapsed("board", !s.board);
+    panes.setCollapsed("dashboard", !s.dashboard);
   }
   panes.apply();
 }
@@ -117,26 +129,10 @@ window.addEventListener("atlas:popout", (e) => {
 });
 store.subscribe(["board", "selected", "dashboard"], syncVisibility);
 
-const boardBtn = /** @type {HTMLButtonElement} */ (el("button", "btn", "Work board"));
-boardBtn.type = "button";
-boardBtn.addEventListener("click", () => store.set({ board: !store.get().board }));
-const syncBoardBtn = () => boardBtn.setAttribute("aria-pressed", String(!!store.get().board));
-store.subscribe(["board"], syncBoardBtn);
-$("barTools").append(boardBtn);
-// The dashboard (TASK-1447): a fourth pane, opened here. Its module loads on first show.
-const dashBtn = /** @type {HTMLButtonElement} */ (el("button", "btn", "Dashboard"));
-dashBtn.type = "button";
-dashBtn.title = "What waits on you";
-dashBtn.addEventListener("click", () => {
-  const on = !store.get().dashboard;
-  store.set({ dashboard: on });
-  if (on) panes.expand("dashboard");
-});
 /** @type {Promise<{refresh: () => Promise<void>}|null>|null} */
 let dash = null;
 const syncDash = () => {
   const on = !!store.get().dashboard && !ONLY;
-  dashBtn.setAttribute("aria-pressed", String(on));
   if (!on) return;
   if (dash) { dash.then((d) => d && d.refresh()); return; }
   dash = Promise.all([import("./views/dashboard/dashboard.js"), import("./views/dashboard/boxes.js")])
@@ -152,7 +148,6 @@ window.addEventListener("atlas:select", (e) => {
   store.set({ selected: id });
   panes.expand("panel");
 });
-$("barTools").prepend(dashBtn);
 $("barEnd").prepend(viewPrefControls(store));
 
 // "File work" and Settings are the LEGACY modules, reused as they are
@@ -175,21 +170,35 @@ fileWork.addEventListener("click", () => {
 // views/settings/crunch.js to the rail the legacy module just built, for the
 // instance owner in a browser session only: for anyone else it is never built
 // and its module is never loaded.
+// Two more are board v2's own (views/settings/tabs.js): Appearance (the theme)
+// for everyone, and Groups & roles for an instance owner, which was the top
+// bar's Access button.
 /** @param {any} me @param {any} mod @param {string} [outcome] */
 function openSettings(me, mod, outcome) {
   mod.openSettings(me, outcome);
+  addSettingsTab("appearance", "Appearance", (pane) => {
+    const sec = el("section", "settings-section");
+    const label = el("label", "settings-field");
+    label.append(el("span", "settings-h3", "Theme"), themeControl(store));
+    sec.append(label, el("p", "settings-note", "System follows your device's light or dark setting. The choice is kept in this browser."));
+    pane.append(sec);
+  });
+  if (me && me.role === "owner") {
+    addSettingsTab("groups", "Groups & roles", (pane) => {
+      import("./views/access/access.js").then((m) => m.renderAccess(pane))
+        .catch(() => { pane.replaceChildren(el("p", "settings-note", "Groups & roles could not load.")); });
+    });
+  }
   if (crunchTabVisible(me)) {
     import("./views/settings/crunch.js").then((c) => c.addCrunchTab(me))
       .catch(() => toast("The crunch-week tab could not load.", "error"));
   }
 }
-const settingsBtn = /** @type {HTMLButtonElement} */ (el("button", "btn", "Settings"));
-settingsBtn.type = "button";
-settingsBtn.addEventListener("click", () => {
+const showSettings = () => {
   Promise.all([legacyAccount(), import("/assets/settings.js")]).then(([me, mod]) => openSettings(me, mod))
     .catch(() => toast("Settings could not load.", "error"));
-});
-$("barEnd").prepend(fileWork, settingsBtn);
+};
+$("barEnd").prepend(fileWork);
 // Returning from "Sign in with GitHub": the server redirects to
 // /board?settings=account&github=<linked|error>[&reason=...]. Open Settings with
 // the outcome, then drop the params so a reload is quiet (legacy board.html's rule).
@@ -212,7 +221,6 @@ if (/[?&]stepup=1(?:&|$)/.test(location.search)) {
   Promise.all([legacyAccount(), import("/assets/settings.js")]).then(([me, mod]) => { if (me) openSettings(me, mod); })
     .catch(() => toast("Settings could not load.", "error"));
 }
-syncBoardBtn();
 syncVisibility();
 syncDash();
 // The crunch-week banner, for every signed-in person while it is active. It
@@ -227,8 +235,18 @@ if (!ONLY) placeholder(graphPane, "Loading the graph…", "");
 const VOCAB = fetchJSON("/api/vocabulary").catch(() => null);
 
 Promise.all([fetchJSON("/api/me"), fetchJSON(GRAPH_URL), VOCAB]).then(async ([me, graph, vocabBody]) => {
-  $("who").textContent = (me && (me.name || me.username)) || "";
-  $("who").title = me && me.username ? "Signed in as " + me.username : "";
+  // The name opens the user menu: Settings, Change password, Sign out. On a
+  // phone, where the panes have no bars, it also switches the dashboard and the
+  // work board (`who-phone`, shown only there by layout.css).
+  /** @param {"board"|"dashboard"} k */
+  const flip = (k) => store.set({ [k]: !store.get()[k] });
+  mountUserMenu($("who"), me, {
+    onSettings: showSettings,
+    extra: ONLY ? [] : [
+      { label: "Work board", onClick: () => flip("board"), pressed: () => !!store.get().board, cls: "who-phone" },
+      { label: "Dashboard", onClick: () => flip("dashboard"), pressed: () => !!store.get().dashboard, cls: "who-phone" },
+    ],
+  });
   // `role` decides which owner-only reads a pane may make (the panel's Configuration).
   store.set({ me: (me && me.username) || null, role: (me && me.role) || null });
   setCsrf((me && me.csrf_token) || null);
@@ -238,19 +256,6 @@ Promise.all([fetchJSON("/api/me"), fetchJSON(GRAPH_URL), VOCAB]).then(async ([me
     import("./views/settings/password-notice.js").then((m) => m.mountPasswordNotice($("bar"), me))
       .catch(() => { /* no notice */ });
   }
-  // Groups and project roles (STORY-oss-11): an instance owner's control, shown
-  // only to one, so nobody else issues a request that 403s. Lazy, like Settings.
-  if (me && me.role === "owner" && !ONLY) {
-    const accessBtn = /** @type {HTMLButtonElement} */ (el("button", "btn", "Access"));
-    accessBtn.type = "button";
-    accessBtn.title = "Groups and project role bindings";
-    accessBtn.addEventListener("click", () => {
-      import("./views/access/access.js").then((m) => m.openAccess())
-        .catch(() => toast("Access could not load.", "error"));
-    });
-    $("barEnd").prepend(accessBtn);
-  }
-
   store.set({ vocab: vocabularyFrom(vocabBody) });
   const vocab = () => /** @type {import("./core/vocabulary.js").Vocabulary} */ (store.get().vocab);
   const ix = buildIndex(graph, vocab());

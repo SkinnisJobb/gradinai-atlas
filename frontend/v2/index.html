@@ -24,12 +24,12 @@
     <div class="search-slot" id="searchSlot"></div>
     <nav class="crumbs" id="crumbs" aria-label="Focus history"></nav>
     <div class="bar-tools" id="barTools"></div>
-    <div class="bar-end" id="barEnd"><a class="legacy-link" href="/board/legacy" title="The previous board. Frozen and unsupported (ADR 0043)">Legacy board</a><span class="who" id="who"></span></div>
+    <div class="bar-end" id="barEnd"><div class="who" id="who"></div></div>
   </header>
   <main class="stage" id="stage">
     <!-- Each pane follows its bar: a click collapses or expands it, a drag resizes it (ui/panes.js). -->
     <div class="split" data-split="dashboard" role="separator" aria-orientation="vertical" aria-controls="paneDashboard" aria-label="Collapse the dashboard" tabindex="0" hidden></div>
-    <section class="pane pane-dashboard" data-pane="dashboard" id="paneDashboard" aria-label="Dashboard" hidden></section>
+    <section class="pane pane-dashboard" data-pane="dashboard" id="paneDashboard" aria-label="Dashboard"></section>
     <div class="split" data-split="graph" role="separator" aria-orientation="vertical" aria-controls="paneGraph" aria-label="Collapse the graph" tabindex="0" hidden></div>
     <section class="pane pane-graph" data-pane="graph" id="paneGraph" aria-label="Graph"></section>
     <div class="split" data-split="board" role="separator" aria-orientation="vertical" aria-controls="paneBoard" aria-label="Resize the work board" tabindex="0" hidden></div>

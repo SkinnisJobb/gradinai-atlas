@@ -18,10 +18,13 @@ export function uiScale() {
   return Number.isFinite(v) && v > 0 ? v : 1;
 }
 
-/** @param {import("../core/store.js").Store} store */
-export function viewPrefControls(store) {
-  const root = document.documentElement, box = el("div", "group viewprefs");
-
+/**
+ * The theme picker. It lives in Settings, on the Appearance tab
+ * (views/settings/appearance.js), not in the top bar.
+ * @param {import("../core/store.js").Store} store
+ */
+export function themeControl(store) {
+  const root = document.documentElement;
   const theme = /** @type {HTMLSelectElement} */ (el("select", "bsel"));
   theme.id = "themeSelect"; theme.setAttribute("aria-label", "Theme");
   for (const [v, label] of [["", "System theme"], ["light", "Light"], ["dark", "Dark"]]) {
@@ -33,6 +36,12 @@ export function viewPrefControls(store) {
     prefs.remember("theme", theme.value || undefined);
     store.set({ theme: theme.value });
   });
+  return theme;
+}
+
+/** The top bar's text-size buttons. @param {import("../core/store.js").Store} store */
+export function viewPrefControls(store) {
+  const root = document.documentElement, box = el("div", "group viewprefs");
 
   const nearest = () => { const s = uiScale(); return UI_SCALES.reduce((b, x, i) => (Math.abs(x - s) < Math.abs(UI_SCALES[b] - s) ? i : b), 0); };
   /** @param {number} i */
@@ -48,6 +57,6 @@ export function viewPrefControls(store) {
   down.setAttribute("aria-label", "Smaller text"); up.setAttribute("aria-label", "Larger text");
   down.disabled = uiScale() <= UI_SCALES[0]; up.disabled = uiScale() >= UI_SCALES[UI_SCALES.length - 1];
 
-  box.append(theme, down, up);
+  box.append(down, up);
   return box;
 }
