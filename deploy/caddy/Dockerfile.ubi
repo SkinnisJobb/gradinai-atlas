@@ -31,7 +31,7 @@
 # group-writable, and the ARO manifests mount an emptyDir on each so the root filesystem can be
 # read-only. HOME=/tmp for anything else that looks for one. No HEALTHCHECK: Kubernetes probes
 # the pod, and Docker's HEALTHCHECK is not used there.
-FROM registry.access.redhat.com/ubi9/go-toolset:1.26@sha256:c2bd0309bf78ae317024fdfc5602a31704e0dba9572f6d4b0bd4b681033dc965 AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset:1.26@sha256:0e3894cea4fc077084245e8aa2befc8a7d91a4f60fbf850f0b5b555cbe62ee26 AS builder
 ARG CADDY_VERSION=v2.11.9
 ARG XCADDY_VERSION=v0.4.7
 ENV CGO_ENABLED=0
@@ -42,7 +42,7 @@ RUN go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}" \
 # Caddy's own licence (Apache-2.0), from the module the binary was built from, for /licenses.
 RUN cp "$(go env GOMODCACHE)/github.com/caddyserver/caddy/v2@${CADDY_VERSION}/LICENSE" /tmp/caddy-LICENSE
 
-FROM registry.access.redhat.com/ubi9/ubi-micro:9.8@sha256:6d9eff186ce3ccf399c1835265e7fd3f83bd112cc3422da2d39fd44e234aab59
+FROM registry.access.redhat.com/ubi9/ubi-micro:9.8@sha256:d3499a0896e2d6a1642f922615831bc5c2fd513bbb34f3446cabba530d9d54a2
 COPY --from=builder /tmp/caddy /usr/bin/caddy
 RUN mkdir -p /config /data /etc/caddy \
  && chgrp 0 /config /data \
