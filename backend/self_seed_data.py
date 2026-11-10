@@ -7456,6 +7456,110 @@ PROFILE = {
                 },
             ],
         },
+        {
+            "id": "skill-signoff",
+            "type": "capability",
+            "name": "Sign-off",
+            "summary": "An example sign-off procedure: the end-of-conversation step that records what a session changed: ask, gather, propose Atlas and memory updates, apply only what the person accepts, then say it is safe to clear.",
+            "abstract": (
+                "An example procedure, shipped so that `atlas_save_work` has something to point to; an install adapts it. A conversation's work is only durable once Atlas says what now IS: the transcript is gone after a clear, and Atlas is what the next session and every invitee read first. The sign-off turns \"we're done\" into a short, reviewed write-back, so nobody has to remember to ask for it.\n"
+                "\n"
+                "**One procedure, several ways in.** The steps live in this node's document `docs/nodes/skill-signoff/procedure.md`, and nowhere else.\n"
+                "- **On the server, for any MCP client:** the atlas-mcp prompt `signoff` returns this procedure as the instruction, and the tool `atlas_save_work(since)` returns the graph writes made with the caller's credential since a time, with a pointer here. Nothing to install.\n"
+                "- **Automatically, when a person says they want to finish:** a sign-off skill in the client, or a person's own instructions (for example a user-level `CLAUDE.md`). An MCP prompt runs only when invoked, so the automatic trigger lives in the client.\n"
+                "\n"
+                "Changing the procedure is a document edit here, with no deploy and no plugin release.\n"
+                "\n"
+                "**Agents propose, humans commit.** Nothing is written until the person has accepted the proposal, item by item if they like."
+            ),
+            "docs": [
+                {
+                    "path": "docs/nodes/skill-signoff/procedure.md",
+                    "kind": "runbook",
+                    "title": "Sign-off procedure",
+                    "format": "md",
+                    "content": (
+                        "# Sign-off procedure\n"
+                        "\n"
+                        "The steps an agent follows when the person it works with wants to finish a conversation. This document is\n"
+                        "the only copy: the `atlas_save_work` MCP tool points here, and a client-side sign-off skill or a person's\n"
+                        "own instructions only say *when* to start.\n"
+                        "\n"
+                        "**Agents propose; humans commit.** Steps 1-4 write nothing. Writes happen in step 5, after the person\n"
+                        "has accepted the proposal.\n"
+                        "\n"
+                        "## 1. Ask first\n"
+                        "\n"
+                        "When the person signals they want to finish, ask one line:\n"
+                        "\"Before you close: shall I start the sign-off (record what we changed in Atlas and memory)?\"\n"
+                        "If they already said \"sign off\" or \"save work\", skip the question. If they decline, say in one line\n"
+                        "what will go unrecorded, and stop.\n"
+                        "\n"
+                        "## 2. Gather what this conversation changed\n"
+                        "\n"
+                        "- **Atlas writes:** call `atlas_save_work(since=<when the conversation started, ISO-8601>)`. Its `writes`\n"
+                        "  are the graph changes made with the caller's own credential since then, newest first; page on if `total`\n"
+                        "  exceeds `count`. Every seat and agent sends its own token, through the gateway too, so the list holds\n"
+                        "  only this caller's writes. Another conversation on the same seat, in the same window, shares that\n"
+                        "  credential: keep only the writes this conversation made, and say if you cannot tell.\n"
+                        "- **Code:** for every repo touched, `git status -sb` and the commits made: pushed branches, unmerged\n"
+                        "  branches, anything uncommitted.\n"
+                        "- **Running systems:** servers, containers, cron jobs, gateways, DNS and tunnel routes, configuration\n"
+                        "  changed outside a repo. These are the easiest to forget and the costliest to rediscover.\n"
+                        "- **Decisions** the person made, with the date.\n"
+                        "- **Open ends:** follow-ups agreed but not done, questions left for the person, known gaps.\n"
+                        "\n"
+                        "Check these rather than recalling them.\n"
+                        "\n"
+                        "## 3. Map it to Atlas\n"
+                        "\n"
+                        "Cheapest call first: `atlas_outline` for structure, `atlas_node_search` with one or two words to find\n"
+                        "which node knows about a thing, then `atlas_get` on the few nodes that matter. For each change:\n"
+                        "\n"
+                        "- **Prose on an existing node** (`summary`, `abstract`, `detail`): what the thing now IS. A field write\n"
+                        "  replaces the whole field, so read the node in full first and edit its current text.\n"
+                        "- **A new node** when a part now exists that no node covers, under the parent that contains it, with the\n"
+                        "  type its siblings use, and the links the edge vocabulary allows (`contains`, `uses`, `hosted_on`).\n"
+                        "- **A workitem** for each open end the person wants tracked, filed under the right parent and bound to\n"
+                        "  the node it works on; and a result on any workitem the conversation finished.\n"
+                        "- **An intent** only when the person stated a standing rule: propose it, never write it unasked.\n"
+                        "- **Memory** (the assistant's own memory files) for facts about the person or the way of working that\n"
+                        "  Atlas is not the place for. Do not duplicate what Atlas or a repo already records.\n"
+                        "\n"
+                        "Prose says what a thing IS, not how much or in what state: no counts, no \"pending on X\"; name the\n"
+                        "item and let the reader look up its status. Never name an employer's systems. Never write a secret,\n"
+                        "a token or a password anywhere.\n"
+                        "\n"
+                        "## 4. Present the proposal\n"
+                        "\n"
+                        "One message, a numbered checklist the person can answer by number, grouped as **Atlas**, **Workitems**,\n"
+                        "**Memory**, and **Not recorded anywhere yet** (branches to merge, server changes outside a repo,\n"
+                        "decisions the person still owns). One line per item; show full new text only when asked, or when an\n"
+                        "item replaces more than a sentence.\n"
+                        "\n"
+                        "Ask: \"Apply all, apply some (say which), or change something?\" Iterate until the person accepts.\n"
+                        "\n"
+                        "## 5. Apply, then read back\n"
+                        "\n"
+                        "Write the accepted items one at a time with the ordinary tools. Every write echoes the stored row:\n"
+                        "check it matches what was accepted. If a write is refused, say which item and why, fix it if the fix is\n"
+                        "obvious and within what was accepted, and carry on with the rest.\n"
+                        "\n"
+                        "Do not commit, push, merge or deploy as part of the sign-off unless the person put that in the accepted\n"
+                        "list; those keep their usual ask-first rules.\n"
+                        "\n"
+                        "## 6. Close\n"
+                        "\n"
+                        "Report what was written (item numbers), anything that failed, and anything deliberately left open.\n"
+                        "End with:\n"
+                        "\n"
+                        "\"Signed off. Everything from this conversation is recorded, so it is safe to clear or close it now.\"\n"
+                        "\n"
+                        "If something failed or was left open, say so instead of claiming it is safe.\n"
+                    ),
+                },
+            ],
+        },
     ],
     "edges": [
         {
@@ -8027,6 +8131,11 @@ PROFILE = {
             "src": "atlas-mcp-session",
             "edge_type": "contains",
             "dst": "atlas-mcp-tool-setup-guide",
+        },
+        {
+            "src": "atlas-mcp-tool-save-work",
+            "edge_type": "contains",
+            "dst": "skill-signoff",
         },
         {
             "src": "atlas-mcp-work",
