@@ -114,7 +114,7 @@ older run.
 
 | Workflow | Job | What fails it |
 |---|---|---|
-| `verify` | backend suite | any `backend/verify_*.py` (including the board's `node --test` suites), with the default configuration and again with every feature disabled |
+| `verify` | backend suite, backend suite (features disabled) | any `backend/verify_*.py` (including the board's `node --test` suites), with the default configuration and again with every feature disabled; each split over four jobs (`verify_all.py --shard K/4`, each with its own database) and reported under these two names |
 | | route table | the registered routes differ from `backend/routes.snapshot.txt` |
 | | atlas-mcp verify scripts | any `mcp/verify_*.py`, in both configurations |
 | | network exposure and TLS | `tools/ci/check_binds.sh` (a port published to every interface) or `tools/ci/check_tls.sh` (a plain-HTTP token hop, or certificate verification switched off) |
