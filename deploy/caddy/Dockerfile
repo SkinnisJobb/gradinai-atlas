@@ -21,7 +21,7 @@
 # either, re-resolve with `docker pull caddy:2 && docker image inspect caddy:2
 # --format '{{index .RepoDigests 0}}'` and record the version here.
 # Tag added (TASK-1365): digest unchanged, read on the server 2026-10-25; its image config says CADDY_VERSION=v2.11.4.
-FROM caddy:2.11.7-builder@sha256:c4cd20eaa0b69112fd5d4f721ffc9671687e1d5d0b155c8620cf7546dbef94c0 AS builder
+FROM caddy:2.11.9-builder@sha256:3fddbec729442a56b942d4c9eaef1df80893dbf2cf5b86701bfae6aad1408eeb AS builder
 # go-jose forced to v4.1.6 (TASK-1434): CVE-2026-116587 (HIGH, DoS parsing an RSA JWK), and the
 # Caddy 2.11.7 dependency graph resolves v4.1.5. `--replace` writes a go.mod replace directive to an
 # exact tag, so the build stays reproducible and only that one module moves; Caddy and the plugin
@@ -32,7 +32,7 @@ FROM caddy:2.11.7-builder@sha256:c4cd20eaa0b69112fd5d4f721ffc9671687e1d5d0b155c8
 RUN xcaddy build --with github.com/caddy-dns/cloudflare     --replace github.com/go-jose/go-jose/v4=github.com/go-jose/go-jose/v4@v4.1.6     --replace golang.org/x/net=golang.org/x/net@v0.62.0
 
 # Tag added (TASK-1365): digest unchanged, read on the server 2026-10-25; its image config says CADDY_VERSION=v2.11.4.
-FROM caddy:2.11.7@sha256:36c24ad91a7ff7bc4c87fe22bfa8df3c4b18da0773d73fc12ee2c52b98c0bb7e
+FROM caddy:2.11.9@sha256:0c2243efcf437ab7f7a978f1027fcf0d4f9be8a75df27b1b3fbc5dbe0ffa8cf0
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 # curl is not used here: no healthcheck, Caddyfile or test calls it inside a caddy container
 # (atlas-tls checks itself with busybox `nc`), and only curl depends on libcurl. Removed rather
