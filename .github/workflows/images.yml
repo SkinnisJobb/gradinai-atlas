@@ -24,8 +24,9 @@
 # publishes"). The hardened api/mcp/backup images are non-root, UID-agnostic, with a HEALTHCHECK;
 # the default stage the homelab builds is not touched by this workflow.
 #
-#   build-scan  every PR touching the images' inputs, every v* tag, by hand: build all eight,
-#               check the image config of api, mcp and backup (numeric non-root USER,
+#   image       (matrix, one leg per image) every PR touching the images' inputs, every v* tag,
+#               by hand: each leg builds its one image and runs the checks that apply to it:
+#               the image config of api, mcp and backup (numeric non-root USER,
 #               HEALTHCHECK, starts a process under an arbitrary UID in group 0; Postgres and
 #               Caddy run as their upstream images do, outside OSS-18's scope), then Trivy and
 #               THE SAME GATE as sbom-sca.yml (tools/ci/sca_gate.py + tools/ci/sca-accepted.json:
@@ -33,7 +34,12 @@
 #               no fix is reported). The dependencies are the hashed locks (--require-hashes).
 #               The three -ubi images also go through Red Hat's `preflight check container`
 #               (pinned by version and sha256, no Red Hat account, against a throwaway local
-#               registry): see that step for which of its checks block and why.
+#               registry): see that step for which of its checks block and why. Each leg
+#               uploads its Trivy report and preflight results as `part-*` artifacts.
+#   build-scan  the gate ("build, check and scan the OSS images", the required check): after
+#               every leg, it fails unless all legs passed, merges the reports and runs the
+#               SCA gate over all eight at once, then uploads `images-sca` and
+#               `images-preflight` as the single job did.
 #   publish     v* tags only (the tag push, or `gh workflow run images.yml --ref <tag>` to run it
 #               again), after build-scan passed. First the release check: the tag is
 #               semver (vMAJOR.MINOR.PATCH, optionally -prerelease) and docs/oss/RELEASES.md has a
@@ -57,8 +63,14 @@
 # HOW A RELEASE IS CUT: docs/oss/RELEASES.md, "Cutting a release" (a maintainer pushes the tag;
 # nothing here creates one).
 #
-# MINUTES. One build job; layers from the GitHub Actions cache, the Trivy binary and DB from
-# actions/cache. Actions are pinned to commit SHAs (tools/ci/check_pins.py).
+# MINUTES. One leg per image, in parallel; layers from the GitHub Actions cache, the Trivy binary
+# and DB from actions/cache (each leg restores them). Actions are pinned to commit SHAs
+# (tools/ci/check_pins.py).
+#
+# WHY SPLIT (2026-11-10). The eight images were built in a row in one job: 9-12 minutes on a
+# cold cache, about 6 warm. As parallel legs the wall time is the slowest image plus the gate.
+# What is checked, the cache scopes, the report names and what a release publishes are unchanged:
+# publish still needs build-scan, which now passes only when every leg did.
 
 name: images
 
@@ -109,10 +121,31 @@ env:
   PREFLIGHT_REGISTRY_IMAGE: registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
 
 jobs:
-  build-scan:
-    name: build, check and scan the OSS images
+  # One leg per image. Every build step below is the single job's, unchanged, behind an `if:` on
+  # its leg; a check that spanned several images runs in each of them for that image only.
+  #   image  the local tag the build step gives it      report  the Trivy report's name (below)
+  #   uid    the non-root / arbitrary-UID config check  ubi     Red Hat preflight, as
+  #                                                             gradinai-atlas-<name>
+  image:
+    name: build, check and scan ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: api, image: "atlas-api:hardened", report: atlas-api-hardened, uid: true, ubi: false }
+          - { name: mcp, image: "atlas-mcp:hardened", report: atlas-mcp-hardened, uid: true, ubi: false }
+          - { name: backup, image: "atlas-backup:release", report: atlas-backup, uid: true, ubi: false }
+          - { name: api-ubi, image: "atlas-api:hardened-ubi", report: atlas-api-hardened-ubi, uid: true, ubi: true }
+          - { name: mcp-ubi, image: "atlas-mcp:hardened-ubi", report: atlas-mcp-hardened-ubi, uid: true, ubi: true }
+          - { name: postgres, image: "atlas-postgres:release", report: atlas-postgres-pgvector, uid: false, ubi: false }
+          - { name: tls, image: "atlas-tls:release", report: atlas-caddy, uid: false, ubi: false }
+          - { name: tls-ubi, image: "atlas-tls:ubi", report: atlas-caddy-ubi, uid: false, ubi: true }
+    env:
+      NAME: ${{ matrix.name }}
+      IMG: ${{ matrix.image }}
+      REPORT: ${{ matrix.report }}
     defaults:
       run:
         shell: bash
@@ -171,6 +204,7 @@ jobs:
           driver: ${{ vars.CI_RUNNER && 'docker' || 'docker-container' }}
 
       - name: build atlas-api (hardened)
+        if: matrix.name == 'api'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -182,6 +216,7 @@ jobs:
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-api-hardened' || '' }}
 
       - name: build atlas-mcp (hardened)
+        if: matrix.name == 'mcp'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: mcp
@@ -191,9 +226,11 @@ jobs:
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-mcp-hardened' || '' }}
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-mcp-hardened' || '' }}
 
-      # The `backup` stage is `hardened` plus the Postgres client: the api layers come from the
-      # build above (the same builder), only its own stage is new.
+      # The `backup` stage is `hardened` plus the Postgres client. Its own leg builds the api
+      # layers too; on a warm cache they come from its own scope (mode=max keeps every layer),
+      # so only its own stage is new.
       - name: build atlas-backup (backup stage)
+        if: matrix.name == 'backup'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -205,10 +242,12 @@ jobs:
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-backup' || '' }}
 
       # OpenShift's API image (TASK-1476): `hardened` on ubi9/python-312-minimal. Opt-in, built here
-      # only; its `base` layers are the ones the hardened build above just made. The two build
+      # only; its `base` layers are the hardened build's, built again in this leg (or restored
+      # from its own scope, mode=max). The two build
       # args are its `version` and `release` labels (TASK-1483), set as publish sets them; they
       # come after the stage's last RUN, so they change no layer.
       - name: build atlas-api (hardened-ubi)
+        if: matrix.name == 'api-ubi'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -224,6 +263,7 @@ jobs:
 
       # OpenShift's MCP image (TASK-1477): `hardened` on ubi9/python-312-minimal, as the API's.
       - name: build atlas-mcp (hardened-ubi)
+        if: matrix.name == 'mcp-ubi'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: mcp
@@ -238,6 +278,7 @@ jobs:
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-mcp-hardened-ubi' || '' }}
 
       - name: build atlas-postgres (deploy/postgres/pgvector.Dockerfile)
+        if: matrix.name == 'postgres'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: deploy/postgres
@@ -247,7 +288,21 @@ jobs:
           cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-postgres-release' || '' }}
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-postgres-release' || '' }}
 
+      # The api-ubi leg starts its API against a throwaway atlas-postgres (the -ubi start check
+      # below), so it builds that image too, from the postgres leg's recipe and cache scope. It
+      # reads the scope only: the postgres leg is the one that writes it.
+      - name: build atlas-postgres for the api-ubi start check
+        if: matrix.name == 'api-ubi'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: deploy/postgres
+          file: deploy/postgres/pgvector.Dockerfile
+          tags: atlas-postgres:release
+          load: true
+          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-postgres-release' || '' }}
+
       - name: build atlas-tls (deploy/caddy)
+        if: matrix.name == 'tls'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: deploy/caddy
@@ -259,6 +314,7 @@ jobs:
       # OpenShift's Caddy front (TASK-1478): xcaddy on ubi9/go-toolset, the static binary on
       # ubi9/ubi-micro. deploy/caddy/Dockerfile above is unchanged.
       - name: build atlas-tls (deploy/caddy/Dockerfile.ubi)
+        if: matrix.name == 'tls-ubi'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: deploy/caddy
@@ -273,12 +329,14 @@ jobs:
           cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-tls-ubi' || '' }}
 
       # Acceptance 1 and 2 on the image itself. The full stack under an arbitrary UID is the
-      # install smoke's leg 1 (install-smoke.yml).
+      # install smoke's leg 1 (install-smoke.yml). Run in the api, mcp, backup, api-ubi and
+      # mcp-ubi legs (matrix `uid`), each on its own image: the loop has one iteration.
       - name: "check: non-root numeric USER, HEALTHCHECK, runs under an arbitrary UID"
+        if: matrix.uid
         run: |
           set -euo pipefail
           bad=0
-          for img in atlas-api:hardened atlas-mcp:hardened atlas-backup:release atlas-api:hardened-ubi atlas-mcp:hardened-ubi; do
+          for img in "$IMG"; do
             user=$(docker image inspect -f '{{.Config.User}}' "$img")
             hc=$(docker image inspect -f '{{if .Config.Healthcheck}}{{join .Config.Healthcheck.Test " "}}{{end}}' "$img")
             echo "$img: USER=$user"
@@ -307,7 +365,10 @@ jobs:
       # throwaway peppers; nothing here is a secret and the network is removed afterwards.
       # atlas-mcp (TASK-1477): `python -m uvicorn app.main:app` (the image's CMD) up to a 200 from
       # /health; it needs ATLAS_BASE_URL set to start, and dials it only when a tool is called.
+      # Run in the api-ubi and mcp-ubi legs, each starting its own image (the atlas-postgres the
+      # API needs is built in the api-ubi leg, above).
       - name: "check: the -ubi images start under 1000770000:0 with a read-only root filesystem"
+        if: matrix.name == 'api-ubi' || matrix.name == 'mcp-ubi'
         run: |
           set -euo pipefail
           run_ro() { docker run --user 1000770000:0 --read-only --tmpfs /tmp "$@"; }
@@ -326,28 +387,32 @@ jobs:
           docker network create ubi-probe >/dev/null
           trap 'docker rm -f ubi-api ubi-mcp ubi-pg >/dev/null 2>&1 || true; docker network rm ubi-probe >/dev/null 2>&1 || true' EXIT
 
-          # atlas-api:hardened-ubi
-          run_ro --rm atlas-api:hardened-ubi atlas-migrate --help >/dev/null             || { echo "::error::atlas-api:hardened-ubi: atlas-migrate --help failed under 1000770000:0, read-only"; exit 1; }
-          echo "atlas-api:hardened-ubi: atlas-migrate --help ok"
-          pgpw=$(rand | tr -dc 'A-Za-z0-9')
-          docker run -d --name ubi-pg --network ubi-probe -e POSTGRES_USER=atlas -e POSTGRES_DB=atlas             -e POSTGRES_PASSWORD="$pgpw" atlas-postgres:release >/dev/null
-          for _ in $(seq 1 60); do docker exec ubi-pg pg_isready -U atlas -d atlas -h 127.0.0.1 >/dev/null 2>&1 && break; sleep 1; done
-          env_file="$RUNNER_TEMP/ubi-api.env"
-          {
-            echo "ATLAS_DB_URL=postgresql+psycopg2://atlas:$pgpw@ubi-pg:5432/atlas"
-            echo "ATLAS_PASSWORD_PEPPER=$(rand)"
-            echo "ATLAS_TOKEN_PEPPER=$(rand)"
-            echo "ATLAS_PUBLIC_URL=https://atlas.example.com"
-          } > "$env_file"
-          run_ro -d --name ubi-api --network ubi-probe --env-file "$env_file" atlas-api:hardened-ubi >/dev/null
-          wait_up ubi-api 8000 /healthz atlas.example.com             || { echo "::error::atlas-api:hardened-ubi: uvicorn did not answer /healthz under 1000770000:0, read-only"; exit 1; }
-          echo "atlas-api:hardened-ubi: uvicorn up, /healthz 200 (uid $(docker exec ubi-api id -u), read-only root)"
-          rm -f "$env_file"
+          if [ "$NAME" = api-ubi ]; then
+            # atlas-api:hardened-ubi
+            run_ro --rm atlas-api:hardened-ubi atlas-migrate --help >/dev/null             || { echo "::error::atlas-api:hardened-ubi: atlas-migrate --help failed under 1000770000:0, read-only"; exit 1; }
+            echo "atlas-api:hardened-ubi: atlas-migrate --help ok"
+            pgpw=$(rand | tr -dc 'A-Za-z0-9')
+            docker run -d --name ubi-pg --network ubi-probe -e POSTGRES_USER=atlas -e POSTGRES_DB=atlas             -e POSTGRES_PASSWORD="$pgpw" atlas-postgres:release >/dev/null
+            for _ in $(seq 1 60); do docker exec ubi-pg pg_isready -U atlas -d atlas -h 127.0.0.1 >/dev/null 2>&1 && break; sleep 1; done
+            env_file="$RUNNER_TEMP/ubi-api.env"
+            {
+              echo "ATLAS_DB_URL=postgresql+psycopg2://atlas:$pgpw@ubi-pg:5432/atlas"
+              echo "ATLAS_PASSWORD_PEPPER=$(rand)"
+              echo "ATLAS_TOKEN_PEPPER=$(rand)"
+              echo "ATLAS_PUBLIC_URL=https://atlas.example.com"
+            } > "$env_file"
+            run_ro -d --name ubi-api --network ubi-probe --env-file "$env_file" atlas-api:hardened-ubi >/dev/null
+            wait_up ubi-api 8000 /healthz atlas.example.com             || { echo "::error::atlas-api:hardened-ubi: uvicorn did not answer /healthz under 1000770000:0, read-only"; exit 1; }
+            echo "atlas-api:hardened-ubi: uvicorn up, /healthz 200 (uid $(docker exec ubi-api id -u), read-only root)"
+            rm -f "$env_file"
+          fi
 
-          # atlas-mcp:hardened-ubi
-          run_ro -d --name ubi-mcp -e ATLAS_BASE_URL=https://atlas.example.com atlas-mcp:hardened-ubi             python -m uvicorn app.main:app --host 0.0.0.0 --port 8092 >/dev/null
-          wait_up ubi-mcp 8092 /health             || { echo "::error::atlas-mcp:hardened-ubi: uvicorn did not answer /health under 1000770000:0, read-only"; exit 1; }
-          echo "atlas-mcp:hardened-ubi: uvicorn up, /health 200 (uid $(docker exec ubi-mcp id -u), read-only root)"
+          if [ "$NAME" = mcp-ubi ]; then
+            # atlas-mcp:hardened-ubi
+            run_ro -d --name ubi-mcp -e ATLAS_BASE_URL=https://atlas.example.com atlas-mcp:hardened-ubi             python -m uvicorn app.main:app --host 0.0.0.0 --port 8092 >/dev/null
+            wait_up ubi-mcp 8092 /health             || { echo "::error::atlas-mcp:hardened-ubi: uvicorn did not answer /health under 1000770000:0, read-only"; exit 1; }
+            echo "atlas-mcp:hardened-ubi: uvicorn up, /health 200 (uid $(docker exec ubi-mcp id -u), read-only root)"
+          fi
 
       # atlas-tls:ubi (TASK-1478) running THE OPENSHIFT CADDYFILE (deploy/openshift/base/caddy/,
       # TASK-1490) as deploy/openshift/base/deployment-tls.yaml runs it: under an arbitrary UID with
@@ -365,7 +430,9 @@ jobs:
       #     is replaced by the socket peer;
       #   - the readiness door (any other Host) serves /healthz through the api leg, nothing else;
       #   - no ACME attempt, no :80 listener.
+      # Run in the tls-ubi leg.
       - name: "check: atlas-tls:ubi serves the OpenShift Caddyfile under an arbitrary UID"
+        if: matrix.name == 'tls-ubi'
         run: |
           set -euo pipefail
           img=atlas-tls:ubi
@@ -468,7 +535,9 @@ jobs:
           if grep -q ':80"' <<<"$ubi_log"; then fail "caddy opened a :80 listener"; fi
           echo "$img: the OpenShift Caddyfile serves as uid $(docker exec ubi-tls id -u) with a read-only root"
 
+      # Preflight, its binary and its results: the three -ubi legs only (matrix `ubi`).
       - name: cache preflight
+        if: matrix.ubi
         id: preflight-bin
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -476,7 +545,7 @@ jobs:
           key: preflight-bin-${{ env.PREFLIGHT_VERSION }}-${{ env.PREFLIGHT_SHA256 }}
 
       - name: download preflight (checksum verified)
-        if: steps.preflight-bin.outputs.cache-hit != 'true'
+        if: matrix.ubi && steps.preflight-bin.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP"
@@ -505,7 +574,10 @@ jobs:
       #   certify; a check a newer preflight adds is reported too until it is classified here.
       #   A blocking check that does not run at all (renamed by a newer preflight) fails.
       # Also checked: each image's `name` label is the package it is published as.
+      # Each -ubi leg runs it on its own image, published as gradinai-atlas-<leg name>: the loop
+      # has one iteration.
       - name: "check: Red Hat preflight on the -ubi images"
+        if: matrix.ubi
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/preflight"
@@ -520,9 +592,9 @@ jobs:
           bad=0
           # The local image and the package it is published as, side by side (no `a=b` pairs:
           # gitleaks' generic-api-key rule reads those as a key).
-          imgs=(atlas-api:hardened-ubi atlas-mcp:hardened-ubi atlas-tls:ubi)
-          pkgs=(gradinai-atlas-api-ubi gradinai-atlas-mcp-ubi gradinai-atlas-tls-ubi)
-          for i in 0 1 2; do
+          imgs=("$IMG")
+          pkgs=("gradinai-atlas-$NAME")
+          for i in "${!imgs[@]}"; do
             img=${imgs[$i]}; name=${pkgs[$i]}
             label=$(docker image inspect -f '{{index .Config.Labels "name"}}' "$img")
             [ "$label" = "$name" ] || { echo "::error::$img: label name is '$label', not $name"; bad=1; }
@@ -563,14 +635,15 @@ jobs:
           done
           [ "$bad" = 0 ]
 
+      # The leg's part; build-scan merges the three into `images-preflight`.
       - name: upload the preflight results
-        if: always()
+        if: always() && matrix.ubi
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: images-preflight
+          name: part-preflight-${{ matrix.name }}
           path: ${{ runner.temp }}/preflight
           if-no-files-found: warn
-          retention-days: 30
+          retention-days: 7
 
       # The report names are what an `in` list in tools/ci/sca-accepted.json matches, so an image
       # built from the same recipe as one in sbom-sca.yml is reported under sbom-sca's name: one
@@ -578,17 +651,53 @@ jobs:
       # atlas-postgres (pgvector.Dockerfile) is atlas-postgres-pgvector (sbom-sca's atlas-postgres is
       # the homelab's postgres:16); atlas-tls (deploy/caddy) is atlas-caddy. No --full-scan here:
       # this run sees eight images, so an acceptance for an image it does not scan is skipped.
-      - name: scan the images
+      # Each leg scans its own image under that name (matrix `report`); build-scan gates the eight.
+      - name: scan the image
         run: |
           set -euo pipefail
-          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-api-hardened.json" atlas-api:hardened
-          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-mcp-hardened.json" atlas-mcp:hardened
-          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-backup.json" atlas-backup:release
-          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-postgres-pgvector.json" atlas-postgres:release
-          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-caddy.json" atlas-tls:release
-          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-api-hardened-ubi.json" atlas-api:hardened-ubi
-          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-mcp-hardened-ubi.json" atlas-mcp:hardened-ubi
-          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/atlas-caddy-ubi.json" atlas-tls:ubi
+          trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/$REPORT.json" "$IMG"
+
+      # The leg's part; build-scan merges the eight into `images-sca` and gates them there.
+      - name: upload the scan report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: part-sca-${{ matrix.name }}
+          path: ${{ runner.temp }}/sca
+          if-no-files-found: warn
+          retention-days: 7
+
+  # THE GATE, under the name the required check and docs/oss/CONTRIBUTING.md know, and the job
+  # publish needs: it passes only when every leg passed and the SCA gate passes over all eight
+  # reports at once (the same gate, the same reports, as when one job built them all).
+  build-scan:
+    name: build, check and scan the OSS images
+    needs: image
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: download the scan reports
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: part-sca-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/sca
+
+      - name: download the preflight results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: part-preflight-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/preflight
+
+      - name: sca_gate self-test
+        run: python3 tools/ci/sca_gate.py --self-test
 
       - name: "gate: a fixable critical or high fails (tools/ci/sca_gate.py, sca-accepted.json)"
         run: python3 tools/ci/sca_gate.py "$RUNNER_TEMP/sca" --summary-md "$RUNNER_TEMP/sca/summary.md"
@@ -601,6 +710,25 @@ jobs:
           path: ${{ runner.temp }}/sca
           if-no-files-found: warn
           retention-days: 30
+
+      - name: upload the preflight results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: images-preflight
+          path: ${{ runner.temp }}/preflight
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Last, so the reports are merged, gated and uploaded even when a leg failed: a leg that
+      # failed (or was skipped) fails this job, so publish cannot run past it.
+      - name: every leg passed
+        if: always()
+        env:
+          RESULT: ${{ needs.image.result }}
+        run: |
+          [ "$RESULT" = success ] || { echo "::error::a build, check or scan leg did not pass (result: $RESULT)"; exit 1; }
+          echo "all eight legs passed"
 
   publish:
     name: publish to GHCR (v* tags)
