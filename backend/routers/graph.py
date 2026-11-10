@@ -180,8 +180,8 @@ def graph(request: Request, focus: str | None = None, depth: int = 2,
                        seeds from the workitem epics (an epic has no incoming
                        `contains` either) and then walks `contains` down through
                        every story and task, because the work hierarchy and the
-                       world hierarchy still SHARE that edge type until
-                       TASK-1030 gives the work side its own `decomposes_into`.
+                       world hierarchy SHARE that edge type, permanently (a
+                       separate `decomposes_into`, TASK-1030, was cancelled).
                        Measured on staging: 348 nodes unfiltered vs 42 filtered.
       depth          — BFS hops outward (both directions). Clamped to [0, 20].
       edges          — comma-separated edge_types to traverse; omitted/empty = all types.

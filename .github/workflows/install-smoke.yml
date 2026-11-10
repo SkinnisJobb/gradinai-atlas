@@ -2171,14 +2171,16 @@ jobs:
 
   # --- OSS-26 C: upgrade from the previous release (TASK-1416) -------------------------------
   # docs/oss/RELEASES.md "Upgrading with released images" and INSTALL section 10, on one runner:
-  # the PREVIOUS release installed from its published images (its own checkout of deploy/oss,
+  # the PREVIOUS release installed from its published images (its own tree's deploy/oss,
   # release.yml, the release's release-images.env), seeded, backed up; then THIS checkout over
   # the same compose project and volumes, built from source, the schema step, and every table
   # compared. Separate from `smoke` so neither changes the other's stack.
   #
-  # The previous release is the newest vX.Y.Z tag reachable from HEAD^ (on a pull request, the
-  # base branch; a tag on HEAD itself is not "previous"), pre-releases skipped. No such tag, or
-  # no published GitHub release for it: `upgrade` is skipped and `upgrade-from` says why.
+  # Releases are cut in this repository (the repository variable UPGRADE_FROM_REPO names
+  # another, e.g. for a fork that follows this one): its tags, release-images.env assets and
+  # ghcr.io packages. The previous release is the newest published release of that
+  # repository, pre-releases included, drafts never; the repository variable UPGRADE_FROM_TAG
+  # pins one instead. No published release: `upgrade` is skipped and `upgrade-from` says why.
   upgrade-from:
     name: install smoke, upgrade - find the previous release
     runs-on: ubuntu-latest
@@ -2187,45 +2189,63 @@ jobs:
       contents: read
     outputs:
       tag: ${{ steps.prev.outputs.tag }}
+      repo: ${{ steps.prev.outputs.repo }}
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       # The self-hosted runners have no `gh`: the REST API with curl, the token handed to curl
-      # as a config file on stdin (`-K -`), never on a command line. 404 = no published release
-      # (a draft has no release-by-tag); anything else that is not 200 fails the job.
-      - name: the newest release before this change
+      # as a config file on stdin (`-K -`), never on a command line. The repository is public;
+      # the token only lifts the anonymous rate limit the shared runner IP would hit.
+      - name: the newest published release of the public repository
         id: prev
         env:
           GH_TOKEN: ${{ github.token }}
+          UPGRADE_FROM_REPO: ${{ vars.UPGRADE_FROM_REPO || github.repository }}
+          UPGRADE_FROM_TAG: ${{ vars.UPGRADE_FROM_TAG }}
         run: |
           set -euo pipefail
-          tag=$(git tag -l 'v*' --merged HEAD^ --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)
-          if [ -z "$tag" ]; then
-            echo "::notice title=upgrade skipped::no vX.Y.Z tag before this change: there is no previous release to upgrade from"
-            exit 0
+          [[ "$UPGRADE_FROM_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "UPGRADE_FROM_REPO '$UPGRADE_FROM_REPO' is not owner/name" >&2; exit 1; }
+          api() {  # api <path> <out> -> HTTP code
+            printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN" | curl -sS -K - \
+              -H 'Accept: application/vnd.github+json' -o "$2" -w '%{http_code}' "$GITHUB_API_URL/repos/$UPGRADE_FROM_REPO/$1"
+          }
+          if [ -n "$UPGRADE_FROM_TAG" ]; then
+            # A pinned tag must exist as a published release: a typo fails, it never skips.
+            code=$(api "releases/tags/$UPGRADE_FROM_TAG" "$RUNNER_TEMP/release.json")
+            [ "$code" = 200 ] || { echo "UPGRADE_FROM_TAG=$UPGRADE_FROM_TAG: GET $UPGRADE_FROM_REPO releases/tags: HTTP $code" >&2; exit 1; }
+            python -I -c 'import json,sys; json.dump([json.load(open(sys.argv[1]))], open(sys.argv[1], "w"))' "$RUNNER_TEMP/release.json"
+          else
+            code=$(api "releases?per_page=100" "$RUNNER_TEMP/release.json")
+            [ "$code" = 200 ] || { echo "GET $UPGRADE_FROM_REPO releases: HTTP $code" >&2; exit 1; }
           fi
-          code=$(printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN" | curl -sS -K - \
-            -H 'Accept: application/vnd.github+json' -o "$RUNNER_TEMP/release.json" -w '%{http_code}' \
-            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$tag")
-          if [ "$code" = 404 ]; then
-            echo "::notice title=upgrade skipped::tag $tag has no published GitHub release: nothing to upgrade from"
-            exit 0
-          fi
-          [ "$code" = 200 ] || { echo "GET releases/tags/$tag: HTTP $code" >&2; exit 1; }
-          python -I -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if not r["draft"] and any(a["name"]=="release-images.env" for a in r["assets"]) else 1)' "$RUNNER_TEMP/release.json" || {
-            echo "release $tag is a draft or has no release-images.env" >&2; exit 1; }
+          # The newest non-draft release (the API lists newest first; sorted again on
+          # published_at to not depend on it). It must carry release-images.env and a vX.Y.Z or
+          # vX.Y.Z-pre tag, the shape images.yml publishes.
+          tag=$(python -I -c '
+          import json, re, sys
+          rels = [r for r in json.load(open(sys.argv[1])) if not r["draft"] and r.get("published_at")]
+          rels.sort(key=lambda r: r["published_at"], reverse=True)
+          if not rels:
+              sys.exit(0)
+          r = rels[0]; t = r["tag_name"]
+          if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?", t):
+              sys.exit(f"release tag {t!r} is not vX.Y.Z[-pre]")
+          if not any(a["name"] == "release-images.env" for a in r["assets"]):
+              sys.exit(f"release {t} has no release-images.env")
+          print(t)
+          ' "$RUNNER_TEMP/release.json")
           rm -f "$RUNNER_TEMP/release.json"
-          echo "previous release: $tag ($(git rev-parse --short "$tag^{commit}"))"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -z "$tag" ]; then
+            echo "::notice title=upgrade skipped::$UPGRADE_FROM_REPO has no published release: there is no previous release to upgrade from"
+            exit 0
+          fi
+          echo "previous release: $UPGRADE_FROM_REPO $tag"
+          { echo "tag=$tag"; echo "repo=$UPGRADE_FROM_REPO"; } >> "$GITHUB_OUTPUT"
 
   upgrade:
     name: install smoke, upgrade from the previous release (published images -> this checkout)
@@ -2235,15 +2255,19 @@ jobs:
     # jobs queue behind each other and never share a stack.
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    # public-ci: allow-permissions pulls the previous release's images from GHCR (read only)
+    # The release, its tree and its images are public (UPGRADE_FROM_REPO): this repository's
+    # token reaches none of them beyond lifting the API rate limit.
     permissions:
-      contents: read      # the release tag and its release-images.env asset (private repository)
-      packages: read      # docker pull of the release's images from ghcr.io (private packages)
+      contents: read
     defaults:
       run:
         shell: bash
     env:
       PREV_TAG: ${{ needs.upgrade-from.outputs.tag }}
+      PREV_REPO: ${{ needs.upgrade-from.outputs.repo }}
+      # The previous release's commit under a ref of its own: a tag of the same name in this
+      # repository (or none at all) never collides with it.
+      PREV_REF: refs/upgrade-from/prev
     steps:
       - uses: actions/checkout@v7
 
@@ -2275,10 +2299,13 @@ jobs:
           v=$(docker compose version --short); v=${v#v}
           echo "docker compose $v"
           [ "$(printf '%s\n' 2.24.4 "$v" | sort -V | head -n 1)" = 2.24.4 ] || { echo "release.yml needs Docker Compose >= 2.24.4" >&2; exit 1; }
-          # The previous release's whole tree, at its tag, beside this checkout (never over it).
-          git fetch --no-tags --depth=1 origin "refs/tags/$PREV_TAG:refs/tags/$PREV_TAG"
-          git archive "$PREV_TAG" | tar -x -C "$PREV_DIR"
-          echo "previous release $PREV_TAG in $PREV_DIR; this checkout $(git rev-parse --short HEAD)"
+          # The previous release's whole tree, at its tag in the PUBLIC repository (fetched
+          # anonymously: it is public), beside this checkout (never over it). Its history is not
+          # this one's; only its tree is used, here and in upgrade 6's deploy/postgres/ diff.
+          git -c credential.helper= -c "http.$GITHUB_SERVER_URL/.extraheader=" fetch --no-tags --depth=1 \
+            "$GITHUB_SERVER_URL/$PREV_REPO.git" "+refs/tags/$PREV_TAG:$PREV_REF"
+          git archive "$PREV_REF" | tar -x -C "$PREV_DIR"
+          echo "previous release $PREV_REPO $PREV_TAG ($(git rev-parse --short "$PREV_REF^{commit}")) in $PREV_DIR; this checkout $(git rev-parse --short HEAD)"
 
       - name: "upgrade 1: the previous release from its published images (release.yml, release-images.env)"
         timeout-minutes: 15
@@ -2297,12 +2324,13 @@ jobs:
             printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN" | curl -fsSL -K - \
               -H "Accept: $2" -o "$3" "$1"
           }
-          api "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/releases/tags/$PREV_TAG" application/vnd.github+json "$SMOKE_DIR/release.json"
+          api "$GITHUB_API_URL/repos/$PREV_REPO/releases/tags/$PREV_TAG" application/vnd.github+json "$SMOKE_DIR/release.json"
           asset=$(python -I -c 'import json,sys; print(next(a["url"] for a in json.load(open(sys.argv[1]))["assets"] if a["name"]=="release-images.env"))' "$SMOKE_DIR/release.json")
           api "$asset" application/octet-stream "$SMOKE_DIR/release-images.env"
-          # Exactly the five ATLAS_IMAGE_* lines, each a ghcr.io reference with tag AND digest;
-          # nothing else from the downloaded file reaches .env.
-          grep -E '^ATLAS_IMAGE_(API|MCP|BACKUP|POSTGRES|TLS)=ghcr\.io/[a-z0-9._-]+/gradinai-atlas-[a-z]+:v[0-9.]+@sha256:[0-9a-f]{64}$' \
+          # Exactly the five ATLAS_IMAGE_* lines (the *_UBI ones are for OpenShift), each a
+          # ghcr.io reference with a vX.Y.Z[-pre] tag AND a digest; nothing else from the
+          # downloaded file reaches .env.
+          grep -E '^ATLAS_IMAGE_(API|MCP|BACKUP|POSTGRES|TLS)=ghcr\.io/[a-z0-9._-]+/gradinai-atlas-[a-z]+:v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?@sha256:[0-9a-f]{64}$' \
             "$SMOKE_DIR/release-images.env" > "$SMOKE_DIR/images.env"
           [ "$(cut -d= -f1 "$SMOKE_DIR/images.env" | sort -u | wc -l)" = 5 ] || {
             cat "$SMOKE_DIR/release-images.env"; echo "release-images.env does not hold the five references" >&2; exit 1; }
@@ -2312,18 +2340,16 @@ jobs:
           { cat "$SMOKE_DIR/images.env"; echo "COMPOSE_FILE=docker-compose.yml:release.yml"; } >> .env
           docker compose --profile backup config --images | sort -u
 
-          echo "=== pull, signed in to ghcr.io with this job's token, in a job-scoped DOCKER_CONFIG"
-          # The packages are private. The credential lives only in $DOCKER_CONFIG_JOB, never in
-          # the runner user's ~/.docker (six runners share this host), and is deleted as soon as
-          # the pull is done (and by the always() step below if this step dies first).
+          echo "=== pull, anonymous, in an empty job-scoped DOCKER_CONFIG"
+          # The public repository's packages are public: no login. The empty config keeps any
+          # credential in the runner user's ~/.docker (six runners share this host) out of the
+          # pull, so a pass here means an install with no ghcr.io account pulls too.
           mkdir -m 0700 "$DOCKER_CONFIG_JOB"
           trap 'rm -rf "$DOCKER_CONFIG_JOB"' EXIT
           # The CLI plugins (compose) may live in the user's config dir: point at them.
           if [ -d "$HOME/.docker/cli-plugins" ]; then ln -s "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG_JOB/cli-plugins"; fi
           export DOCKER_CONFIG="$DOCKER_CONFIG_JOB"
-          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker compose --profile backup pull
-          docker logout ghcr.io
           unset DOCKER_CONFIG
           rm -rf "$DOCKER_CONFIG_JOB"
 
@@ -2492,11 +2518,11 @@ jobs:
           echo "atlas-postgres on $PREV_TAG: $(cat "$SMOKE_DIR/postgres-image.before")"
           echo "atlas-postgres now: $(docker inspect -f '{{.Config.Image}} {{.Image}}' "$pg")"
           changed=0
-          if git diff --quiet "$PREV_TAG" HEAD -- ../postgres/; then
+          if git diff --quiet "$PREV_REF" HEAD -- ../postgres/; then
             echo "deploy/postgres/ as in $PREV_TAG: the same Postgres recipe, so the check must find no mismatch"
           else
             changed=1
-            echo "deploy/postgres/ changed since $PREV_TAG:"; git diff --stat "$PREV_TAG" HEAD -- ../postgres/
+            echo "deploy/postgres/ changed since $PREV_TAG:"; git diff --stat "$PREV_REF" HEAD -- ../postgres/
           fi
           rc=0; bash ../../tools/db_collation_check.sh "$pg" || rc=$?
           if [ "$rc" = 1 ] && [ "$changed" = 1 ]; then
@@ -2533,7 +2559,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # No registry credential may stay on the shared host, whatever happened above.
+      # The job-scoped docker config never outlives the job, whatever happened above.
       - name: remove the job's docker credentials
         if: always()
         run: |

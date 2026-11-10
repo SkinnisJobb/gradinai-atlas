@@ -67,8 +67,14 @@ def _intent_field_error(field: str, detail: str) -> JSONResponse:
                         status_code=400)
 
 
+def _column_length(name: str) -> int:
+    """The `String(n)` bound of a `node_intent` column, read off the model so the
+    check and the column cannot drift apart."""
+    return models_graph.NodeIntent.__table__.c[name].type.length
+
+
 def _validate_intent_fields(kind: str | None, slug: str | None, title: str | None,
-                            statement: str | None) -> JSONResponse | None:
+                            statement: str | None, source: str | None = None) -> JSONResponse | None:
     from node_types import INTENT_KINDS  # local import: see startup()
 
     if kind is not None and kind not in INTENT_KINDS:
@@ -80,6 +86,15 @@ def _validate_intent_fields(kind: str | None, slug: str | None, title: str | Non
     for name, value in (("title", title), ("statement", statement)):
         if value is not None and not value.strip():
             return _intent_field_error(name, "must not be empty")
+    # `title` and `source` are String(200) columns. Over-long, Postgres refuses
+    # the INSERT/UPDATE and the caller saw a 500; refused here instead, naming
+    # the field. `slug` is bounded by its pattern above and `kind` by
+    # INTENT_KINDS; `statement` is Text.
+    for name, value in (("title", title), ("source", source)):
+        limit = _column_length(name)
+        if value is not None and len(value) > limit:
+            return _intent_field_error(
+                name, f"must be at most {limit} characters (got {len(value)})")
     return None
 
 
@@ -155,7 +170,7 @@ def create_intent(node_id: str, body: IntentWrite, request: Request) -> JSONResp
     if refused is not None:
         return refused
 
-    bad = _validate_intent_fields(body.kind, body.slug, body.title, body.statement)
+    bad = _validate_intent_fields(body.kind, body.slug, body.title, body.statement, body.source)
     if bad is not None:
         return bad
 
@@ -224,7 +239,7 @@ def edit_intent(intent_id: int, body: IntentPatch, request: Request) -> JSONResp
     if refused is not None:
         return refused
 
-    bad = _validate_intent_fields(body.kind, body.slug, body.title, body.statement)
+    bad = _validate_intent_fields(body.kind, body.slug, body.title, body.statement, body.source)
     if bad is not None:
         return bad
 

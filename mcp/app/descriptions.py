@@ -17,7 +17,9 @@ MORE = " More: tools guide."
 DESCRIPTIONS: dict[str, str] = {
     # ---- read
     "atlas_health":
-        "Is atlas-api up? Returns node and edge counts as a plausibility check.",
+        "Is atlas-api up? Returns /api/health: node, edge and event counts as a plausibility check, "
+        "plus token, undocumented-asset, name, edge-type and certificate warnings and the deploy "
+        "status (normally all empty).",
     "atlas_outline":
         "The contains tree as indented text, one line per node: what exists. Defaults to the "
         "world (families=object,bridge); scope with root=, add names=true." + MORE,
@@ -71,7 +73,9 @@ DESCRIPTIONS: dict[str, str] = {
         "Create a workitem (a type atlas_capabilities lists) with its acceptance, parent, binding, "
         "depends_on, priority (low|medium|high|critical) and labels in one transaction. A task's id is minted; an epic or story needs a slug "
         "id. `body` is the spec, never a result. Suggest a binding, do not guess one. "
-        "Decisions are raised with a dedicated tool, not here." + MORE,
+        # Decisions are ADR 0048's planned workitem type; no MCP tool files them yet. The ADR
+        # number stays here, not in the text: verify_tool_descriptions.py refuses ticket ids.
+        "Decisions are not filed here; their tool is not built yet." + MORE,
     "atlas_update_work":
         "Update a workitem. status, result, priority, labels and parent (moves it) are plain "
         "(null clears, omitted leaves). body, acceptance, depends_on and binding REPLACE WHOLESALE and need "

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- The public landing page (ADR 0035). Same posture as frontend/login.html's own
-     comment block, and for the same reasons — this is the first thing an anonymous
+<!-- The public landing page (ADR 0035). Same posture as the auth pages (`_PAGE`
+     in backend/auth.py), and for the same reasons — this is the first thing an anonymous
      request on the open internet can reach at "/", so it carries, deliberately and
      permanently:
        * NO script element of any kind;
@@ -17,9 +17,8 @@
          count a query could answer" — doubly true on a page nobody comes back to
          fix), and no project, host, IP address, employer system or person named.
 
-     This page IS meant to be indexed — unlike login.html it carries no
-     `noindex`, on purpose: it is the public description of the product, not a
-     credential form.
+     This page IS meant to be indexed — it carries no `noindex`, on purpose: it
+     is the public description of the product, not a credential form.
 
      House rules that also apply here (AGENTS.md): every font-size is
      calc(<N>px * var(--ui-scale)); no arrow function, no const/let, no template
@@ -61,7 +60,7 @@
     --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "Cascadia Mono", Menlo, Consolas, monospace;
     /* No script on this page to restore a stored --ui-scale, so it is authored
-       at the fixed 1.0 baseline — same reasoning as frontend/login.html. */
+       at the fixed 1.0 baseline — the same reasoning as the auth pages. */
     --ui-scale: 1;
   }
   @media (prefers-color-scheme: dark) {

@@ -76,7 +76,7 @@ def board_legacy() -> FileResponse:
 
     The first-generation tree view (frontend/index.html) is superseded and is no
     longer reachable AT ALL: the `/static` mount that used to serve it is gone
-    (TASK-967). It still ships in the image; nothing routes to it.
+    (TASK-967), and the file was deleted on 2026-11-10; git history has it.
     """
     return FileResponse(os.path.join(FRONTEND, "board.html"))
 

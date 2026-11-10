@@ -73,8 +73,11 @@ def main() -> None:
     check("tools_work no longer defines WORKITEM_TYPES", not hasattr(tools_work, "WORKITEM_TYPES"))
     stale = [k for k, v in DESCRIPTIONS.items() if re.search(r"epic,? story,? (or )?task|epic/story/task", v)]
     check("no description spells out the type list", stale == [], str(stale))
-    check("atlas_file_work's description says decisions are raised elsewhere",
-          "Decisions are raised with a dedicated tool" in DESCRIPTIONS["atlas_file_work"])
+    desc = DESCRIPTIONS["atlas_file_work"]
+    check("atlas_file_work's description says decisions are not filed here and their tool is not built",
+          "Decisions are not filed here; their tool is not built yet." in desc, desc)
+    check("...and no longer points to a dedicated decision tool that does not exist",
+          "dedicated tool" not in desc, desc)
 
     print("-- B. an unknown type is refused with the list read from the API --")
     stub = StubClient()

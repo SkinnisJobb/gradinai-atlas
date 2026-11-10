@@ -340,8 +340,8 @@ EDGE_TYPE_SEEDS: dict[str, dict] = {
         "pairs": [["object", "object"], ["workitem", "workitem"], ["object", "bridge"]],
         "description": (
             "Is part of, and nothing else (ADR 0030) — the product decomposition. "
-            "Three pairs share this one string until TASK-1030 gives the work "
-            "hierarchy (epic contains story contains task) its own edge type: "
+            "Three pairs share this one string, by decision: the work hierarchy "
+            "(epic contains story contains task) has no edge type of its own. "
             "object/object is the world hierarchy, workitem/workitem is the work "
             "hierarchy, and object/bridge is a capability containing a skill "
             "(e.g. a capability -> its `skill-*` node — measured live "

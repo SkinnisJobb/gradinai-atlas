@@ -24,7 +24,7 @@ Reason: how rollups work in the product (ADR 0028)
 
 Reason: the product's purpose
 
-> Atlas is self-hostable and open source. The core is the work: the work hierarchy (Epic > Feature > Story > Task > Sub-task), the board, a REST API and an MCP server, so an agent reads and writes the same work a person sees, within limits a person sets. Everything else is an add-on an install turns on when it needs it: context retrieval, single sign-on, guardrails, CI integration. The source is open and Atlas documents itself, so a team can change Atlas with its own agents. The product ships without anyone's world in it: an instance is configuration and data, never code.
+> Atlas is self-hostable and open source. The core is the work: the work hierarchy (Epic > Story > Task), the board, a REST API and an MCP server, so an agent reads and writes the same work a person sees, within limits a person sets. Everything else is an add-on an install turns on when it needs it: semantic retrieval, single sign-on, guardrails, CI integration. The source is open and Atlas documents itself, so a team can change Atlas with its own agents. The product ships without anyone's world in it: an instance is configuration and data, never code.
 
 ### `atlas:agents-propose-humans-commit` (principle): Agents propose; humans commit
 
@@ -42,7 +42,7 @@ Reason: the product's direction: a minimal context layer for agents
 
 Reason: a product design decision
 
-> The git export was built, verified and removed the same day. It was not a backup — it covered no auth, override, probe or derived state — and not an audit trail, because snapshot diffs cannot say who or when. Auditing's real answer is the `graph_event` table beside `auth_event`, which shipped on 2026-08-24 with one enforced writer, `app.record_graph_event`.
+> The git export was built, verified and removed the same day. It was not a backup — it covered no auth, override, probe or derived state — and not an audit trail, because snapshot diffs cannot say who or when. Auditing's real answer is the `graph_event` table beside `auth_event`, which shipped on 2026-08-24 with one enforced writer, `deps.record_graph_event`.
 
 ### `atlas-backend:postgres-is-authoritative` (constraint): Nothing Atlas owns lives outside the Atlas database
 
@@ -108,7 +108,7 @@ Reason: the product's id scheme
 
 Reason: the world vocabulary (ADR 0030)
 
-> It is the product decomposition. Not ownership, not a permission grammar, and not deployment — where something runs is `hosted_on`'s job. A thing that is not a part of the product does not get a `contains` edge, however convenient the nesting looks.
+> It is the product decomposition, with one stated exception: the environments an install operates beside live (staging, a fork, CI runners) sit under `atlas-ops` so they can be found. Their running instances are excluded from export; the grouping nodes ship only as a generic example of how to set such environments up. Not ownership, not a permission grammar, and not where something runs — that is `hosted_on`'s job. Anything else that is not a part of the product does not get a `contains` edge, however convenient the nesting looks.
 
 ### `atlas-world-model:node-holds-open-work` (constraint): Count OPEN workitems, and never let a count trigger a split
 

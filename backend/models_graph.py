@@ -267,9 +267,10 @@ class NodeType(Base):
 # wiring it into the write path is a separate, later decision.
 #
 # `pairs` is a LIST of [src_family, dst_family] pairs, not two columns,
-# because `contains` genuinely has THREE valid pairs today and shares one
-# string between all of them until TASK-1030 gives the work hierarchy its own
-# edge type (see `WORK_HIERARCHY_EDGE_TYPE` below): `["object","object"]` for
+# because `contains` genuinely has THREE valid pairs and shares one string
+# between all of them, permanently (the work hierarchy's own edge type,
+# TASK-1030, was cancelled on 2026-08-27; see `WORK_HIERARCHY_EDGE_TYPE`
+# below): `["object","object"]` for
 # the world hierarchy, `["workitem","workitem"]` for the work hierarchy, and
 # `["object","bridge"]` for a capability containing a skill (the
 # `seat-practice` -> `skill-homelab-ops` row, measured live 2026-08-26 — the
@@ -656,7 +657,7 @@ class NodeDoc(Base):
 #
 # `node_id` IS THE OWNER, NOT THE SCOPE. This row records where the intent
 # LIVES. Who is bound by it is derived by walking `contains` DOWNWARD from
-# here, at read time, every time (`app._intents_for`). There is deliberately
+# here, at read time, every time (`routers/nodes._intents_for`). There is deliberately
 # no denormalised copy on descendants: one edit to `atlas` would then have to
 # rewrite 28 rows, and they drift apart the first time that write half-fails
 # — which is the `status_override` lesson, and the reason that table is gone.
@@ -1588,8 +1589,10 @@ def validate_node(session: Session, n: Node) -> None:
         ) from e
 
 
-#: The work hierarchy's edge type — epic contains story contains task. Renamed
-#: to `decomposes_into` by TASK-1030, at which point this one line is the change.
+#: The work hierarchy's edge type — epic contains story contains task. It is
+#: `contains`, shared with the world hierarchy for good: the rename to
+#: `decomposes_into` (TASK-1030) was cancelled on 2026-08-27. One constant all
+#: the same, so the work hierarchy's edge is named in one place.
 #:
 #: It lives HERE rather than in app.py because `attention.py` needs it too
 #: (effective_bindings walks parent links between workitems) and cannot import

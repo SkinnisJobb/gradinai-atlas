@@ -402,17 +402,11 @@ jobs:
       # stylesheet, and the board shell. Deliberately NOT every file under
       # frontend/:
       #
-      #   - `index.html` is the superseded v0 tree view. It is UNREACHABLE: no
-      #     route, and the /static mount that served it is deleted.
-      #   - `login.html`, `logout.html` and `change-password.html` are NOT
-      #     rendered from disk at all — the live login form, forced-change page,
-      #     /auth/denied and /auth/privacy come from the `_PAGE` string template
-      #     inline in backend/auth.py. So requiring these files in the allowlist
-      #     would fail this job for a correct tree. (Re-checked 2026-08-25:
-      #     `auth.py` DOES name `login.html` once, in a comment; nothing routes
-      #     to any of the three. The comment used to say TASK-969 owned them,
-      #     but that task is done — they are orphaned, not pending. Whether to
-      #     delete them is not this job's call.)
+      #   - `landing.html` is served at `/` by its own route, not from /assets.
+      #   - the login form, forced-change page, /auth/denied and /auth/privacy
+      #     are not files at all: they come from the `_PAGE` string template
+      #     inline in backend/auth.py. (The orphaned `index.html`, `login.html`,
+      #     `logout.html` and `change-password.html` were deleted 2026-11-10.)
       #
       # Widening this glob without checking how a file is served is how a gate
       # starts crying wolf, and a gate people learn to ignore is worse than none.

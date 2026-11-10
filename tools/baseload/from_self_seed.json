@@ -487,13 +487,13 @@
       "preview": "**Graph writes ARE audited now** — `graph_event`, built 2026-08-24 (TASK-1045), beside ..."
     },
     {
-      "sha": "352bf8c95c11b6fe",
+      "sha": "b27ec7f942a93174",
       "from": "atlas-graph",
       "field": "detail",
       "to": "atlas-system-graph",
       "into": "detail",
       "review": "pending",
-      "preview": "**Known gap, filed and open:** there is no migration tooling (TASK-1015). Every ..."
+      "preview": "No Alembic, by decision (TASK-1015, 2026-08-16); `atlas-migrate upgrade` wraps the ..."
     },
     {
       "sha": "de0414bebe194c53",
@@ -1387,7 +1387,7 @@
       "preview": "**Two counting traps.** Count workitems per node with `NOT EXISTS`, never a `LEFT JOIN` ..."
     },
     {
-      "sha": "48b6165aec9d112e",
+      "sha": "8ceb8242a666ca36",
       "from": "atlas-world-model",
       "field": "detail",
       "to": "atlas-system-graph",

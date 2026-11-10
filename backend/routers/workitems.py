@@ -52,17 +52,17 @@ from deps import (
 
 router = APIRouter()
 
-#: The work-HIERARCHY edge type (epic contains story contains task) — `contains`
-#: today, renamed to `decomposes_into` once STORY-atlas-work-world-vocabulary
-#: (TASK-1030) lands. ONE constant so that rename is a one-line change here,
-#: not four call sites across create_workitem/patch_workitem.
+#: The work-HIERARCHY edge type (epic contains story contains task) — `contains`,
+#: shared with the world hierarchy for good: the rename to `decomposes_into`
+#: (TASK-1030) was cancelled on 2026-08-27. ONE constant all the same, named in
+#: one place rather than at four call sites across create_workitem/patch_workitem.
 #:
 #: Deliberately NOT folded into EDGE_FAMILY_RULES above: that dict is keyed by
 #: the edge-type STRING, and `contains` already holds an ("object", "object")
 #: rule there for the WORLD hierarchy (see that rule's own comment) — reusing
 #: the same key for the WORK hierarchy would silently overwrite or conflict
-#: with it, since both hierarchies share one string until TASK-1030 gives the
-#: work side its own. Until then, the routes below enforce this rule directly
+#: with it, since both hierarchies share one string. So the routes below
+#: enforce this rule directly
 #: (via `_check_family`), scoped to just the parent edge they create — never
 #: through EDGE_FAMILY_RULES, and never through generic POST /api/edge (which
 #: is why an existing epic/story/task `contains` edge, world OR work, is left
@@ -71,7 +71,7 @@ router = APIRouter()
 #: Defined in models_graph so `attention.py` can use it too without importing
 #: app (app imports attention, so that direction is a cycle). Re-exported here
 #: because every existing reference in this file — and the comment above — names
-#: it unqualified, and TASK-1030's rename must still be a one-line change.
+#: it unqualified.
 WORK_HIERARCHY_EDGE_TYPE = models_graph.WORK_HIERARCHY_EDGE_TYPE
 WORK_HIERARCHY_FAMILY_RULE: tuple[str, str] = ("workitem", "workitem")
 
@@ -770,8 +770,8 @@ def vocabulary(schemas: str = "full") -> dict | JSONResponse:
             # enforced only inline in create_workitem/patch_workitem — never
             # through EDGE_FAMILY_RULES or generic POST /api/edge. See the
             # comment on WORK_HIERARCHY_EDGE_TYPE above for why the two
-            # cannot share one dict entry until TASK-1030 gives the work
-            # hierarchy its own edge-type string.
+            # cannot share one dict entry while both hierarchies use the
+            # one edge-type string.
             "notes": {
                 WORK_HIERARCHY_EDGE_TYPE: (
                     f"the rule above for {WORK_HIERARCHY_EDGE_TYPE!r} is the WORLD-hierarchy "

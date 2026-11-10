@@ -131,9 +131,14 @@ people, an agent token and data, takes a backup with `atlas-admin backup run`, t
 new checkout built from source on the same `.env`, `secrets/` and volumes, with `release.yml`
 dropped from `COMPOSE_FILE`. It checks the schema step, every table's row count against the
 count before the backup, a dry-run restore of the old backup with the new backup image, the
-collation check, and that the old passwords, agent token and data still work. With no previous
-release the job is skipped. *Untested:* upgrading from one released image set to the next (step 4
-with a newer `release-images.env`) and rolling back; rehearse those on a copy first.
+collation check, and that the old passwords, agent token and data still work. The previous
+release is the newest published release of this repository (pre-releases included, drafts
+never), not the newest tag: its tree is fetched at that tag, its `release-images.env` read from
+that release, and its public images pulled with no registry login. The repository variables
+`UPGRADE_FROM_REPO` and `UPGRADE_FROM_TAG` change the repository (a fork pointing at the one it
+follows) or pin a release. With no published release the job is skipped. *Untested:* upgrading from one
+released image set to the next (step 4 with a newer `release-images.env`) and rolling back;
+rehearse those on a copy first.
 
 ## Cutting a release
 
