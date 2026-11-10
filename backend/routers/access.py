@@ -179,7 +179,8 @@ def get_access() -> JSONResponse:
             select(GraphEdge.dst).where(GraphEdge.edge_type == "contains")).all())
         # WORLD NODES ONLY. "A root" is derived as "no incoming `contains`", and
         # every EPIC satisfies that — the work hierarchy shares the edge type
-        # with the world one until `decomposes_into` lands (TASK-1030). Without
+        # with the world one, permanently (`decomposes_into`, TASK-1030, was
+        # cancelled on 2026-08-27). Without
         # this the grid offers a visibility switch per epic, under a column
         # headed "Project", which is both noise and a control nobody wants.
         # Access is administered over the world tree; work reaches it by

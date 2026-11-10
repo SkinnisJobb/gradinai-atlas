@@ -267,6 +267,33 @@ def section_b(client, csrf: str) -> None:
     check("patching a slug onto one that already exists on the node is a 409",
           r.status_code == 409, r.text[:200])
 
+    # `title` and `source` are String(200). Over the bound, the value used to reach
+    # Postgres and come back as a 500; it is a 400 naming the field now, and the
+    # bound itself is accepted (the comparison is perturbed by one character).
+    for field in ("source", "title"):
+        over, at = "s" * 201, "s" * 200
+        extra = {"title": "T", "source": None}
+        r = post({"slug": f"long-{field}", "kind": "principle", "statement": "Y",
+                  **{**extra, field: over}})
+        check(f"create: a 201-char {field} is a 400 naming `{field}`, not a 500",
+              r.status_code == 400 and r.json().get("field") == field, r.text[:200])
+        with app.session() as s:
+            left = s.scalars(select(NodeIntent).where(NodeIntent.node_id == "i-write",
+                                                      NodeIntent.slug == f"long-{field}")).all()
+        check(f"…and nothing was written", left == [], str(left))
+        r = post({"slug": f"long-{field}", "kind": "principle", "statement": "Y",
+                  **{**extra, field: at}})
+        check(f"create: a 200-char {field} is accepted and stored whole",
+              r.status_code == 201 and r.json().get(field) == at, r.text[:200])
+        r = client.patch(f"/api/intent/{first_id}", json={field: over, "csrf_token": csrf},
+                         headers={"Origin": TEST_ORIGIN})
+        check(f"patch: a 201-char {field} is a 400 naming `{field}`",
+              r.status_code == 400 and r.json().get("field") == field, r.text[:200])
+        r = client.patch(f"/api/intent/{first_id}", json={field: at, "csrf_token": csrf},
+                         headers={"Origin": TEST_ORIGIN})
+        check(f"patch: a 200-char {field} is accepted",
+              r.status_code == 200 and r.json().get(field) == at, r.text[:200])
+
     r = client.request("DELETE", f"/api/intent/{second_id}",
                        json={"csrf_token": csrf}, headers={"Origin": TEST_ORIGIN})
     check("delete returns 200", r.status_code == 200, r.text[:200])

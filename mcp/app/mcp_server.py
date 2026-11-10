@@ -15,8 +15,9 @@ Every tool returns the uniform envelope from envelope.py:
   success -> {"ok": True,  "result": <...>}
   failure -> {"ok": False, "error": {"type": <code>, "message": <str>}}
 
-TASK-1077 ships exactly ONE tool, `atlas_health`. Later tasks in EPIC-atlas-mcp own
-the rest of the Atlas verb surface — do not add more here.
+This module registers one tool itself, `atlas_health` (history: TASK-1077 shipped it
+alone). The rest of the verb surface lives in the `tools_*.py` modules registered below,
+one module per area; a new tool goes in the module for its area.
 """
 
 from mcp.server.fastmcp import FastMCP

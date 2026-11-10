@@ -2,10 +2,11 @@
 // views/panel/panel.js — the node panel (EPIC-atlas-node-panel-v2): a
 // full-height dashboard for whatever is selected.
 //
-// The head is drawn at once from the graph index. The tabs are the legacy
-// panel's minus Work, which the work board replaces: Overview, Intent,
-// History, Docs and Links. Their bodies come from `/api/node/{id}`, fetched
-// once per selection.
+// The head is drawn at once from the graph index. The tabs are those in
+// `TABS` below: Overview, Intent, Comments, History, Docs, Links, Decisions
+// and Configuration (the legacy panel's Work tab is gone; the work board
+// replaces it). Overview, Intent and Links come from `/api/node/{id}`,
+// fetched once per selection.
 // - History reads `/api/events` on first open.
 // - Comments (an epic, story or task only) are counted by one probe per
 //   selection, for the badge, and read in full when the tab opens.

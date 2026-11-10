@@ -1050,7 +1050,7 @@ NODES = [
                 "content": (
                     "# `atlas_health`\n"
                     "\n"
-                    "Is atlas-api up? Returns node and edge counts as a plausibility check.\n"
+                    "Is atlas-api up? Returns /api/health: node, edge and event counts as a plausibility check, plus token, undocumented-asset, name, edge-type and certificate warnings and the deploy status (normally all empty).\n"
                     "\n"
                     "No parameters.\n"
                     "\n"
@@ -1602,7 +1602,7 @@ NODES = [
                 "content": (
                     "# `atlas_file_work`\n"
                     "\n"
-                    "Create a workitem (a type atlas_capabilities lists) with its acceptance, parent, binding, depends_on, priority (low|medium|high|critical) and labels in one transaction. A task's id is minted; an epic or story needs a slug id. `body` is the spec, never a result. Suggest a binding, do not guess one. Decisions are raised with a dedicated tool, not here. More: tools guide.\n"
+                    "Create a workitem (a type atlas_capabilities lists) with its acceptance, parent, binding, depends_on, priority (low|medium|high|critical) and labels in one transaction. A task's id is minted; an epic or story needs a slug id. `body` is the spec, never a result. Suggest a binding, do not guess one. Decisions are not filed here; their tool is not built yet. More: tools guide.\n"
                     "\n"
                     "| Parameter | Type | Required | Default |\n"
                     "|---|---|---|---|\n"
@@ -7864,9 +7864,14 @@ NODES = [
                     "new checkout built from source on the same `.env`, `secrets/` and volumes, with `release.yml`\n"
                     "dropped from `COMPOSE_FILE`. It checks the schema step, every table's row count against the\n"
                     "count before the backup, a dry-run restore of the old backup with the new backup image, the\n"
-                    "collation check, and that the old passwords, agent token and data still work. With no previous\n"
-                    "release the job is skipped. *Untested:* upgrading from one released image set to the next (step 4\n"
-                    "with a newer `release-images.env`) and rolling back; rehearse those on a copy first.\n"
+                    "collation check, and that the old passwords, agent token and data still work. The previous\n"
+                    "release is the newest published release of this repository (pre-releases included, drafts\n"
+                    "never), not the newest tag: its tree is fetched at that tag, its `release-images.env` read from\n"
+                    "that release, and its public images pulled with no registry login. The repository variables\n"
+                    "`UPGRADE_FROM_REPO` and `UPGRADE_FROM_TAG` change the repository (a fork pointing at the one it\n"
+                    "follows) or pin a release. With no published release the job is skipped. *Untested:* upgrading from one\n"
+                    "released image set to the next (step 4 with a newer `release-images.env`) and rolling back;\n"
+                    "rehearse those on a copy first.\n"
                     "\n"
                     "## Cutting a release\n"
                     "\n"
@@ -9390,7 +9395,7 @@ INTENTS = [
         "slug": "oss-work-graph",
         "kind": "outcome",
         "title": "A self-hostable, open-source work and context layer for humans and their agents",
-        "statement": "Atlas is self-hostable and open source. The core is the work: the work hierarchy (Epic > Feature > Story > Task > Sub-task), the board, a REST API and an MCP server, so an agent reads and writes the same work a person sees, within limits a person sets. Everything else is an add-on an install turns on when it needs it: context retrieval, single sign-on, guardrails, CI integration. The source is open and Atlas documents itself, so a team can change Atlas with its own agents. The product ships without anyone's world in it: an instance is configuration and data, never code.",
+        "statement": "Atlas is self-hostable and open source. The core is the work: the work hierarchy (Epic > Story > Task), the board, a REST API and an MCP server, so an agent reads and writes the same work a person sees, within limits a person sets. Everything else is an add-on an install turns on when it needs it: semantic retrieval, single sign-on, guardrails, CI integration. The source is open and Atlas documents itself, so a team can change Atlas with its own agents. The product ships without anyone's world in it: an instance is configuration and data, never code.",
     },
     {
         "node_id": "atlas-system-postgres",
@@ -9432,7 +9437,7 @@ INTENTS = [
         "slug": "contains-is-part-of",
         "kind": "principle",
         "title": "`contains` means \"is part of\" — nothing else",
-        "statement": "It is the product decomposition. Not ownership, not a permission grammar, and not deployment — where something runs is `hosted_on`'s job. A thing that is not a part of the product does not get a `contains` edge, however convenient the nesting looks.",
+        "statement": "It is the product decomposition, with one stated exception: the environments an install operates beside live (staging, a fork, CI runners) sit under `atlas-ops` so they can be found. Their running instances are excluded from export; the grouping nodes ship only as a generic example of how to set such environments up. Not ownership, not a permission grammar, and not where something runs — that is `hosted_on`'s job. Anything else that is not a part of the product does not get a `contains` edge, however convenient the nesting looks.",
     },
     {
         "node_id": "atlas-system-graph",

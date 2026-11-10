@@ -11,11 +11,13 @@ in Atlas and changes without a deploy, and every client gets the same steps
 whether or not it has the seat-toolkit plugin. Pointer, not payload (intent
 `context-minimal`): the agent reads it with `atlas_doc_read` once.
 
-`actor=me` is THIS SERVICE'S credential. Through AgentGateway every caller
-shares it, so `writes` is every caller's writes through the gateway, not one
-conversation's; the procedure document says so, because the agent has to check
-each write against its own conversation. A contributor running their own instance
-with their own token sees only their own writes.
+`actor=me` is the CALLER'S credential: each caller sends its own Bearer token,
+which the request carries through to atlas-api (caller_auth.py, client.py), so
+`writes` is the writes that token made, not every caller's. One token is still not
+one conversation -- two sessions on the same credential see each other's writes --
+so the procedure document still has the agent check each write against its own
+conversation. Only the opt-in shared fallback (ATLAS_MCP_ALLOW_SHARED_TOKEN) puts
+several callers on one identity again.
 
 The DESCRIPTION (app/descriptions.py) is one sentence: how and when to use the tool lives in the
 procedure document it points at, and in the callers' own instructions (the seat-toolkit `signoff`

@@ -28,7 +28,7 @@ In the tables, *omitted* means the parameter has no default in the schema: leavi
 
 ### `atlas_health`
 
-Is atlas-api up? Returns node and edge counts as a plausibility check.
+Is atlas-api up? Returns /api/health: node, edge and event counts as a plausibility check, plus token, undocumented-asset, name, edge-type and certificate warnings and the deploy status (normally all empty).
 
 No parameters.
 
@@ -183,7 +183,7 @@ No parameters.
 
 ### `atlas_file_work`
 
-Create a workitem (a type atlas_capabilities lists) with its acceptance, parent, binding, depends_on, priority (low|medium|high|critical) and labels in one transaction. A task's id is minted; an epic or story needs a slug id. `body` is the spec, never a result. Suggest a binding, do not guess one. Decisions are raised with a dedicated tool, not here. More: tools guide.
+Create a workitem (a type atlas_capabilities lists) with its acceptance, parent, binding, depends_on, priority (low|medium|high|critical) and labels in one transaction. A task's id is minted; an epic or story needs a slug id. `body` is the spec, never a result. Suggest a binding, do not guess one. Decisions are not filed here; their tool is not built yet. More: tools guide.
 
 | Parameter | Type | Required | Default |
 |---|---|---|---|

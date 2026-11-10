@@ -1697,15 +1697,11 @@ def _prune_sessions(s: Session) -> None:
 # behind any of them.
 #
 # `frontend/login.html`, `frontend/logout.html` and `frontend/change-password.html`
-# exist in the repo and NOTHING ROUTES TO THEM. They are unreachable: the
-# `/static` mount that once served them is deleted (TASK-967,
-# `verify_object_graph.py` asserts it stays deleted), and they are not in
-# `ASSET_FILES`. An earlier version of this comment said "TASK-969 owns
-# `login.html`, the forced-change page and the app bar's account slot", which
-# read as scheduled work; **TASK-969 is `done`** (closed 2026-07-31) and left
-# those three files behind unreferenced. So nothing owns them — whether to
-# delete them or keep `login.html` as the basis for a future CSP-friendly page
-# is an open question for the owner, not a fact this comment can settle.
+# (and the v0 tree view, `frontend/index.html`) were deleted on 2026-11-10 by
+# owner decision; git history has them. Nothing had routed to them since the
+# `/static` mount was deleted (TASK-967, `verify_object_graph.py` asserts it
+# stays deleted), they were never in `ASSET_FILES`, and TASK-969, which once
+# owned the login screens, closed 2026-07-31 without wiring them.
 #
 # Everything here is deliberately self-contained: no external stylesheet, no
 # script, no vendored asset — which is also why `/assets/*` does not need to be

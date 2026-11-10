@@ -379,9 +379,10 @@ def _update_work_impl(
 
     # Read-before-write: a before-image of every field this call might
     # change, fetched in ONE call before any PATCH goes out. Not an
-    # audit trail (graph_event is filed and deliberately unscheduled,
-    # and nothing here is stored) — purely something this session can
-    # restore from if the PATCH turns out to be a mistake.
+    # audit trail (atlas-api records that itself, in graph_event via
+    # deps.record_graph_event; nothing here is stored) — purely
+    # something this session can restore from if the PATCH turns out
+    # to be a mistake.
     before: dict | None = None
     if touching_four or result_touched or parent_touched:
         node = client.get("/api/node/" + id)
@@ -418,8 +419,8 @@ def _update_work_impl(
     if set_acceptance:
         # atlas-api's PATCH treats an explicit `"acceptance": null` and
         # `"acceptance": []` the same way — both clear the list (backend/
-        # app.py's patch_workitem checks presence before popping the key,
-        # since TASK-1101). This tool always sends a concrete list rather
+        # routers/workitems.py's patch_workitem checks presence before
+        # popping the key, since TASK-1101). This tool always sends a concrete list rather
         # than a bare `null` regardless, so the wire value is unambiguous
         # whichever atlas-api version is on the other end.
         patch["acceptance"] = acceptance if acceptance is not None else []

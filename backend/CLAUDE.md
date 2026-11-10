@@ -94,8 +94,7 @@ symbol to read before which change.**
 **`auth.PUBLIC_ROUTES` is the entire unauthenticated surface**, pinned exactly by
 `verify_object_graph.py` so an addition gets reviewed. **`/` is on that
 list but is not one fixed response** — the handler renders `frontend/landing.html` for a stranger and
-302s a signed-in browser to `/board`, which is itself gated. The four ORPHANED `frontend/*.html`
-files that pair with it are in `frontend/CLAUDE.md`.
+302s a signed-in browser to `/board`, which is itself gated.
 
 **Accounts, credentials, boot secrets.** `docker exec atlas-api python -m admin user add <name>
 --role owner|member` mints a person; secrets print once, reset is admin-driven, there is no mail

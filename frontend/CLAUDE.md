@@ -158,8 +158,6 @@ directory. Nothing here was rewritten on the way.
   The obvious fix for the mixed capitalisation is an uppercase-first transform in `map.js`, and it is
   WRONG twice over: `node_types.PROSE_NAME_TYPES` says why, and `name_register_warnings()` **reports**
   on `/api/health` rather than transforming.
-- **Four `frontend/*.html` files are ORPHANED and stay that way** (`login.html`, `logout.html`,
-  `change-password.html`, `index.html`); the live auth pages are a string template in `auth.py`, and
-  these are kept by decision, so do not delete one on the strength of a briefing sentence.
+- The orphaned `login.html`, `logout.html`, `change-password.html` and `index.html` were removed on 2026-11-10; the auth pages are `_PAGE` in `auth.py`.
 - **`navigator.clipboard` needs a secure context, and both copy paths need genuine user activation**,
   so a scripted `.click()` reports a false failure. See the copy handler in `frontend/settings.js`.

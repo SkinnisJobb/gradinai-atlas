@@ -607,9 +607,10 @@ def effective_bindings(session: Session) -> dict[str, str]:
     Returns {workitem_id: object_id}. A workitem with no bound ancestor is
     absent from the map rather than present with None — callers iterate it.
 
-    Note the work hierarchy still shares the `contains` edge type with the world
-    hierarchy until TASK-1030 gives it `decomposes_into`, which is exactly why
-    both endpoints are family-checked below rather than trusting the edge type.
+    Note the work hierarchy shares the `contains` edge type with the world
+    hierarchy, permanently (a separate `decomposes_into`, TASK-1030, was
+    cancelled on 2026-08-27), which is exactly why both endpoints are
+    family-checked below rather than trusting the edge type.
     """
     fam = {nt.id: nt.family for nt in session.scalars(select(NodeType)).all()}
     node_type = {n.id: n.type for n in session.scalars(select(Node)).all()}

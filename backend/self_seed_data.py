@@ -12,11 +12,9 @@ PROFILE = {
             "id": "atlas",
             "type": "project",
             "name": "Atlas",
-            "summary": "Project Atlas — one node/edge store in Postgres, rendered as three views: the world tree of what exists, the work tree of what is being done about it, and Mine, the work assigned to one person.",
+            "summary": "A self-hostable work and context layer for people and their agents: one node/edge graph in Postgres, shown on a board as a world graph, a work board and a node panel, and reached by API and MCP.",
             "abstract": (
-                "**Atlas is one graph, shown three ways.** A single node/edge store in Postgres renders as the\n"
-                "**world tree** — what exists and how it relates — the **work tree**, the backlog, and **Mine**, the\n"
-                "work assigned to one account. The two trees live in the same tables and differ only by the family of\n"
+                "**Atlas is one graph, shown three ways.** A single node/edge store in Postgres renders as the **world graph** — what exists and how it relates — the **work board**, the backlog scoped by it, and **Mine**, the work assigned to one account. The two trees live in the same tables and differ only by the family of\n"
                 "their node type, which is why a workitem can bind to a world node and why work rolls up while intent\n"
                 "rolls down. Mine is a list rather than a third tree, and any signed-in account may open any other\n"
                 "account's list.\n"
@@ -41,7 +39,14 @@ PROFILE = {
                 "caller kind, where state lives and what deliberately has none, and a map of the repo and its\n"
                 "configuration.\n"
                 "\n"
-                "Decisions live in `docs/adr/` in the `project-atlas` repo — one repo per world root, per ADR 0031."
+                "Decisions live in `docs/adr/` in the `project-atlas` repo — one repo per world root, per ADR 0031.\n"
+                "\n"
+                "**The open-source repository.** Atlas is published on GitHub as `gradinai-atlas` (Apache-2.0,\n"
+                "copyright GradinAI). It is the **upstream**: the original that releases are cut from and that\n"
+                "contributions go to. It was created once by `tools/carve/export.sh` as a single scrubbed commit, with no\n"
+                "history from `project-atlas`. `project-atlas` is the owner's own downstream installation — the homelab\n"
+                "deployment with its private history and files — and takes new versions from the public repository like\n"
+                "any other install. The carve-out is STORY-oss-23-carve-out."
             ),
             "docs": [
                 {
@@ -581,20 +586,27 @@ PROFILE = {
             ],
         },
         {
+            "id": "atlas-adr-registry",
+            "type": "capability",
+            "name": "ADR registry",
+            "summary": "The registry of architecture decision records: one table that indexes ADR files synced from git and holds decisions made in Atlas, with per-project ids and the project's visibility.",
+            "docs": [],
+        },
+        {
             "id": "atlas-api",
             "type": "service",
             "name": "atlas-api",
-            "summary": "FastAPI backend serving Project Atlas's node/edge graph and board UI, over a read and write API. Boot is a READ: nothing at startup ingests a file — the graph lives in Postgres and changes only through the API. Depends on atlas-postgres.",
+            "summary": "Atlas's FastAPI process: the JSON read and write API over the node/edge graph in Postgres, plus the sign-in pages, the board and the handbook, all behind one authorization gate.",
             "abstract": (
-                "atlas-api is Project Atlas's backend and API layer — a single-file FastAPI service (`project-atlas/backend/app.py`) that owns the read and write path over the graph. It is the **backend**, not the UI: `atlas-board-shell` and its siblings own client-side rendering; atlas-api serves JSON plus the HTML entry points (`/`, `/board`) the frontend attaches to.\n"
+                "atlas-api is Project Atlas's backend and API layer — a FastAPI service (`backend/main.py`, routes in `backend/routers/<area>.py`; `app.py` is a compatibility shim) that owns the read and write path over the graph. It is the **backend**, not the UI: `atlas-board-shell` and its siblings own client-side rendering; atlas-api serves JSON plus the HTML entry points (`/`, `/board`) the frontend attaches to.\n"
                 "\n"
-                "**Boot is a READ.** It used to re-ingest the backlog directory and the world manifest on every startup and reconcile the node/edge store against them; both ingests are deleted. The graph lives in Postgres and changes only through the write API, so nothing at startup opens a file. The one thing boot still writes is the `node_type` registry, which is schema rather than data.\n"
+                "**Boot is a READ.** It used to re-ingest the backlog directory and the world manifest on every startup and reconcile the node/edge store against them; both ingests are deleted. The graph lives in Postgres and changes only through the write API, so nothing at startup opens a file. Boot reads no file and never overwrites graph data. What it does write is schema-shaped: the `node_type` and `edge_type` registries and the `task_id_seq` floor, every boot; on an empty graph, the seed the install's `ATLAS_SEED` profile names (homelab v0 tables, demo, self, plus the system node).\n"
                 "\n"
-                "Its headline read endpoint is `GET /api/graph?focus&depth&edges&cap` — a bounded-neighbourhood BFS over the node/edge store (both directions, no fixed root), which is the read path the context-economy / agent-retrieval model is built on. `GET /api/graph/tree` projects the same store through `contains` edges only, for tree rendering. `GET /api/tree` is the older, still-served v0 Component-tree read with hand-derived RAG rollup.\n"
+                "Its headline read endpoint is `GET /api/graph?focus&depth&edges&cap` — a bounded-neighbourhood BFS over the node/edge store (both directions, no fixed root), which is the read path the context-economy / agent-retrieval model is built on. `GET /api/graph/tree` projects the same store through `contains` edges only, for tree rendering. `GET /api/tree` is the older v0 Component-tree read with hand-derived RAG rollup, kept for compatibility; 404 when `ATLAS_LEGACY_V0=0` (default on in this distribution, off in the neutral copy).\n"
                 "\n"
-                "Depends on **atlas-postgres** for every read and write — `docker-compose.yml` encodes this via `depends_on: {atlas-postgres: {condition: service_healthy}}`. Healthy means `GET /api/health` returns `{\"ok\": true}` and atlas-postgres is up; if the database is down, atlas-api's own health should be read as degraded even though the FastAPI process itself may still be running."
+                "Depends on **atlas-postgres** for every read and write — `docker-compose.yml` encodes this via `depends_on: {atlas-postgres: {condition: service_healthy}}`. Liveness is `GET /healthz` (no DB); readiness is `GET /readyz`, which fails when atlas-postgres is unreachable. `/api/health` is an authenticated read of counts and drift reports, not a health verdict."
             ),
-            "detail": "See `docs/nodes/atlas-api/architecture.md` (this node's Docs tab) for the full request-path diagram and the boot sequence, and `docs/nodes/atlas-api/api.md` for the endpoint reference. Operationally it is a single Python process in one Docker container (`backend/Dockerfile`, built from the `project-atlas` repo root), stateless itself — all state lives in atlas-postgres — so redeploying it is a plain container recreate with no data-migration concerns on this side. The schema-reconcile step at startup (`_reconcile_graph_schema`, additive `ALTER TABLE ... ADD COLUMN` only) is a migration shim, not a full migration tool; see the code comment beside it in `app.py` for its scope and limits.",
+            "detail": "See `docs/nodes/atlas-api/architecture.md` (this node's Docs tab) for the full request-path diagram and the boot sequence, and `docs/nodes/atlas-api/api.md` for the endpoint reference. Operationally it is a single Python process in one Docker container (`backend/Dockerfile`, built from the `project-atlas` repo root), stateless itself — all state lives in atlas-postgres — so redeploying it is a plain container recreate with no data-migration concerns on this side. The schema-reconcile step at startup (`_reconcile_graph_schema`, additive `ALTER TABLE ... ADD COLUMN` only) is a migration shim, not a full migration tool; see the code comment in its docstring in `main.py` for its scope and limits.",
             "docs": [
                 {
                     "path": "docs/nodes/atlas-api/api.md",
@@ -646,8 +658,8 @@ PROFILE = {
                         "## `GET /api/tree`\n"
                         "\n"
                         "The **v0 Component tree** — hand-seeded/backlog-ingested architecture map with worst-child RAG rollup\n"
-                        "(🔴→🟠→🟡→🟢→🟣). Legacy path, predates the ADR 0019 node/edge graph; still served because the current\n"
-                        "frontend's original view reads it.\n"
+                        "(🔴→🟠→🟡→🟢→🟣). Legacy path, predates the ADR 0019 node/edge graph; kept for compatibility; 404 when\n"
+                        "`ATLAS_LEGACY_V0=0` (default on in this distribution, off in the neutral copy).\n"
                         "\n"
                         "- **Request:** no params.\n"
                         "- **Response `200`:** `{ \"roots\": [ <node>, ... ] }` where each `<node>` carries `id`, `name`, `category`,\n"
@@ -773,12 +785,9 @@ PROFILE = {
                         "\n"
                         "## The rest of the surface — an accurate inventory, not a reference\n"
                         "\n"
-                        "This document has never covered every route with a section of its own, and still does not. The\n"
-                        "sections above plus the tables below are the **complete list of what exists**, enumerated from\n"
-                        "`app.app.routes` rather than remembered, so that the gap is visible and nothing here is a lie by\n"
-                        "omission. Anything appearing only in a table has not had a doc pass; add one when it does. **If you\n"
-                        "add a route, add it here in the same change** — a list that claims to be exhaustive and is not is\n"
-                        "worse than one that never claimed it.\n"
+                        "This document has never covered every route with a section of its own, and still does not. For the\n"
+                        "complete route list, read `backend/routes.snapshot.txt` (checked in CI by `verify_routes.py`); this\n"
+                        "document details only the routes below.\n"
                         "\n"
                         "**Graph and work — reads**\n"
                         "\n"
@@ -840,8 +849,8 @@ PROFILE = {
                         "\n"
                         "## What this is\n"
                         "\n"
-                        "`atlas-api` is Project Atlas's **backend/API service** — a single-file FastAPI app\n"
-                        "(`project-atlas/backend/app.py`) that **reads** the graph out of Postgres and serves it to clients over\n"
+                        "`atlas-api` is Project Atlas's **backend/API service** — a FastAPI service (`backend/main.py`, routes\n"
+                        "in `backend/routers/<area>.py`; `app.py` is a compatibility shim) that **reads** the graph out of Postgres and serves it to clients over\n"
                         "HTTP. **There is no ingest**: nothing at startup opens a file or overwrites a row because a file said\n"
                         "so — see \"Startup: boot is a READ\" below, which the opening sentence of this document used to\n"
                         "contradict. It is **not** the UI: a separate `atlas-frontend` node owns the client-side rendering;\n"
@@ -906,9 +915,11 @@ PROFILE = {
                         "```mermaid\n"
                         "flowchart TD\n"
                         "    Start([\"container start\"]) --> Reconcile[\"schema reconcile<br/>(ALTER TABLE for new columns,<br/>CREATE INDEX for missing ones)\"]\n"
-                        "    Reconcile --> Types[\"node_types.ensure_*_node_types()<br/>→ node_type registry (the ONLY write)\"]\n"
-                        "    Types --> Seq[\"seed the TASK- id sequence\"]\n"
-                        "    Seq --> Serve([\"serve /api/* and /board\"])\n"
+                        "    Reconcile --> Types[\"node_types.ensure_*_node_types()<br/>→ node_type registry\"]\n"
+                        "    Types --> EdgeTypes[\"edge_type registry\"]\n"
+                        "    EdgeTypes --> Seq[\"seed the TASK- id sequence\"]\n"
+                        "    Seq --> Seed[\"first-boot seed (ATLAS_SEED)<br/>empty graph only\"]\n"
+                        "    Seed --> Serve([\"serve /api/* and /board\"])\n"
                         "```\n"
                         "\n"
                         "**Nothing at boot reads a markdown file or the world manifest, and nothing deletes or overwrites a graph\n"
@@ -920,8 +931,7 @@ PROFILE = {
                         "overwriting a board edit. `/api/health` therefore carries no `ingest_*` field either: a signal that\n"
                         "could only be permanently green or permanently red is one people learn to ignore.\n"
                         "\n"
-                        "The only thing startup still writes is the **`node_type` registry**, which is schema rather than data — a\n"
-                        "fresh database needs its type rows before anything can be inserted.\n"
+                        "Boot reads no file and never overwrites graph data. What it does write is schema-shaped: the `node_type` and `edge_type` registries and the `task_id_seq` floor, every boot; on an empty graph, the seed the install's `ATLAS_SEED` profile names (homelab v0 tables, demo, self, plus the system node).\n"
                         "\n"
                         "This is asserted, not assumed: `verify_object_graph.py` §15 snapshots every node id, status and body plus\n"
                         "the entire edge set, runs a second real `startup()`, and requires the result to be byte-identical.\n"
@@ -937,13 +947,297 @@ PROFILE = {
                         "  `condition: service_healthy`.\n"
                     ),
                 },
+                {
+                    "path": "docs/nodes/atlas-api/health-on-the-homelab.md",
+                    "kind": "architecture",
+                    "title": "health-on-the-homelab.md",
+                    "format": "md",
+                    "content": (
+                        "# Reading `/api/health` on the homelab\n"
+                        "\n"
+                        "Moved here from `backend/CLAUDE.md` (STORY-oss-23 A4, #287), because these commands name this\n"
+                        "estate's hosts and do not ship in the public repository.\n"
+                    ),
+                },
+            ],
+        },
+        {
+            "id": "atlas-api-group-access",
+            "type": "component",
+            "name": "Access API",
+            "summary": "The API's identity and access surface: sign-in, the caller's own account, access administration, and the audit and event trails.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-group-graph",
+            "type": "component",
+            "name": "Graph API",
+            "summary": "The API's core over the world graph: reading neighbourhoods, trees and paths, and creating, editing and deleting nodes, edges and intents.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-group-knowledge",
+            "type": "component",
+            "name": "Knowledge API",
+            "summary": "The API's written knowledge: the ADR registry, the documents attached to nodes, and the static handbook site.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-group-platform",
+            "type": "component",
+            "name": "Platform API",
+            "summary": "The API's install-level routes: health checks, the board and landing pages, configuration, the setup guide and crunch week.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-group-search",
+            "type": "component",
+            "name": "Search & context API",
+            "summary": "The API's finding routes: node search, the one-call context package for agents, and the optional semantic retrieval add-on's controls.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-group-work",
+            "type": "component",
+            "name": "Work API",
+            "summary": "The API's work-tracking routes: epics, stories and tasks, their comments and acceptance proposals, and the caller's own statistics.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-access",
+            "type": "component",
+            "name": "Access routes",
+            "summary": "Owner routes that administer who sees what: the access matrix, node visibility and grants, groups, project role bindings and GitHub repo access, plus the assignable-people list.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-adrs",
+            "type": "component",
+            "name": "ADR routes",
+            "summary": "The ADR registry's routes: list and fetch decision records by id or legacy number, and upsert or create them.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-assets",
+            "type": "component",
+            "name": "Board and asset routes",
+            "summary": "Serves the board page, the frontend's static assets and the bare domain, which shows the landing page to visitors and sends signed-in browsers to the board.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-audit",
+            "type": "component",
+            "name": "Audit export route",
+            "summary": "Owner-only export of the audit trail as JSON Lines, for a SIEM to collect graph changes, sign-in events and audited reads.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-auth",
+            "type": "component",
+            "name": "Sign-in routes",
+            "summary": "The browser sign-in pages and actions: password and SSO login, logout, password change, the privacy notice and the refusal page.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-comments",
+            "type": "component",
+            "name": "Comment routes",
+            "summary": "Routes for the conversation on an epic, story or task: list and post comments, edit your own, and hide one as author or owner.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-config",
+            "type": "component",
+            "name": "Configuration routes",
+            "summary": "Owner routes for the install's configuration: read every setting with its source, and, when board writes are enabled, change a safe one.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-context",
+            "type": "component",
+            "name": "Context route",
+            "summary": "Answers \"tell me about X\" in one bounded call: matching nodes, their neighbourhood and impact, intents, related ADRs and documents to read, all as pointers.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-crunch",
+            "type": "component",
+            "name": "Crunch week routes",
+            "summary": "Owner-session routes that turn crunch week on, extend or end it, plus the banner any signed-in browser reads; every token is refused.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-docs",
+            "type": "component",
+            "name": "Document routes",
+            "summary": "Routes that read, write and delete the documents attached to a node, shown in its Docs tab.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-edges",
+            "type": "component",
+            "name": "Edge routes",
+            "summary": "Write routes that create and delete typed edges between nodes.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-events",
+            "type": "component",
+            "name": "Event routes",
+            "summary": "Read routes for the change logs: who changed what in the graph, and the owner-only sign-in and access event trail.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-graph",
+            "type": "component",
+            "name": "Graph routes",
+            "summary": "Read routes over the graph as a whole: a bounded neighbourhood around a focus node, the contains tree, a compact outline, and the path between two nodes.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-handbook",
+            "type": "component",
+            "name": "Handbook site routes",
+            "summary": "Serves the Atlas handbook as a static site under /docs, from a fixed file list, gated unless public docs are switched on.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-health",
+            "type": "component",
+            "name": "Health routes",
+            "summary": "Health checks: unauthenticated liveness and readiness probes for infrastructure, and an authenticated health read with a few numbers.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-intents",
+            "type": "component",
+            "name": "Intent routes",
+            "summary": "Routes that list intents and add, edit or delete the intent constraints attached to a node.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-landing",
+            "type": "component",
+            "name": "Product site routes",
+            "summary": "Serves the product website's own files under /site/ with a strict content policy; mounted only when the newer landing page is selected.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-legacy",
+            "type": "component",
+            "name": "First-generation routes",
+            "summary": "The first-generation read routes over the old component tree (tree, summary, priority, goals), kept for compatibility and answering 404 when the legacy model is switched off.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-me",
+            "type": "component",
+            "name": "Account routes",
+            "summary": "The signed-in person's own account: setting a password, linking GitHub, and issuing, listing and revoking their agents' credentials.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-nodes",
+            "type": "component",
+            "name": "Node routes",
+            "summary": "Routes that read, create, edit and delete a single node, set its status, and return its structure.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-retrieval",
+            "type": "component",
+            "name": "Retrieval routes",
+            "summary": "Owner-only status and forced reindex for the semantic retrieval add-on; the routes exist only when the add-on is switched on.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-search",
+            "type": "component",
+            "name": "Search route",
+            "summary": "Searches every node, world and work alike, by full text or hybrid with semantic retrieval, returning only what the caller may see.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-setup",
+            "type": "component",
+            "name": "Setup guide routes",
+            "summary": "The first-run setup guide's API: where the guide stands, recording a topic's answers as a proposed ADR, and accepting it.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-stats",
+            "type": "component",
+            "name": "Personal statistics route",
+            "summary": "Read-only numbers for the caller's own dashboard: their task flow and their agents' writes, never anyone else's.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-api-route-workitems",
+            "type": "component",
+            "name": "Workitem routes",
+            "summary": "Routes that list, create and update epics, stories and tasks, handle acceptance proposals, and serve the work vocabulary.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-audit-trail",
+            "type": "capability",
+            "name": "Audit trail",
+            "summary": "The record of who did what: sign-in and credential events, graph changes, and an opt-in log of agent reads, exportable as JSON Lines with retention for reads.",
+            "abstract": "`atlas-audit-trail` owns **the record of who did what**: the sign-in and credential events in `auth_event`, the graph changes in `graph_event`, and the opt-in read audit in `audit_read` — reading them, exporting them (`GET /api/audit/export`, JSON Lines) and the retention of reads. Other parts only write their events into it: `atlas-identity` writes `auth_event`, and every graph write records its `graph_event`. The read audit, its retention and the export are described in `docs/nodes/atlas-audit-trail/read-audit.md`.",
+            "docs": [
+                {
+                    "path": "docs/nodes/atlas-audit-trail/read-audit.md",
+                    "kind": "architecture",
+                    "title": "Read audit",
+                    "format": "md",
+                    "content": (
+                        "# The read audit (STORY-oss-16)\n"
+                        "\n"
+                        "An opt-in record of agent reads, off unless configured. With it off, no read is recorded. The\n"
+                        "credential events written by `atlas-identity` (`auth_event`) and the graph changes (`graph_event`)\n"
+                        "are part of the same record and share the export below.\n"
+                        "\n"
+                        "## What is recorded\n"
+                        "\n"
+                        "With **`ATLAS_AUDIT_READS=1`**, an agent (service-token or IdP-token) read through a route that\n"
+                        "calls `audit_log.record_read` writes one `audit_read` row: `at`, `user_id` (the person behind the\n"
+                        "agent), `actor_user_id` / `actor_subject` (the agent), `token_id`, `tool`, `route`, the `node_ids`\n"
+                        "actually served, and `request_id`. Never the query text or the content. Browser sessions are not\n"
+                        "recorded. Off, the cost is one boolean check.\n"
+                        "\n"
+                        "It is recorded on the API side, because there the gate has resolved agent, credential and person,\n"
+                        "and the route has already decided which ids the caller may see; it also catches token callers that\n"
+                        "bypass the MCP. atlas-mcp adds two caller-asserted labels: `X-Atlas-Tool` (the tool name) and\n"
+                        "`X-Request-ID` (one id per tool call). **Fail closed:** if the row cannot be written, the caller gets\n"
+                        "a 500 and no content.\n"
+                        "\n"
+                        "Which routes record is in the code: `git grep record_read backend/routers`, and\n"
+                        "`backend/TESTING.md` says what each audit verify proves.\n"
+                        "\n"
+                        "## Table and retention\n"
+                        "\n"
+                        "`audit_read` lives in `backend/models_audit.py` on the auth metadata, so the normal schema path\n"
+                        "creates it and a reseed never drops it. **`ATLAS_AUDIT_RETENTION_DAYS`** with\n"
+                        "**`atlas-admin audit purge`**, run from cron (e.g. `0 3 * * * docker exec atlas-api atlas-admin\n"
+                        "audit purge`), deletes `audit_read` rows older than N days and nothing else; `graph_event` and\n"
+                        "`auth_event` are never purged. Unset = keep forever.\n"
+                        "\n"
+                        "## Export\n"
+                        "\n"
+                        "`GET /api/audit/export?since=&until=&kinds=` streams JSON Lines (`application/x-ndjson`): one object\n"
+                        "per line, oldest first across kinds, fixed keys per kind, keyset pages so nothing is held in memory.\n"
+                        "Allowed: an owner session, or an `admin`-scoped token whose linked person is a live owner (re-read\n"
+                        "on every call). Everyone else gets 403. No password, hash, token, session id or CSRF value is ever\n"
+                        "in it.\n"
+                    ),
+                },
             ],
         },
         {
             "id": "atlas-backend",
             "type": "system",
             "name": "Atlas backend",
-            "summary": "The API process, its store, and the capabilities they implement.",
+            "summary": "The server side of Atlas: the FastAPI process, its Postgres database, and the graph, work and knowledge capabilities they implement.",
             "abstract": (
                 "`atlas-backend` is a `system` node — the server side of Atlas named as one thing, so the rest of the tree can point at it without listing every child individually. It sits at level 2 of the `atlas` root beside `atlas-frontend`, `atlas-ingress`, `atlas-security`, `atlas-ops` and `atlas-mcp`, and it contains two kinds of child that are easy to confuse:\n"
                 "\n"
@@ -974,7 +1268,8 @@ PROFILE = {
                         "`atlas-backend` is a `system` node — the server half of Atlas named as one thing, at level 2 of\n"
                         "the `atlas` root beside `atlas-frontend`, `atlas-ingress`, `atlas-security`, `atlas-ops` and\n"
                         "`atlas-mcp` (ADR 0030). `contains` here is the product decomposition, not a deployment map: this\n"
-                        "node holds two runnables and five capabilities, and \"runs on the same box\" is a separate fact\n"
+                        "node holds two runnables and the capabilities, grouped under `atlas-backend-graph-work` and\n"
+                        "`atlas-backend-knowledge`, and \"runs on the same box\" is a separate fact\n"
                         "recorded on `hosted_on`, not on this tree.\n"
                         "\n"
                         "Process vs. policy is the split this grouping exists to make: a change to the service or its\n"
@@ -987,9 +1282,10 @@ PROFILE = {
                         "\n"
                         "**One process, one database, no queue and no cache in front of either.** `atlas-api` is a single\n"
                         "FastAPI application; `session()` (SQLAlchemy) is the only way any route touches\n"
-                        "`atlas-postgres`. There is no message broker, no background worker and no scheduled job anywhere\n"
-                        "in this system — every derived value is recomputed synchronously, inside the request that changed\n"
-                        "its inputs, by the same code path a curl or the board itself would drive.\n"
+                        "`atlas-postgres`. The core has no message broker, no background worker and no scheduled job —\n"
+                        "every derived value is recomputed synchronously, inside the request that changed its inputs. The\n"
+                        "opt-in add-ons are the exception: semantic retrieval runs one indexing thread inside atlas-api, and\n"
+                        "the opt-in `atlas-backup` container runs its own backup loop.\n"
                         "\n"
                         "```mermaid\n"
                         "flowchart LR\n"
@@ -1023,8 +1319,7 @@ PROFILE = {
                         "`ATLAS_REQUIRE_SECRET_FILES=1` refuses the plain variable. A required secret that is set but blank\n"
                         "(`NAME=` or whitespace) is an error that names the variable; it never silently selects a default\n"
                         "(TASK-1348). That is what stops a misconfigured deploy from reaching the wrong database: an empty\n"
-                        "`ATLAS_DB_URL` fails instead of falling back to the local one. Unset keeps today's default. The\n"
-                        "API's own database connection in `db.py` still reads `ATLAS_DB_URL` directly; TASK-1349 moves it.\n"
+                        "`ATLAS_DB_URL` fails instead of falling back to the local one. Unset keeps today's default.\n"
                         "\n"
                         "**Derivation is pulled forward to write time, not computed on read.** `attention.recompute_derived`\n"
                         "runs in the same unit of work as any write that changes status or edges — the workitem PATCH\n"
@@ -1088,10 +1383,73 @@ PROFILE = {
             ],
         },
         {
+            "id": "atlas-backend-graph-work",
+            "type": "component",
+            "name": "Graph & work",
+            "summary": "Groups the capabilities that store and give meaning to the graph and the work in it: the graph engine, the world model, the workitem store and the attention rollups.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-backend-knowledge",
+            "type": "component",
+            "name": "Knowledge",
+            "summary": "Groups the capabilities that hold and find Atlas's knowledge: node documentation, the ADR registry, and context & search, which holds full-text search and the opt-in semantic retrieval.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-backup",
+            "type": "service",
+            "name": "atlas-backup",
+            "summary": "The opt-in backup service: verified pg_dump backups of the Atlas database, taken on a crunch policy or a routine schedule, with checksums, retention and restore.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-board-core-api",
+            "type": "component",
+            "name": "API client and sync",
+            "summary": "Board v2's single path to the API (fetch, writes, CSRF, login redirect on a lost session) and the BroadcastChannel mirror that keeps pop-out windows in step.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-board-core-graph-model",
+            "type": "component",
+            "name": "Graph model",
+            "summary": "Pure functions over the /api/graph payload: roots, steps out from a focus, which world node work belongs to, and what a node's work board contains.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-board-core-prefs",
+            "type": "component",
+            "name": "Preferences",
+            "summary": "Board v2's per-viewer settings in browser storage under their own namespace, never throwing, sharing only theme and text size with the legacy board.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-board-core-state",
+            "type": "component",
+            "name": "State and routing",
+            "summary": "Board v2's one immutable store that panes subscribe to, and the router that mirrors it into the URL so ?node= deep links work on both boards.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-board-core-ui",
+            "type": "component",
+            "name": "UI kit",
+            "summary": "Board v2's shared drawing pieces: element helpers and type, status and attention marks, markdown and Mermaid rendering, toasts, and the resizable, collapsible panes.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-board-foundations",
+            "type": "component",
+            "name": "Foundations",
+            "summary": "Board v2's DOM-free core and shared UI helpers: the store, URL routing, API client, window sync, preferences and graph model that every view builds on.",
+            "docs": [],
+        },
+        {
             "id": "atlas-board-shell",
             "type": "capability",
             "name": "Board shell",
-            "summary": "LEGACY BOARD (frozen, unsupported, /board/legacy): top chrome, the three view tabs, filters, filing, the graph/detail split, view state, deep links, search, mobile layout, text scale, the login screens. In board v2 the shell is frontend/v2/app.js with core/ and ui/; see atlas-frontend.",
+            "summary": "The legacy board's host page and everything around the map and panel: top chrome and view tabs, filters, search, filing, Settings, view state and deep links.",
             "abstract": (
                 "`atlas-board-shell` is the **host page** of the Atlas board — `frontend/board.html` — served at `/board/legacy` by `routers/assets.py`'s `board_legacy()` route, frozen since board v2 took `/board` (ADR 0043, 2026-10-22). **`/` is not the board any more** (ADR 0035, 2026-08-25): the bare domain is a public informational landing page, `frontend/landing.html`, whose handler redirects a signed-in browser to `/board` (board v2) and serves this page directly only to a machine principal presenting a Bearer token. It is the shell, not the views: `atlas-map` owns the D3 graph and `atlas-panel` owns the detail panel. This node owns everything around and between them.\n"
                 "\n"
@@ -1117,20 +1475,20 @@ PROFILE = {
                 "\n"
                 "**It cannot be imported from.** An inline `<script type=\"module\">` has no URL, so `map.js` and `panel.js` reach back into it only through the `hooks` objects it fills in at boot (`renderPanel`/`updateUrl`/`revealFiltered`, `navigateTo`/`refreshGraph`). Shared *data* goes the other way, through `state.js`: one exported object mutated by property assignment (`state.TREE = x`), because ES module bindings are live but not assignable across modules.\n"
                 "\n"
-                "**The public landing page is this node's subject too, and it is deliberately nothing like the board.** `frontend/landing.html` carries no JavaScript, no module, no vendored library and no request to any other origin — its CSS is inline and its favicon is a data URI. It is served by a plain `FileResponse` and is **not** an `/assets/*` file, so the allowlist below does not govern it. The same three-way theming rule applies (light on bare `:root`, dark redefining tokens under `prefers-color-scheme`), with one deliberate exception: the orange call-to-action holds one value across both themes so its label contrast (5.43:1 on white) cannot drift with the palette.\n"
+                "**The public landing page is this node's subject too, and it is deliberately nothing like the board.** That is the default (`ATLAS_LANDING` unset or `v1`); with `ATLAS_LANDING=v2`, `/` serves the product site `frontend/landing-v2/index.html` instead (see `atlas-api-route-landing`, ADR 0049). `frontend/landing.html` carries no JavaScript, no module, no vendored library and no request to any other origin — its CSS is inline and its favicon is a data URI. It is served by a plain `FileResponse` and is **not** an `/assets/*` file, so the allowlist below does not govern it. The same three-way theming rule applies (light on bare `:root`, dark redefining tokens under `prefers-color-scheme`), with one deliberate exception: the orange call-to-action holds one value across both themes so its label contrast (5.43:1 on white) cannot drift with the palette.\n"
                 "\n"
-                "**The login screens are this node's subject but not yet its code** — see `detail`."
+                "**The login screens are this node's subject but not its code**: they are `backend/auth.py`'s inline pages — see `detail`."
             ),
             "detail": (
                 "See `docs/nodes/atlas-board-shell/architecture.md` (this node's Docs tab) for the module graph. The board is native ES modules with no build step, each one a file beside `board.html`.\n"
                 "\n"
-                "**`ASSET_FILES` in `backend/app.py` is the register of which those are** — read it there rather than from a list written down here, which is how this paragraph came to omit `mine.js` and `compose.js` for a week. That allowlist replaced the `/static` mount, which had been serving a byte-identical *unauthenticated* copy of the board (a mount is an ASGI sub-app route dependencies cannot see, so it was deleted rather than narrowed). `/assets/*` sits behind AuthGate, and **a module missing from `ASSET_FILES` 404s** — the way a newly added one fails. `frontend/landing.html` is deliberately outside all of this: it is served by a plain `FileResponse` at `/`, is not an asset, and loads nothing.\n"
+                "**`ASSET_FILES` in `backend/routers/assets.py` is the register of which those are** — read it there rather than from a list written down here, which is how this paragraph came to omit `mine.js` and `compose.js` for a week. That allowlist replaced the `/static` mount, which had been serving a byte-identical *unauthenticated* copy of the board (a mount is an ASGI sub-app route dependencies cannot see, so it was deleted rather than narrowed). `/assets/*` sits behind AuthGate, and **a module missing from `ASSET_FILES` 404s** — the way a newly added one fails. `frontend/landing.html` is deliberately outside all of this: it is served by a plain `FileResponse` at `/`, is not an asset, and loads nothing.\n"
                 "\n"
-                "**A deploy no longer needs a hard reload** (fixed at the origin 2026-08-18, `dfb615f`). `_asset_response` sends `Cache-Control: private, no-cache` (`app.ASSET_CACHE_CONTROL`), and `no-cache` means *must revalidate*, not *must not store* — `FileResponse` was already sending ETag/Last-Modified, so revalidation costs a 304 and a deploy lands in an already-open tab. Two things that header does not do, both of which bit on the day of the fix:\n"
+                "**A deploy no longer needs a hard reload** (fixed at the origin 2026-08-18, `dfb615f`). `_asset_response` sends `Cache-Control: private, no-cache` (`routers/assets.ASSET_CACHE_CONTROL`), and `no-cache` means *must revalidate*, not *must not store* — `FileResponse` was already sending ETag/Last-Modified, so revalidation costs a 304 and a deploy lands in an already-open tab. Two things that header does not do, both of which bit on the day of the fix:\n"
                 "\n"
                 "When a browser and the container genuinely disagree, `docker exec atlas-api grep -c <symbol> frontend/<module>.js` still settles it.\n"
                 "\n"
-                "**The login screens are authored, unwired, and ORPHANED — nothing is scheduled to wire them** (checked 2026-08-25). `frontend/login.html`, `change-password.html` and `logout.html` ship in the image, and `login.html` documents a single-token substitution contract with `backend/auth.py`. Nothing routes to any of them: live `/auth/login` and `/auth/change-password` return `auth.py`'s inline `_PAGE`. The distinction worth holding on to is that this is **not pending work**: `auth.py`'s own section comment calls its inline pages \"PLACEHOLDERS\" that *TASK-969 owns*, and **TASK-969 is `done`** — closed 2026-07-31, with acceptance criteria that named those two files as things that must exist and render. So a closed task left three unreferenced files behind, and a comment pointing at it as though it were open. Whether they are deleted or finally wired is a decision, not a cleanup; until someone takes it, do not read their contents as a description of anything live. `frontend/index.html` is the fourth of the same kind — the superseded v0 tree view, reachable by nothing since the `/static` mount was deleted.\n"
+                "**The login screens are `backend/auth.py`'s inline pages.** Live `/auth/login` and `/auth/change-password` return `auth.py`'s inline `_PAGE`. The four orphaned HTML files — `frontend/login.html`, `change-password.html` and `logout.html` (authored under TASK-969, never routed) and `frontend/index.html` (the superseded v0 tree view) — were removed on 2026-11-10; git history keeps them.\n"
                 "\n"
                 "**Three things in the overlay modules that look like taste and are not.** A secret shown once is rendered from the response and never from state, never written to `localStorage` and never put in the URL — dismissing the panel destroys it, which the panel says before it can be dismissed. A destructive confirmation is built **in place**, never with `confirm()`: a browser modal blocks the automation used to verify this board, and it cannot say what this particular action will and will not do. And dismissing an overlay by its scrim goes through `util.js`'s `dismissOnScrim`, which requires the mousedown *and* the mouseup to land on the scrim — `click` is dispatched at the nearest common ancestor of the two, so the obvious `ev.target === root` test reads a text-selection drag that merely ended on the backdrop as a dismiss, and threw the form away mid-typing. That shipped in two copied blocks and is one helper now.\n"
                 "\n"
@@ -1274,10 +1632,150 @@ PROFILE = {
             ],
         },
         {
+            "id": "atlas-board-views",
+            "type": "component",
+            "name": "Board views",
+            "summary": "The panes and overlays a person uses on board v2: graph, work board, node panel, dashboard, search, settings and access administration.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-ci-images",
+            "type": "component",
+            "name": "Images and pins",
+            "summary": "The CI that builds, checks and on a release tag publishes the install's container images, and the gate requiring every image and action reference to be pinned.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-ci-pipelines",
+            "type": "component",
+            "name": "CI pipelines",
+            "summary": "The GitHub Actions workflows that run on Atlas's own repository: the verify suite, install smoke, security scans, image builds and pins, and the scrub and public-export checks.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-ci-scrub",
+            "type": "component",
+            "name": "Scrub and public export",
+            "summary": "The CI that scans tracked files for personal references against a secret denylist, and rehearses the single-commit export of the tree to the public repository.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-ci-security",
+            "type": "component",
+            "name": "Security scans",
+            "summary": "The security CI: static checks on every pull request (runtime end-of-life, hashed locks, Semgrep), SBOM and vulnerability scans of every image, and ZAP DAST against an ephemeral install.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-ci-smoke",
+            "type": "component",
+            "name": "Install smoke",
+            "summary": "The CI that installs Atlas on a clean runner the way a stranger would, then signs in, connects an agent and checks each promise of the install, one step per item.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-ci-verify",
+            "type": "component",
+            "name": "Verify suite",
+            "summary": "The backend verify suite: verify_all.py runs every verify_*.py against its own disposable Postgres, with no skip path, locally and in CI on every push and pull request.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli",
+            "type": "component",
+            "name": "Admin CLI",
+            "summary": "atlas-admin: the operator's command line, run inside the API container, for accounts, agents, tokens, sessions, roles, audit, guardrails, CI/CD, backups and auth tables.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-agents",
+            "type": "component",
+            "name": "Agent accounts",
+            "summary": "atlas-admin bot: create machine accounts with no usable password and link each one to the person accountable for it.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-audit",
+            "type": "component",
+            "name": "Read audit",
+            "summary": "atlas-admin audit purge: delete read-audit rows older than the configured retention period.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-backups",
+            "type": "component",
+            "name": "Backups",
+            "summary": "atlas-admin backup: take verified logical backups of the Atlas database, restore one over the live database, and roll back to the safety copy a restore left.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-cicd",
+            "type": "component",
+            "name": "CI/CD setup",
+            "summary": "atlas-admin cicd generate: write a first CI/CD pipeline for GitHub Actions, GitLab CI or Azure Pipelines from the guardrails matrix or the setup guide's answers.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-guardrails",
+            "type": "component",
+            "name": "Guardrails",
+            "summary": "atlas-admin guardrails: validate, apply, show and export the per-environment agent guardrails matrix, stored as data on the system node.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-init-db",
+            "type": "component",
+            "name": "Auth table init",
+            "summary": "atlas-admin init-db: create any missing auth tables, idempotently, so the first owner can be created before the app has booted on the database.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-rbac",
+            "type": "component",
+            "name": "Project roles",
+            "summary": "atlas-admin rbac plan: a read-only comparison of each account's effective permissions today versus under project-scoped roles.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-sessions",
+            "type": "component",
+            "name": "Browser sessions",
+            "summary": "atlas-admin session mint: create a short-lived browser session for an account without a password, allowed only where session minting is explicitly enabled.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-tokens",
+            "type": "component",
+            "name": "Service tokens",
+            "summary": "atlas-admin token: mint scoped service tokens for agents, shown once or written only to a file, list them without digests, and revoke them.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-cli-users",
+            "type": "component",
+            "name": "User accounts",
+            "summary": "atlas-admin user: create, link to an identity provider, reset, disable, enable, list and show human accounts; every action is logged as an auth event.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-client-claude-code",
+            "type": "component",
+            "name": "Claude Code pack",
+            "summary": "The Claude Code client pack: MCP config templates, a headers helper that reads the agent token from a file, and a plugin with the atlas-retrieval, file-task and setup-guide skills.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-client-packs",
+            "type": "component",
+            "name": "Client packs",
+            "summary": "Ready-made bundles that connect an AI agent client to an Atlas install with the user's own token: MCP server templates, a token header helper and Atlas skills.",
+            "docs": [],
+        },
+        {
             "id": "atlas-context",
             "type": "capability",
-            "name": "Context answer (\"tell me about X\")",
-            "summary": "One bounded call answers \"tell me about X\" (ADR 0044 §0): the matching nodes, their neighbours, what depends on them, the intents that apply, related decisions and the docs to read next, as pointers within budgets. GET /api/context, MCP atlas_context.",
+            "name": "Context & search",
+            "summary": "The one-call answer to \"tell me about X\": the matching nodes, their neighbours, what depends on them, the intents that apply, related ADRs and the docs to read next, as bounded pointers.",
             "abstract": (
                 "`atlas-context` is Atlas' answer to an open question — \"tell me about X\", \"what touches Y\", asked in the agent's own words or in Swedish. One call, `GET /api/context?about=…` or the MCP tool `atlas_context`, returns a **package of pointers** in six parts:\n"
                 "\n"
@@ -1294,7 +1792,7 @@ PROFILE = {
                 "\n"
                 "**What a caller may not see is absent from every part**, filtered inside each statement, and a dependency chain never runs through a hidden node, because its far end would disclose that something sits in between (`atlas-visibility`).\n"
                 "\n"
-                "Its answer is only as good as the edges it walks: the impact set reads `requires`, mapped from the prose by STORY-atlas-context-graph-mapping, and decisions will gain `decides` edges once the ADR registry carries them. Code: `backend/routers/context.py`."
+                "Its answer is only as good as the edges it walks: the impact set reads `requires`, mapped from the prose by STORY-atlas-context-graph-mapping, and decisions are ranked from the ADR registry's text (ADR 0045); no edge links an ADR to the nodes it decides about. Code: `backend/routers/context.py`."
             ),
             "detail": (
                 "**Seeds are the search route's answer, not a copy of it.** `context` calls `routers/search.search_nodes` with the same visibility filter, families and mode, so a seed set can never drift from what `atlas_node_search` would show for the same question.\n"
@@ -1496,10 +1994,52 @@ PROFILE = {
             ],
         },
         {
+            "id": "atlas-delivery-check",
+            "type": "component",
+            "name": "Deployed check",
+            "summary": "check-deployed.sh: reports whether each running live image is at least as new as the source it was built from, so a missed rebuild shows up instead of looking like a bug.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-delivery-deploy",
+            "type": "component",
+            "name": "Deploy",
+            "summary": "deploy.sh: the one fixed way to deploy, a short set of allowlisted actions that refuses unless CI verified the commit, then checks the result and logs each run.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-delivery-fork",
+            "type": "component",
+            "name": "Fork",
+            "summary": "fork.sh: ships a branch to the experimental fork, a separate stack holding a scrubbed copy of the live graph where agents may try things not allowed elsewhere.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-delivery-scripts",
+            "type": "component",
+            "name": "Delivery scripts",
+            "summary": "The shell scripts that put branches on staging and the fork, deploy master to live, check what is running and take recovery points; run from the desktop, except snapshot, which runs on the server.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-delivery-snapshot",
+            "type": "component",
+            "name": "Snapshot",
+            "summary": "snapshot.sh: takes a one-time recovery point before a bounded experiment and verifies it by restoring into a disposable Postgres; deliberately not a backup routine.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-delivery-stage",
+            "type": "component",
+            "name": "Stage",
+            "summary": "stage.sh: ships a committed branch from the local clone to the staging stack, its own compose project with separate containers, database and network.",
+            "docs": [],
+        },
+        {
             "id": "atlas-docs",
             "type": "capability",
             "name": "Node documentation",
-            "summary": "node_doc storage (ADR 0029) and documentation generation — the tables, the write path, and the standard for what a node's prose should contain.",
+            "summary": "Node documentation: the node_doc table holding each node's documents, its allowlisted read and write routes, and the standard for what a node's prose contains.",
             "abstract": (
                 "`atlas-docs` owns **node documentation**: the `node_doc` table, the allowlisted read route, the write path, and the standard that says what a node's prose should contain. It is the documentation *subsystem*, not the documents' subject matter and not their rendering — the Docs tab that displays them belongs to `atlas-panel`, and the four prose tiers themselves are columns on `node`, which `atlas-graph` owns.\n"
                 "\n"
@@ -1523,24 +2063,45 @@ PROFILE = {
             "docs": [],
         },
         {
+            "id": "atlas-env-fork",
+            "type": "component",
+            "name": "Test fork",
+            "summary": "A third, throwaway Atlas stack holding a scrubbed copy of live's graph under its own credentials, where an agent may run destructive changes without risk to live.",
+            "abstract": "An example throwaway environment for agents. Restore a snapshot of live's database into a separate compose project and, before the stack is reachable, empty its sessions, service tokens and login throttle and clear every password hash; measure that all four are zero rather than trusting the script. Give the fork its own credential peppers, so no token or password from live can authenticate there and nothing minted there works on live. Reach it only through its own TLS origin, because the session cookie is Secure-only. An agent may then run destructive changes against real-shaped data; when the fork drifts, throw it away and seed it again from a new snapshot.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-env-staging",
+            "type": "component",
+            "name": "Staging",
+            "summary": "A second Atlas stack where a branch is deployed before live, against an older populated database, to prove changes survive real data.",
+            "abstract": "An example staging environment. Run a second compose project beside live with an overlay file that renames the containers, gives the database its own volume, puts the stack on its own network and publishes a different port; pass the port in rather than re-declaring it, because compose concatenates port lists. Seed it once with an older, populated database and keep it: a fresh database cannot show whether a schema change survives real rows. Ship a branch to it from git (the code and the overlay both from the staged ref, never a working tree), check the result in a browser on staging's own TLS origin, and only then deploy to live. Session minting without a password may be switched on here for automated checks; never on live.",
+            "docs": [],
+        },
+        {
             "id": "atlas-frontend",
             "type": "component",
             "name": "Atlas frontend",
-            "summary": "The board at /board (board v2, ADR 0043): a radial graph of the world, a work board scoped by it, and a dashboard panel per node. No build step; all data from atlas-api's /api/*. The previous three-view board is frozen and unsupported at /board/legacy.",
+            "summary": "Atlas's browser board, with no build step: a radial graph of the world, a work board scoped by it, a node panel and a dashboard, all read from /api/*; the old board is frozen at /board/legacy.",
             "abstract": (
                 "atlas-frontend is Project Atlas's browser client. It renders the node/edge graph and the work filed against it, and it reads everything from **atlas-api**'s `/api/*` endpoints: it has no database access of its own.\n"
                 "\n"
-                "**The board is board v2, served at `/board`** (ADR 0043). It is three panes side by side, with draggable edges between them:\n"
+                "**The board is board v2, served at `/board`** (ADR 0043). It is up to four panes side by side: an optional dashboard (opened from the top bar), the graph, the work board and the node panel. Each pane has a full-height bar on its left: a click folds the pane, a drag resizes it.\n"
                 "\n"
-                "- **The graph.** Opens on the roots and your starred nodes. Clicking a node focuses it, and the focus is drawn as a radial tree: rings of nodes one, two, three steps away, revealed by the *Steps* slider. Steps follow structure (`contains`) or every link, stopping at hubs. Open work can be drawn as nodes, other relations appear on hover, and a *Types* menu hides node types. Each glyph shows the node's type, completion ring and markers for intents and documents, with more text as you zoom in.\n"
+                "- **The graph.** Opens on the roots and your starred nodes. Clicking a node selects it, and double-clicking focuses it, drawing it as a radial tree. Steps follow structure (`contains`) or every link, stopping at hubs. Open work can be drawn as nodes, other relations appear on hover, and a *Types* menu hides node types. Each glyph shows the node's type, completion ring and markers for intents and documents, with more text as you zoom in.\n"
+                "  - **Steps count down from what is chosen.** With a focus, the slider shows that many levels below it. With nothing focused, it counts from the roots. The slider runs from 1 to as deep as the graph goes (1–10 when that is unknown). Only the rings that show are laid out, so changing Steps re-spaces the nodes.\n"
+                "  - **A focus shows its own limb.** The way back up to the root is always shown: one container chain, preferring the path you came by. It is faded and dashed, and it always points left, so a refocus never swaps sides. Nodes on other limbs, and relations past the root, are not shown.\n"
+                "  - **Hover lights the whole way to the root** and dims the rest lightly.\n"
+                "  - **Fold and Views.** A small −/+ at a node's top right folds away what is below it (keys `-`/`+` on a focused node). A small, translucent *Views* box at the top right of the pane, folded by default, saves the folded set together with focus and settings as a named view to swap between, and has an *Expand all* button. Folds and views live in the browser's localStorage (`atlas.v2.graph.collapsed`, `atlas.v2.graph.views`), not on the server.\n"
                 "- **The work board.** Scoped to the node focused or selected in the graph: work rolls up, never down. Three views: *Epics* (a card per epic with its progress), *Board* (kanban columns by status with one lane per epic; dragging a card between columns sets its status) and *Backlog* (epic, story and task as a tree). Filters: everyone, mine, unassigned, text, and how long finished work stays visible.\n"
-                "- **The node panel.** A dashboard for the selected node with the tabs Overview, Intent, Comments (epics, stories and tasks only), History, Docs and Links. For work it edits status, assignee, binding, description and acceptance. The Comments tab (`frontend/v2/views/panel/comments.js`) shows the item's conversation in markdown: anyone who may edit the item writes, the author edits their own, the author or an instance owner deletes. Nothing a comment said is lost: a delete hides the comment (the row stays, with who deleted it), and an edit keeps the replaced text in `workitem_comment_revision`. Both are audit records read in the database; no route returns them.\n"
+                "- **The node panel.** Everything about the selected node, in the tabs Overview, Intent, Comments (epics, stories and tasks only), History, Docs, Links, Decisions (projects, or nodes with ADRs) and Configuration (owners only, on install parts). For work it edits status, assignee, binding, description and acceptance. The Comments tab (`frontend/v2/views/panel/comments.js`) shows the item's conversation in markdown: anyone who may edit the item writes, the author edits their own, the author or an instance owner deletes. Nothing a comment said is lost: a delete hides the comment (the row stays, with who deleted it), and an edit keeps the replaced text in `workitem_comment_revision`. Both are audit records read in the database; no route returns them.\n"
+                "- **The dashboard.** An optional fourth pane, hidden until opened, with boxes about the signed-in person.\n"
                 "\n"
                 "The work board and the panel can each be moved to a window of their own (for a second monitor) and stay in step with the main window. File work and Settings are the legacy modules, reused. On a phone the panes stack: the board over the graph, the panel as a sheet.\n"
                 "\n"
-                "**The previous board is frozen and unsupported, at `/board/legacy`.** It is the world tree / work tree / Mine board, unchanged, kept so nothing is lost while v2 is judged. New work goes into v2 only. `/board/v2`, v2's address while it was built, redirects to `/board`. Its child nodes `atlas-board-shell`, `atlas-map`, `atlas-panel` and the `panel-*` tabs describe that legacy board.\n"
+                "**The previous board is frozen and unsupported, at `/board/legacy`.** It is the world tree / work tree / Mine board, unchanged, kept so nothing is lost while v2 is judged. New work goes into v2 only. `/board/v2`, v2's address while it was built, redirects to `/board`. Its child `atlas-frontend-legacy` holds the nodes for that board (`atlas-board-shell`, `atlas-map`); the panel nodes under `atlas-board-views` describe v2, except `panel-work`, the legacy-only Work tab.\n"
                 "\n"
-                "**Every page is behind a login (ADR 0025)**, with one deliberate exception: `/` (ADR 0035) gives a caller with no credential the public landing page, sends a signed-in browser to `/board`, and serves the legacy board directly only to a machine principal presenting a Bearer token. Assets are served from `/assets/` against the `ASSET_FILES` allowlist in `app.py`; a file missing from it 404s, and v2's files are listed under their paths (`v2/core/store.js`).\n"
+                "**Every page is behind a login (ADR 0025)**, with one deliberate exception: `/` (ADR 0035) gives a caller with no credential the public landing page, sends a signed-in browser to `/board`, and serves the legacy board directly only to a machine principal presenting a Bearer token. Assets are served from `/assets/` against the `ASSET_FILES` allowlist in `backend/routers/assets.py`; a file missing from it 404s, and v2's files are listed under their paths (`v2/core/store.js`).\n"
                 "\n"
                 "Depends on **atlas-api**: atlas-frontend cannot render anything without it. Healthy means `/board` loads and its reads succeed."
             ),
@@ -1646,9 +2207,9 @@ PROFILE = {
                         "`project-atlas/frontend/v2/` is the board. `project-atlas/frontend/` holds the legacy board, which is\n"
                         "changed only to keep it loading. `frontend/CLAUDE.md` has the editing rules for both.\n"
                         "\n"
-                        "**Four HTML files in `frontend/` are orphaned by decision and stay that way**: `index.html` (the v0\n"
-                        "tree), `login.html`, `change-password.html` and `logout.html`. None has a route; the live auth pages\n"
-                        "are a string template in `backend/auth.py`. Do not delete one on the strength of a briefing sentence.\n"
+                        "**The four orphaned HTML files in `frontend/` were removed on 2026-11-10** (git history keeps them):\n"
+                        "`index.html` (the v0 tree), `login.html`, `change-password.html` and `logout.html`. None had a route;\n"
+                        "the live auth pages are a string template in `backend/auth.py`.\n"
                         "\n"
                         "## Dependencies\n"
                         "\n"
@@ -1658,16 +2219,30 @@ PROFILE = {
             ],
         },
         {
+            "id": "atlas-frontend-legacy",
+            "type": "component",
+            "name": "Legacy board",
+            "summary": "The previous three-view board (world tree, work tree, Mine), frozen and unsupported at /board/legacy, changed only to keep it loading.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-gateway",
+            "type": "service",
+            "name": "atlas-gateway (optional)",
+            "summary": "Optional AgentGateway in front of atlas-mcp, started by a compose profile, giving agents one TLS address for several MCP servers and a tool allow-list.",
+            "docs": [],
+        },
+        {
             "id": "atlas-graph",
             "type": "capability",
             "name": "Graph engine",
-            "summary": "node / edge tables, the node_type and edge_type registries, the origin column, the write API, id allocation, the read API and its bounded neighbourhood.",
+            "summary": "The machinery that stores and serves the graph: node and edge tables, their type registries, id allocation, and the read and write API over them.",
             "abstract": (
-                "`atlas-graph` is the **machinery** of Atlas's object graph: the `node` / `edge` / `node_type` / `edge_type` tables in `backend/models_graph.py`, the write API and the read API over them in `backend/app.py`. It stores and serves the graph; it does not decide what the graph is allowed to say. That is `atlas-world-model` — the node families, the edge vocabulary and the binding rules live there, and this node would still be here if every one of them changed. It is also not the process: `atlas-api` is the FastAPI service this code runs inside, and `atlas-work-store` owns the workitem-shaped tables (prose, acceptance, result) that hang off `node.id`.\n"
+                "`atlas-graph` is the **machinery** of Atlas's object graph: the `node` / `edge` / `node_type` / `edge_type` tables in `backend/models_graph.py`, the write API and the read API over them in `backend/routers/` (nodes, edges, graph). It stores and serves the graph; it does not decide what the graph is allowed to say. That is `atlas-world-model` — the node families, the edge vocabulary and the binding rules live there, and this node would still be here if every one of them changed. It is also not the process: `atlas-api` is the FastAPI service this code runs inside, and `atlas-work-store` owns the workitem-shaped tables (prose, acceptance, result) that hang off `node.id`.\n"
                 "\n"
                 "What it owns:\n"
                 "\n"
-                "- **TWO type registries as data, and they behave differently.** A `node_type` row carries a JSON-Schema, a family, a health formula and agent instructions; `node.attributes` is validated against its own type's schema on **every flush**, via a SQLAlchemy `before_flush` event — so a REPL, a script and the API are all validated, not just one call site. An `edge_type` row (added 2026-08-26) carries the legal `(src_family, dst_family)` `pairs`, a description and an `active`/`dead` status — and is **NOT** enforced on write: it is read by the drift check on `/api/health` and by nothing else. That asymmetry is deliberate and the reasoning is beside `EDGE_FAMILY_RULES` in `app.py`; do not \"fix\" it by wiring `pairs` into the write path without reading that first. Both are seeded every boot by `backend/node_types.py`, which is the one thing boot still writes.\n"
+                "- **TWO type registries as data, and they behave differently.** A `node_type` row carries a JSON-Schema, a family, a health formula and agent instructions; `node.attributes` is validated against its own type's schema on **every flush**, via a SQLAlchemy `before_flush` event — so a REPL, a script and the API are all validated, not just one call site. An `edge_type` row (added 2026-08-26) carries the legal `(src_family, dst_family)` `pairs`, a description and an `active`/`dead` status — and is **NOT** enforced on write: it is read by the drift check on `/api/health` and by nothing else. That asymmetry is deliberate and the reasoning is beside `EDGE_FAMILY_RULES` in `deps.py`; do not \"fix\" it by wiring `pairs` into the write path without reading that first. Both are seeded every boot by `backend/node_types.py`. Boot reads no file and never overwrites graph data. What it does write is schema-shaped: the `node_type` and `edge_type` registries and the `task_id_seq` floor, every boot; on an empty graph, the seed the install's `ATLAS_SEED` profile names (homelab v0 tables, demo, self, plus the system node).\n"
                 "- **`origin` (`git` | `atlas`).** Redefined once the boot ingest was deleted: it is **provenance**, not delete-authority. All the reconcilers that once read it are gone, and the only thing left that branches on it is the `detached_from_git` note in the PATCH response. Nodes are entirely `atlas`-origin now; edges are a mix of both, and nothing should write logic that assumes one value predominates.\n"
                 "- **The write API** — `POST/PATCH/DELETE /api/node`, `POST/DELETE /api/edge` — all through `auth.guard_write`. There is no second write guard. Note what the edge route does NOT check: `_check_family` treats an edge type absent from `EDGE_FAMILY_RULES` as a permissive no-op, so several types in live use carry no family constraint here at all.\n"
                 "- **Id allocation** — `allocate_task_id` off the Postgres `task_id_seq`. No client scans anything.\n"
@@ -1680,9 +2255,9 @@ PROFILE = {
                 "\n"
                 "`_reconcile_graph_schema()` at boot only ever emits additive `ALTER TABLE ... ADD COLUMN`, and it reconciles indexes too. It emits no constraints, which is why `origin` deliberately carries no CHECK — a constraint enforced in tests and absent on live is worse than none. A brand-new TABLE is fine, though: `create_all` handles it, which is how `edge_type` arrived without touching this function at all.\n"
                 "\n"
-                "**Graph writes ARE audited now** — `graph_event`, built 2026-08-24 (TASK-1045), beside `auth_event` which stays identity-only. This paragraph listed it as an open gap until 2026-08-28, which it had not been for four days. One writer, `app.record_graph_event`, enforced by `verify_graph_event.py` §B tokenising every backend module and failing on a second construction site; the actor comes off `auth.current_principal` and from nowhere else, so a request body cannot forge one. Read it back with `GET /api/events`. Two properties to state plainly rather than assume: it is **append-only by convention, not mechanism** — no trigger, no hash chain — and **nothing prunes it**.\n"
+                "**Graph writes ARE audited now** — `graph_event`, built 2026-08-24 (TASK-1045), beside `auth_event` which stays identity-only. This paragraph listed it as an open gap until 2026-08-28, which it had not been for four days. One writer, `deps.record_graph_event`, enforced by `verify_graph_event.py` §B tokenising every backend module and failing on a second construction site; the actor comes off `auth.current_principal` and from nowhere else, so a request body cannot forge one. Read it back with `GET /api/events`. Two properties to state plainly rather than assume: it is **append-only by convention, not mechanism** — no trigger, no hash chain — and **nothing prunes it**.\n"
                 "\n"
-                "**Known gap, filed and open:** there is no migration tooling (TASK-1015). Every `migrate_*.py` here is a one-off, dry-run by default."
+                "No Alembic, by decision (TASK-1015, 2026-08-16); `atlas-migrate upgrade` wraps the startup schema steps. Every `migrate_*.py` here is a one-off, dry-run by default."
             ),
             "docs": [
                 {
@@ -1733,7 +2308,7 @@ PROFILE = {
                         "on.\n"
                         "\n"
                         "None of the side tables carries `ON DELETE CASCADE`. They are deleted explicitly in\n"
-                        "`app._delete_node_dependents`, which is the only node-deletion path left since TASK-1058 removed the\n"
+                        "`routers/nodes._delete_node_dependents`, which is the only node-deletion path left since TASK-1058 removed the\n"
                         "boot reconcilers. `graph_event` is the one table that is deliberately NOT cleaned up there — an\n"
                         "event outlives its node.\n"
                         "\n"
@@ -1788,14 +2363,21 @@ PROFILE = {
             ],
         },
         {
+            "id": "atlas-guardrails",
+            "type": "capability",
+            "name": "Agent guardrails",
+            "summary": "Per-environment rules for what an agent may do on its own and what needs a human, kept as one matrix applied to the install's system node and exported as policy files.",
+            "docs": [],
+        },
+        {
             "id": "atlas-identity",
             "type": "capability",
             "name": "Identity & access",
-            "summary": "Who you are and how you prove it: login, password storage and policy, sessions, the ASGI gate, accounts, service tokens, opt-in IdP-issued access tokens, the opt-in read audit and its export, identity providers, and linked GitHub identities with owner-approved repo access.",
+            "summary": "Who you are and how you prove it: the gate every request passes, login, passwords, sessions, accounts, agents' service tokens (agent credentials on the board), and optional identity providers.",
             "abstract": (
-                "`atlas-identity` is **authentication** — who you are and how you prove it. It owns the ASGI gate every request passes, login and logout, password storage and policy, sessions and their cookies, accounts and service tokens, and the audit trail in `auth_event`. It is **not** authorisation-to-see: whether a principal may read a given node belongs to `atlas-visibility`, its sibling under `atlas-security`.\n"
+                "`atlas-identity` is **authentication** — who you are and how you prove it. It owns the ASGI gate every request passes, login and logout, password storage and policy, sessions and their cookies, accounts and service tokens; every credential event it handles is written to `auth_event`, and the record itself — reading, export, retention — is `atlas-audit-trail`'s. It is **not** authorisation-to-see: whether a principal may read a given node belongs to `atlas-visibility`, its sibling under `atlas-security`.\n"
                 "\n"
-                "**The gate is middleware, not a dependency.** `AuthGate` (`backend/auth.py`) is registered with `app.add_middleware`, so it wraps the whole router, every mount and every path that does not exist — including routes added later. A route-level scheme fails *open* when somebody adds a route; middleware fails closed. Deny by default: `auth.PUBLIC_ROUTES` is the whole unauthenticated surface — login, the password-change page, the denied page, the **privacy notice**, liveness/readiness (`/healthz`, `/readyz`), the favicon, and **`/`**. `/api/health` is deliberately excluded because it is a reconnaissance document. **`/` is the one public route that is not a fixed response** (ADR 0035): its handler renders the public landing page for a stranger, serves the legacy board directly to a machine principal presenting a Bearer token, and 302s a signed-in browser to `/board`, which stays gated. `verify_object_graph.py` pins that list exactly, so an addition has to be argued for rather than slipped in.\n"
+                "**The gate is middleware, not a dependency.** `AuthGate` (`backend/auth.py`) is registered with `app.add_middleware`, so it wraps the whole router, every mount and every path that does not exist — including routes added later. A route-level scheme fails *open* when somebody adds a route; middleware fails closed. Deny by default: `auth.PUBLIC_ROUTES` is the whole unauthenticated surface — login, the password-change page, the denied page, the **privacy notice**, liveness/readiness (`/healthz`, `/readyz`), the favicon, and **`/`**. Three opt-in settings extend it with exact paths, never a prefix: the OIDC start and callback routes (`ATLAS_AUTH_PROVIDERS`, ADR 0041), the handbook (`ATLAS_PUBLIC_DOCS=1`, ADR 0047) and the landing site's files (`ATLAS_LANDING=v2`, ADR 0049); unset, the list is exactly the one above. `/api/health` is deliberately excluded because it is a reconnaissance document. **`/` is the one public route that is not a fixed response** (ADR 0035): its handler renders the public landing page for a stranger, serves the legacy board directly to a machine principal presenting a Bearer token, and 302s a signed-in browser to `/board`, which stays gated. `verify_object_graph.py` pins that list exactly, so an addition has to be argued for rather than slipped in.\n"
                 "\n"
                 "**Exactly two credential branches, never three.** `Authorization: Bearer atlas_svc_...` is the machine principal and is CSRF-exempt; the `__Host-atlas_session` cookie is the human principal and requires a synchronizer token. Both present is a flat `400`. Nothing reads a `Cf-Access-*` header — that code is not written, so the forged-header escalation does not exist here. Bearer is honoured only on the hosts in `ATLAS_BEARER_HOSTS`, and a token presented anywhere else is treated as a bad credential rather than given a distinguishable hint.\n"
                 "\n"
@@ -1824,7 +2406,7 @@ PROFILE = {
                 "\n"
                 "**Fail closed.** `ATLAS_TOKEN_PEPPER`, `ATLAS_LOGIN_ORIGINS` and `ATLAS_PASSWORD_PEPPER` raise at *import*, naming the key, before uvicorn binds — there is no generated-if-missing fallback, because a per-boot random pepper logs everyone out on every unattended reboot. With an empty `auth_user` table the app serves the login page and refuses every credential; the first owner is minted by `python -m admin user add` against the live database. The same import-time configuration is why `atlas-admin backup …` drops the sign-in settings from its own process before importing `auth` (TASK-1437): the backup container reads the same `.env` but holds none of the IdP's files, and backup needs no identity.\n"
                 "\n"
-                "**Two escape hatches, both config-gated and both off on live.** `ATLAS_MACHINE_GRACE_HOSTS` (a staged rollout that can never let a browser or a bad credential through) is unset; `ATLAS_ALLOW_SESSION_MINT` — a password-free browser session for verification — is set only on staging.\n"
+                "**Two escape hatches, both config-gated and both off on live.** `ATLAS_MACHINE_GRACE_HOSTS` (a staged rollout that can never let a browser or a bad credential through) is unset; `ATLAS_ALLOW_SESSION_MINT` — a password-free browser session for verification — is set only on non-live stacks (staging and the fork), never on live.\n"
                 "\n"
                 "**Two public pages a person reads.** `/auth/privacy` (TASK-941) answers without any credential, because a privacy notice you can only read after signing in is not available to the person deciding whether to sign in. `/` (ADR 0035) is the public landing page for a stranger and a redirect to `/board` for a signed-in browser — the one public route whose response depends on who is asking."
             ),
@@ -1841,7 +2423,7 @@ PROFILE = {
                         "\n"
                         "## 1. The gate\n"
                         "\n"
-                        "`AuthGate` (`backend/auth.py:1019`) is ASGI middleware added with `app.add_middleware`, so it\n"
+                        "`AuthGate` (in `backend/auth.py`) is ASGI middleware added with `app.add_middleware`, so it\n"
                         "runs before any route, any mount, and any 404. Everything below happens in `_evaluate`, in a\n"
                         "threadpool, reading only scope-level attributes — never the body, which the handler still needs.\n"
                         "\n"
@@ -1899,9 +2481,9 @@ PROFILE = {
                         "  ALLOW --> HND[\"handler mutates\"]\n"
                         "```\n"
                         "\n"
-                        "`Principal.has_scope` (`backend/auth.py:502`) is plain literal membership — there is no\n"
+                        "`Principal.has_scope` (in `backend/auth.py`) is plain literal membership — there is no\n"
                         "`read < write < admin` implication, so a caller needing both is minted `write,admin` explicitly.\n"
-                        "It is called from `_check_write_scope` (`backend/auth.py:1146`), which every non-session\n"
+                        "It is called from `_check_write_scope` (in `backend/auth.py`), which every non-session\n"
                         "principal now passes through before a mutation runs — that includes the `ATLAS_MACHINE_GRACE_HOSTS`\n"
                         "bypass, which used to reach the handler with no scope check at all.\n"
                         "\n"
@@ -2019,13 +2601,15 @@ PROFILE = {
                 {
                     "path": "docs/nodes/atlas-identity/idp-tokens-and-read-audit.md",
                     "kind": "architecture",
-                    "title": "IdP access tokens and the read audit",
+                    "title": "IdP access tokens",
                     "format": "md",
                     "content": (
-                        "# IdP access tokens and the read audit\n"
+                        "# IdP access tokens\n"
                         "\n"
-                        "Two opt-in additions to identity, both off unless configured. With neither set, every path behaves\n"
-                        "as it did before them: a Bearer is an `atlas_svc_` token or nothing, and no read is recorded.\n"
+                        "An opt-in addition to identity, off unless configured. Unset, every path behaves as it did before\n"
+                        "it: a Bearer is an `atlas_svc_` token or nothing.\n"
+                        "\n"
+                        "The read audit is on `atlas-audit-trail`: `docs/nodes/atlas-audit-trail/read-audit.md`.\n"
                         "\n"
                         "## IdP-issued access tokens (STORY-oss-25, ADR 0041 §9)\n"
                         "\n"
@@ -2096,41 +2680,6 @@ PROFILE = {
                         "  resource app.\n"
                         "- A tool call that lacks a scope gets the API's 403 inside the MCP response, not an HTTP\n"
                         "  `insufficient_scope` challenge.\n"
-                        "\n"
-                        "## The read audit (STORY-oss-16)\n"
-                        "\n"
-                        "### What is recorded\n"
-                        "\n"
-                        "With **`ATLAS_AUDIT_READS=1`**, an agent (service-token or IdP-token) read through a route that\n"
-                        "calls `audit_log.record_read` writes one `audit_read` row: `at`, `user_id` (the person behind the\n"
-                        "agent), `actor_user_id` / `actor_subject` (the agent), `token_id`, `tool`, `route`, the `node_ids`\n"
-                        "actually served, and `request_id`. Never the query text or the content. Browser sessions are not\n"
-                        "recorded. Off, the cost is one boolean check.\n"
-                        "\n"
-                        "It is recorded on the API side, because there the gate has resolved agent, credential and person,\n"
-                        "and the route has already decided which ids the caller may see; it also catches token callers that\n"
-                        "bypass the MCP. atlas-mcp adds two caller-asserted labels: `X-Atlas-Tool` (the tool name) and\n"
-                        "`X-Request-ID` (one id per tool call). **Fail closed:** if the row cannot be written, the caller gets\n"
-                        "a 500 and no content.\n"
-                        "\n"
-                        "Which routes record is in the code: `git grep record_read backend/routers`, and\n"
-                        "`backend/TESTING.md` says what each audit verify proves.\n"
-                        "\n"
-                        "### Table and retention\n"
-                        "\n"
-                        "`audit_read` lives in `backend/models_audit.py` on the auth metadata, so the normal schema path\n"
-                        "creates it and a reseed never drops it. **`ATLAS_AUDIT_RETENTION_DAYS`** with\n"
-                        "**`atlas-admin audit purge`**, run from cron (e.g. `0 3 * * * docker exec atlas-api atlas-admin\n"
-                        "audit purge`), deletes `audit_read` rows older than N days and nothing else; `graph_event` and\n"
-                        "`auth_event` are never purged. Unset = keep forever.\n"
-                        "\n"
-                        "### Export\n"
-                        "\n"
-                        "`GET /api/audit/export?since=&until=&kinds=` streams JSON Lines (`application/x-ndjson`): one object\n"
-                        "per line, oldest first across kinds, fixed keys per kind, keyset pages so nothing is held in memory.\n"
-                        "Allowed: an owner session, or an `admin`-scoped token whose linked person is a live owner (re-read\n"
-                        "on every call). Everyone else gets 403. No password, hash, token, session id or CSRF value is ever\n"
-                        "in it.\n"
                     ),
                 },
             ],
@@ -2206,7 +2755,7 @@ PROFILE = {
                 "made at the provider, not in this repo.\n"
                 "\n"
                 "**Boundary:** an installation's non-production proxies (a staging stack's, say) are deployment\n"
-                "concerns and sit under `atlas-ops`, not here. ADR 0022 is still **Proposed**."
+                "concerns and sit under `atlas-ops`, not here. ADR 0022 is Accepted (2026-10-31) and partly superseded by ADR 0025: Atlas's own login, not Cloudflare Access, is the gate."
             ),
             "docs": [
                 {
@@ -2291,9 +2840,9 @@ PROFILE = {
             "id": "atlas-map",
             "type": "capability",
             "name": "Board map",
-            "summary": "LEGACY BOARD (frozen, unsupported, /board/legacy): the tree view — glyphs, zoom, projection, map anchoring, world/work rendering. In board v2 the graph is the radial tree in frontend/v2/views/graph; see atlas-frontend.",
+            "summary": "The legacy board's map: the horizontal D3 tree of the world and work trees, with its glyphs, zoom, collapse, cross-edge overlay and map anchoring.",
             "abstract": (
-                "`atlas-map` is the **graph view** — `frontend/map.js` plus the glyph it draws with, `frontend/glyph.js`. It is the picture, not the page around it: `atlas-board-shell` owns the chrome, the URL and the data fetch; `atlas-panel` owns what opens when you click. This node owns the SVG under `#mapsvg` and everything that decides where a mark lands and what it says.\n"
+                "`atlas-map` is the legacy board's **map** — `frontend/map.js` plus the glyph it draws with, `frontend/glyph.js`. It is the picture, not the page around it: `atlas-board-shell` owns the chrome, the URL and the data fetch; the legacy panel (`frontend/panel.js`) owns what opens when you click. This node owns the SVG under `#mapsvg` and everything that decides where a mark lands and what it says.\n"
                 "\n"
                 "What it owns:\n"
                 "\n"
@@ -2434,13 +2983,13 @@ PROFILE = {
             "id": "atlas-mcp",
             "type": "service",
             "name": "atlas-mcp",
+            "summary": "The MCP server agents reach Atlas through: task-shaped tools over streamable HTTP, a thin facade over atlas-api that acts with each caller's own token and holds no logic.",
             "abstract": (
                 "Its verbs are task-shaped rather than one-per-node-type: `atlas_file_work` creates a workitem with\n"
                 "its acceptance criteria, parent, binding and dependencies in a single transaction, because\n"
                 "`POST /api/workitem` already does exactly that. The four fields that replace WHOLESALE -- a\n"
                 "workitem's body, its acceptance list, its dependencies, and its binding -- each sit behind an\n"
-                "explicit flag and return the prior value, because none of them warn and there is no audit table\n"
-                "to reconstruct from.\n"
+                "explicit flag and return the prior value, because none of them warn, and `graph_event` records that a field changed and who changed it, not what it held before.\n"
                 "\n"
                 "**The consequence that will look like a bug.** A hidden node and a nonexistent one return the same\n"
                 "404 by design, so a missing grant surfaces as *\"that node does not exist\"* rather than as a\n"
@@ -2450,18 +2999,16 @@ PROFILE = {
                 "**Deletes.** `atlas_delete` is registered when `ATLAS_MCP_ENABLE_DELETE` is set, and succeeds only\n"
                 "for a caller whose token holds `admin` (the API checks it). It is reachable only on the direct TLS\n"
                 "door `:8446`, and deliberately absent from AgentGateway's allow-list: the gateway authorizes per\n"
-                "ROUTE, not per caller. No client holds `admin` today (2026-10-14), so the tool is registered but\n"
-                "every call is refused until a seat is given an admin-scoped token.\n"
+                "ROUTE, not per caller. Which seats hold `admin` is a fact about the tokens, not about this service: read it from Settings › Agent credentials, not from here. A call without it is refused 403.\n"
                 "\n"
                 "The tool list arrives with the MCP connection itself (`tools/list`). `atlas_capabilities` also reports\n"
-                "which write verbs this deployment has enabled, but it returns the node-type attribute schema for\n"
-                "every type as well, so it is an expensive call to make just for the tool list."
+                "which write verbs this deployment has enabled, but it also returns the attribute schemas (each distinct one once, about 25 KB), so it is an expensive call to make just for the tool list."
             ),
             "detail": (
                 "**What the tools cannot do, on purpose.**\n"
                 "\n"
                 "- **No tool sets an assignee.** Neither `atlas_file_work` nor `atlas_update_work` takes one, and `owner` is retired on workitems — the API returns 400 `owner_retired` for a payload that carries the key at all. An agent can read who work belongs to and cannot hand it over; that goes through the HTTP API or the board. Agents are not assignable either (ADR 0034).\n"
-                "- **No tool edits an existing workitem's acceptance criteria.** The API returns 403 to a machine principal for that; a person edits them on the board.\n"
+                "- **Acceptance criteria on an existing item need a person.** `atlas_update_work` can propose a new list (`propose_acceptance=True`), which a person approves or rejects on board v2; where the install sets `ATLAS_ACCEPTANCE_AGENT_WRITE=attested` it can write one with `approval={by, quote}` naming the person who approved it. A plain `set_acceptance=True` is refused 403 `acceptance_is_not_yours_to_write`.\n"
                 "- **`atlas_delete` is registered only on the direct TLS door `:8446`**, never through the gateway, and needs an `admin`-scoped caller token (see the abstract).\n"
                 "\n"
                 "**The map before the reading: `atlas_structure`** (since 2026-10-02, over `GET /api/node/{id}/structure`). A node's `contains` ancestors, its children one level down with their own child counts, its dependencies, dependants and bindings, every node as `{id, type, name, status}` and never prose; every linked id is filtered by visibility. On live it returned a task in about a sixth of `atlas_get`'s bytes and an epic in about a tenth. The `atlas-retrieval` skill puts it between finding a node and reading it in full.\n"
@@ -2583,10 +3130,15 @@ PROFILE = {
                         "  descriptions.py  every tool's description, in one file\n"
                         "  client.py        the only code that talks to atlas-api: base URL, the caller's token, audit headers, error translation\n"
                         "  envelope.py      the {\"ok\": ...} wrapper every tool returns\n"
-                        "  tools_read.py    get, tree, outline, node_search, search, structure, path, intents, doc_read, capabilities\n"
+                        "  tools_read.py    get, tree, outline, node_search, search, structure, path, intents, doc_read, capabilities, context, adr_search, adr_get\n"
                         "  tools_work.py    file_work, update_work\n"
                         "  tools_graph.py   node/edge/doc/intent writes, and atlas_delete\n"
+                        "  tools_comments.py comments, comment_write\n"
                         "  tools_session.py save_work, and the signoff prompt\n"
+                        "  tools_setup.py   setup_guide\n"
+                        "  tls.py, oauth_resource.py, deploy_status.py, deploy_warning.py, distribution.py\n"
+                        "                   the outbound TLS rule, OAuth resource metadata, the stale-deploy check and its\n"
+                        "                   warning, and the install's default values\n"
                         "mcp/verify_*.py    small check scripts, no network\n"
                         "```\n"
                         "\n"
@@ -2721,7 +3273,7 @@ PROFILE = {
                         "## Reading\n"
                         "\n"
                         "### atlas_health\n"
-                        "Liveness and sanity check against atlas-api (`GET /api/health`). Returns `node_count` and `edge_count` as a plausibility check, not a health verdict.\n"
+                        "Liveness and sanity check against atlas-api (`GET /api/health`). Returns the whole `/api/health` answer: `node_count` and `edge_count` as a plausibility check, not a health verdict, `event_count`, and the warnings `token_warnings`, `undocumented_assets`, `name_register_warnings`, `edge_type_warnings` and `deploy`, plus `retrieval` and `cert_warnings` where they apply. The warnings are normally empty.\n"
                         "\n"
                         "### atlas_outline\n"
                         "The `contains` tree as **indented text**, cheaply: \"what do we actually have?\" (`GET /api/graph/outline`). One line per node: `id [type]`. The loop is this, then `atlas_get` the node you need.\n"
@@ -2913,7 +3465,7 @@ PROFILE = {
                         "\n"
                         "- Pass exactly one of `id` and `comment_id`; both or neither is refused locally, and so is an empty `body`. The API caps `body` at 10,000 characters (400 naming `body`).\n"
                         "- **The author is your credential's account**, taken from the token, never from the call: an agent comments as itself, not as its person.\n"
-                        "- **Only the author edits a comment.** Anyone else's is a 403 `not_your_comment`. An edit replaces the body and sets `edited_at`; the old text is not kept.\n"
+                        "- **Only the author edits a comment.** Anyone else's is a 403 `not_your_comment`. An edit replaces the body and sets `edited_at`; the replaced text is kept in `workitem_comment_revision` for audit; no route returns it.\n"
                         "- Writing needs a `write` scope, and the item's editor role where project RBAC is on.\n"
                         "- **Deleting is not an MCP tool.** The author or an instance owner deletes on the board (`DELETE /api/comment/{id}`, which costs `admin`).\n"
                         "- Each add, edit and delete is a `node.comment.*` event in the item's History, naming the comment id, never its text.\n"
@@ -2974,19 +3526,321 @@ PROFILE = {
             ],
         },
         {
+            "id": "atlas-mcp-read",
+            "type": "component",
+            "name": "Read tools",
+            "summary": "The tools that read Atlas and change nothing: the graph, search, recorded knowledge and server information.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-read-graph",
+            "type": "component",
+            "name": "Graph reads",
+            "summary": "Tools for what exists and how it connects: the tree, one node's position, a neighbourhood, the path between two nodes, and a full node read.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-read-knowledge",
+            "type": "component",
+            "name": "Knowledge reads",
+            "summary": "Tools for what has been written down and decided: intents, node documents and architecture decision records.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-read-search",
+            "type": "component",
+            "name": "Search tools",
+            "summary": "Tools for finding things without knowing their id: a bounded context answer, search over world nodes, and filtered listing of workitems.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-read-server",
+            "type": "component",
+            "name": "Server info",
+            "summary": "Tools that describe the install itself: whether it is up, and the vocabulary and tools it offers.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-session",
+            "type": "component",
+            "name": "Session tools",
+            "summary": "Tools that guide a whole session rather than one read or write: signing off an agent's work and the first-run setup interview.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-adr-get",
+            "type": "component",
+            "name": "ADR get",
+            "summary": "One decision record by id, with its status, date, source, links both ways and the text.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-adr-search",
+            "type": "component",
+            "name": "ADR search",
+            "summary": "Finds architecture decision records by words, id, project, status or number.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-capabilities",
+            "type": "component",
+            "name": "Capabilities",
+            "summary": "This install's legal node types, edge types, statuses, workitem types and intent kinds, and the server's tool list.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-comment-write",
+            "type": "component",
+            "name": "Comment write",
+            "summary": "Adds a comment to a workitem, or edits one of your own.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-comments",
+            "type": "component",
+            "name": "Comments",
+            "summary": "The comments on one workitem, oldest first, each with its author and id.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-context",
+            "type": "component",
+            "name": "Context",
+            "summary": "Tell me about X, in one call: the best-matching nodes, their neighbours, what depends on them, the intents that apply, related decisions and docs to read next.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-delete",
+            "type": "component",
+            "name": "Delete",
+            "summary": "Permanently deletes a node with its edges, an edge, a document or an intent, with no undo. Off unless enabled, admin-only and never offered through the gateway.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-doc-read",
+            "type": "component",
+            "name": "Doc read",
+            "summary": "Reads one of a node's documents by the path the node lists.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-doc-write",
+            "type": "component",
+            "name": "Doc write",
+            "summary": "Writes a node document, publishes it, or does both in one call.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-edge-delete",
+            "type": "component",
+            "name": "Edge delete",
+            "summary": "Deletes one edge by its id.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-edge-write",
+            "type": "component",
+            "name": "Edge write",
+            "summary": "Creates one edge between two existing nodes.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-file-work",
+            "type": "component",
+            "name": "File work",
+            "summary": "Creates a workitem with its acceptance, parent, binding, dependencies, priority and labels in one transaction.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-get",
+            "type": "component",
+            "name": "Get",
+            "summary": "One node, complete: prose, acceptance, result, parents, bindings, dependencies and intents, own and inherited.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-health",
+            "type": "component",
+            "name": "Health",
+            "summary": "Is atlas-api up? Returns its health report: node and edge counts as a plausibility check, plus any token, certificate, schema or deploy warnings.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-intent-delete",
+            "type": "component",
+            "name": "Intent delete",
+            "summary": "Deletes one node intent by its id.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-intent-write",
+            "type": "component",
+            "name": "Intent write",
+            "summary": "Creates an intent on a node or patches an existing one.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-intents",
+            "type": "component",
+            "name": "Intents",
+            "summary": "Lists intents where they are authored, optionally filtered by node or kind; a node's inherited intents come from Get.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-node-search",
+            "type": "component",
+            "name": "Node search",
+            "summary": "Which world node knows about X? Hybrid semantic and full-text search over names, prose and served documents; returns pointers, not content.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-node-write",
+            "type": "component",
+            "name": "Node write",
+            "summary": "Creates a node, or patches only the fields given on one that exists.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-outline",
+            "type": "component",
+            "name": "Outline",
+            "summary": "The contains tree as indented text, one line per node: what exists.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-path",
+            "type": "component",
+            "name": "Path",
+            "summary": "How two nodes connect: the shortest paths between them, each hop with its edge type and direction.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-save-work",
+            "type": "component",
+            "name": "Save work",
+            "summary": "Sign-off: your writes since a given time, and the procedure for recording the conversation's work in Atlas.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-search",
+            "type": "component",
+            "name": "Search",
+            "summary": "List and filter workitems by type, status, parent, binding, priority, label or text.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-setup-guide",
+            "type": "component",
+            "name": "Setup guide",
+            "summary": "The first-run setup interview: returns the next topic to ask the person, and records one topic's answers as a proposed ADR.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-structure",
+            "type": "component",
+            "name": "Structure",
+            "summary": "Where a node sits, without prose: ancestors, children with their child counts, dependencies both ways, and binding.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-tree",
+            "type": "component",
+            "name": "Tree",
+            "summary": "A bounded neighbourhood around one node, minimal by default and widened one setting at a time.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-tool-update-work",
+            "type": "component",
+            "name": "Update work",
+            "summary": "Updates a workitem: plain fields directly; body, acceptance, dependencies and binding replace wholesale behind a flag, with the prior values returned. Acceptance changes need a person: propose, or an attested approval.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-work",
+            "type": "component",
+            "name": "Work tools",
+            "summary": "Tools for the backlog: file a workitem, update one, and read or write its comments.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-write",
+            "type": "component",
+            "name": "Write tools",
+            "summary": "The tools that change the world model: nodes, edges, documents and intents, including permanent deletes.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-write-graph",
+            "type": "component",
+            "name": "Graph writes",
+            "summary": "Tools that create, change and remove nodes and edges.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-mcp-write-knowledge",
+            "type": "component",
+            "name": "Knowledge writes",
+            "summary": "Tools that write a node's documents and create, change or remove its intents.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-op-config",
+            "type": "component",
+            "name": "Configuration and flags",
+            "summary": "How an install is configured: ATLAS_* environment variables, the opt-in board configuration panel where the environment wins, and ATLAS_DISABLED_FEATURES switches.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-op-crunch",
+            "type": "component",
+            "name": "Crunch week",
+            "summary": "An opt-in, time-limited release mode: a recorded window during which the generated pipeline lets changes that pass CI skip staging and pre-production; it ends by itself.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-op-install",
+            "type": "component",
+            "name": "Install and upgrade",
+            "summary": "The self-hosted install path: clone, configure .env, generate secrets and certificates, start the compose stack, create the first owner, and later upgrade to a new release.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-op-migrate",
+            "type": "component",
+            "name": "Schema upgrade",
+            "summary": "atlas-migrate upgrade: a one-shot command that creates missing tables, columns and indexes using the API's own startup schema steps, changing no data.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-op-setup",
+            "type": "component",
+            "name": "Setup guide",
+            "summary": "A first-run interview, run by an AI agent, about how the organisation works; each answered topic becomes a proposed ADR and feeds the first CI/CD pipeline.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-operator-features",
+            "type": "component",
+            "name": "Operator features",
+            "summary": "What the person running an Atlas install uses to set it up and keep it going: install and upgrade, schema migration, configuration and feature flags, the setup guide and crunch week.",
+            "docs": [],
+        },
+        {
             "id": "atlas-ops",
             "type": "capability",
             "name": "Delivery & operations",
-            "summary": "Deploy, the staging stack, the verify suite, gates, dependency upkeep.",
+            "summary": "How Atlas is checked, delivered and run: CI pipelines, delivery scripts and admin CLI, non-production environments, client packs, and operator install, config and upgrade features.",
             "abstract": (
                 "`atlas-ops` is how a change gets from a branch to the live board, and how it is checked on the way:\n"
                 "the verify suite, the staging stack, the deploy path and the dependency pins. It contains the\n"
-                "**non-production deployments** — every container belonging to an environment that is not live, each\n"
-                "an `instance_of` its live counterpart — and `atlas-tooling`, the scripts themselves. Which containers\n"
+                "**non-production deployments** (under `atlas-ops-environments`, each an `instance_of` its live\n"
+                "counterpart) and the CI pipelines and tooling (under `atlas-ops-delivery`). Which containers\n"
                 "those are is a question for the tree beneath this node, not for this sentence: it said \"the three\n"
-                "staging containers\" until 2026-08-23, by which point there were six. It is **delivery**, not the\n"
-                "product: `atlas-backend` owns what the API does; this node owns getting a version of it in front of\n"
-                "somebody.\n"
+                "staging containers\" until 2026-08-23, by which point there were six. It covers both sides of running\n"
+                "Atlas: **delivery** of Atlas itself (`atlas-ops-delivery`, `atlas-ops-environments`) and the\n"
+                "**operator-facing parts of the product** (`atlas-operator-features`, `atlas-client-packs`, and the\n"
+                "admin CLI under `atlas-tooling`). `atlas-backend` owns what the API does.\n"
                 "\n"
                 "**One command runs the suite.** `cd backend && python verify_all.py` discovers every\n"
                 "`backend/verify_*.py`, starts **one disposable `postgres:16-alpine` that the run owns** (uuid name,\n"
@@ -3013,7 +3867,7 @@ PROFILE = {
                 "then deliberately removed while this is a proof of concept (a project decision, 2026-08-23), so a red\n"
                 "run is information rather than a barrier — which is also what TASK-1070 asked for, since blocking a\n"
                 "merge on a suite nobody had been running is a change in working agreement rather than a wiring\n"
-                "detail. Staging, measurement, deploy and closing the ticket still happen because somebody remembers."
+                "detail. Staging, measurement and closing the ticket still happen because somebody remembers; the deploy itself refuses a commit CI has not verified."
             ),
             "detail": (
                 "**A non-production stack is a second compose project, not a flag.** A staging copy of Atlas on the\n"
@@ -3031,19 +3885,14 @@ PROFILE = {
                 "*before* the rebuild — a half-applied deploy that then reports \"nothing staged yet\", because that is\n"
                 "the line which writes the stamp `--status` reads.\n"
                 "\n"
-                "**A third, found 2026-10-05: the overlay comes from the clone you run it in, not from the branch.**\n"
-                "`stage.sh` copies `deploy/staging.override.yml` from the working checkout, deliberately, so old\n"
-                "branches stage against a known-good definition. The flip side: a branch that *changes* the overlay\n"
-                "(here, the `/run/github` mount for GitHub linking) loses that change when staged from a checkout on\n"
-                "another branch, and nothing errors — the feature just reports itself unconfigured. Stage such a\n"
-                "branch from a worktree of the branch itself.\n"
+                "**A third: the overlay ships from the staged ref, like the code.** `stage.sh` reads `deploy/staging.override.yml` from the branch being staged and refuses a ref without one, so an overlay change (such as the `frontend/` bind-mount below) must be committed on that branch.\n"
                 "\n"
                 "**The frontend loop without a rebuild:** uncomment the `frontend/` bind-mount in\n"
-                "`deploy/staging.override.yml` and the container serves the staged tree from disk. It replaced\n"
+                "`deploy/staging.override.yml` (committed on the branch) and the container serves the staged tree from disk. It replaced\n"
                 "`tools/preview.py` (deleted, TASK-1072), which served assets without the `ASSET_FILES` allowlist and\n"
                 "so could render green a module that 404s on live.\n"
                 "\n"
-                "Live deploys are not the agent's call. The procedure is `agent/procedures/release.md`; the pipeline\n"
+                "Live deploys run through `tools/deploy.sh` (ADR 0046): an agent runs it, a person approves each live run, and it refuses unless CI's `verify` passed for the commit being pulled. The procedure is `agent/procedures/release.md`; the pipeline\n"
                 "and what is missing from it are in the runbook attached to this node."
             ),
             "docs": [
@@ -3055,7 +3904,7 @@ PROFILE = {
                     "content": (
                         "# Delivery: how a change gets from a branch to live\n"
                         "\n"
-                        "The honest summary first: **the checks run by themselves now; the shipping does not.** Two\n"
+                        "The honest summary first: **the checks run by themselves now; the shipping does not.** Several\n"
                         "things run without being asked — the gitleaks pre-commit hook, and since 2026-08-23 a GitHub\n"
                         "Actions workflow on every push and pull request. But that workflow **reports; it does not\n"
                         "block**, and staging, measurement, deploy and closing the ticket still happen because a person\n"
@@ -3086,9 +3935,9 @@ PROFILE = {
                         "        │\n"
                         "        ├─ measure         in a real browser, asserting numbers, not \"looks fine\"\n"
                         "        │\n"
-                        "        ├─ ASK            live deploys are not the agent's call\n"
+                        "        ├─ DEPLOY         bash tools/deploy.sh api|mcp|both — agent runs it, a person approves each run; refuses unless verify is green for the commit\n"
                         "        │\n"
-                        "        ├─ live            merge --no-ff → push → on the server, git pull --ff-only, compose up -d --build\n"
+                        "        ├─ live            merge → push → tools/deploy.sh (pulls on the server and rebuilds)\n"
                         "        │\n"
                         "        └─ close the loop  PATCH /api/workitem/{id} — status, result, completion date, one call\n"
                         "```\n"
@@ -3155,11 +4004,12 @@ PROFILE = {
                         "\n"
                         "### 6. Going live — ask first\n"
                         "\n"
-                        "Live deploys are not the agent's call. Once approved, it is a merge, a push, and on the server,\n"
-                        "in the live checkout:\n"
+                        "Live deploys run through `tools/deploy.sh` (ADR 0046). Once merged and pushed, an agent runs it\n"
+                        "and a person approves each live run; it refuses unless CI's `verify` passed for exactly the commit\n"
+                        "being pulled, then pulls on the server, rebuilds and runs the deployed check. Every run is logged:\n"
                         "\n"
                         "```bash\n"
-                        "git pull --ff-only && docker compose up -d --build\n"
+                        "bash tools/deploy.sh api|mcp|both\n"
                         "```\n"
                         "\n"
                         "The server pulls; nothing is pushed to it. Then verify live the same way staging was\n"
@@ -3192,9 +4042,10 @@ PROFILE = {
                         "\n"
                         "| | |\n"
                         "|---|---|\n"
-                        "| **GitHub Actions — `.github/workflows/verify.yml`** | since 2026-08-23, on every push and every pull request. Four jobs: **`suite`** runs `verify_all.py`, which starts its own disposable `postgres:16-alpine` on the runner; **`parse`** runs `node --check` over every `frontend/*.js` and checks the `ASSET_FILES` allowlist; **`docs`** runs `verify_docs.py`, the one verify script that needs no database; **`gate-integrity`** refuses a loop-authored pull request that DELETES a `backend/verify_*.py` or anything under `.github/` |\n"
+                        "| **GitHub Actions — `.github/workflows/verify.yml`** | since 2026-08-23, on every push and every pull request. Its jobs include **`suite`**, which runs `verify_all.py` and starts its own disposable `postgres:16-alpine` on the runner; **`parse`**, which runs `node --check` over every `frontend/*.js` and checks the `ASSET_FILES` allowlist; **`docs`**, which runs `verify_docs.py`, the one verify script that needs no database; **`gate-integrity`**, which refuses a loop-authored pull request that DELETES a `backend/verify_*.py` or anything under `.github/`; plus route, MCP, network and compose checks — the workflow file is the list |\n"
+                        "| other workflows | images and pins, security scans (SAST, SBOM/SCA, DAST), install smoke, scrub and public export — see `atlas-ci-pipelines` |\n"
                         "| **gitleaks pre-commit** | blocks secret-bearing commits. Dormant until `pre-commit install` is run once per clone |\n"
-                        "| everything else | staging, measurement, the deploy and closing the ticket run when a person or an agent remembers |\n"
+                        "| everything else | staging, measurement and closing the ticket run when a person or an agent remembers |\n"
                         "\n"
                         "**There is deliberately no `services: postgres` block in the workflow.** That would mean\n"
                         "setting `ATLAS_TEST_DB_URL` — the one variable `backend/TESTING.md` warns against, and the\n"
@@ -3374,8 +4225,8 @@ PROFILE = {
                         "TASK-967, so an unauthenticated probe there gets a `401` and the script would report FAILED on a\n"
                         "perfectly healthy stack.\n"
                         "\n"
-                        "Live is the opposite direction — the server pulls, nothing is pushed to it:\n"
-                        "`git pull --ff-only && docker compose up -d --build`. And it is not the agent's call to run. After a\n"
+                        "Live is the opposite direction — the server pulls, nothing is pushed to it,\n"
+                        "through `tools/deploy.sh`, which pulls on the server, rebuilds and runs the deployed check; a person approves each run (ADR 0046). After a\n"
                         "deploy, check that every image is built from current source and that the raw API port still refuses\n"
                         "the network.\n"
                         "\n"
@@ -3431,35 +4282,37 @@ PROFILE = {
             ],
         },
         {
+            "id": "atlas-ops-delivery",
+            "type": "component",
+            "name": "Delivery",
+            "summary": "How a change to Atlas itself gets from a branch to running: the CI pipelines that check it and the tooling that stages, deploys and verifies it.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-ops-environments",
+            "type": "component",
+            "name": "Environments",
+            "summary": "The non-production Atlas stacks and CI capacity an installation runs beside live: a staging stack, an experimental fork and the self-hosted CI runners.",
+            "abstract": "An example of how an install can run non-production Atlas stacks beside live. Each environment is a second Docker Compose project on the same or another host: its own containers, its own database volume, its own network and its own published port, so nothing it does can reach live's data. This install keeps two, described in the child nodes: a **staging** stack that proves a branch against a populated database before it goes live, and an experimental **fork** that holds a scrubbed copy of live's graph where an agent may break things. Self-hosted CI runners are an optional third piece of capacity. None of this is required to run Atlas; it is one way to make changes safe to try. The running instances of these stacks belong to one install and are not part of what Atlas ships.",
+            "docs": [],
+        },
+        {
             "id": "atlas-panel",
             "type": "capability",
             "name": "Detail panel",
-            "summary": "LEGACY BOARD (frozen, unsupported, /board/legacy): the node detail panel and its tabs — Overview, Intent, Work, History, Docs, Links. In board v2 the panel is frontend/v2/views/panel, without the Work tab (the work board replaces it); see atlas-frontend.",
+            "summary": "Board v2's node panel: a full-height view of the selected node, with tabs for overview, intent, comments, history, docs, links, decisions and configuration.",
             "abstract": (
-                "`atlas-panel` is the **detail panel** — `frontend/panel.js`, the surface that answers \"what is this node?\" once the map has told you where it is. It is the panel *frame and its machinery*: `atlas-map` owns the graph beside it, `atlas-board-shell` owns the page around it and the split between them.\n"
+                "`atlas-panel` is board v2's **node panel**, `frontend/v2/views/panel/panel.js`: a full-height view of whatever is selected in the graph or on the work board. It reads and writes only the store (`core/store.js`); there is no `hooks` seam.\n"
                 "\n"
-                "`renderPanel(node)` rebuilds the whole panel on every selection: a **pinned header** (a glyph, id / name / type, and attention / state / urgency chips) above a tab bar, over a scrolling tab body. `PANEL_TABS` lists Overview, Intent, Work, History, Docs and Links, in that order — Intent sits second, before Work, because \"what is this for\" is the question that arrives before \"what is being done about it\" (ADR 0032).\n"
+                "**The head** is drawn at once from the graph index: type, name, summary, attention/state/urgency chips, status for work, the id and its short label, and the actions *Focus here*, *Star*, *Connected to…* (routes to another node, drawn by the graph) and *Open in a window* (the panel as a pop-out, kept in step over `core/sync.js`).\n"
                 "\n"
-                "Most of the tabs have component nodes of their own — `panel-overview`, `panel-work`, `panel-docs`, `panel-links` — and what lives *inside* each is documented there, not here. Intent and History don't have one yet. Sub-components of a tab live on their tab's node until finding them there gets hard, and are only promoted to a node of their own at that point — a judgment call, not a fixed count.\n"
+                "**The tabs** are Overview, Intent, Comments, History, Docs, Links, Decisions and Configuration. Comments shows only on an epic, story or task. Decisions shows on a project, or on any node one probe finds ADRs for. Configuration shows only to an instance owner, on a node `/api/config` names as a part. There is no Work tab: the work board (`atlas-view-work`) replaces it. The legacy Work tab is described on `panel-work`. The chosen tab is remembered per viewer (`atlas.v2.panel.tab`).\n"
                 "\n"
-                "What this node owns across every tab:\n"
+                "**One read per selection.** `GET /api/node/{id}?intents=all` feeds Overview, Intent and the head's summary. History, Comments and each document are fetched when their tab or row is first opened. Intent inheritance is the API's answer (`routers/nodes._intents_for`) and is never recomputed here.\n"
                 "\n"
-                "- **The tab machinery** — building, badging and switching. The remembered tab persists across node selections but deliberately does **not** ride in the URL; `?tab=&node=` is the tree switch and is the shell's.\n"
-                "- **`renderMarkdown` / `ensureMarkedConfigured`** — the shared prose renderer, wired to Description, the More disclosure, acceptance criteria (inline mode), the result block and intent statements. It escapes raw HTML rather than emitting it, and the Docs viewer renders ` ```mermaid ` fences to inline SVG through the same configuration.\n"
-                "- **`fetchFull`** — one `GET /api/node/{id}` per render, shared by every section that needs per-item detail the listings deliberately omit, and reset by `renderPanel` so re-opening a node after a write refetches.\n"
-                "- **The write surfaces** — plural, and all of them on Overview and workitems-only: the status control, the assignee control, the binding control (`renderBindingSection`, shipped 2026-08-28), and in-place editing of the description (`node.body`) and the acceptance list. **A re-bind is TWO writes**: `PATCH /api/workitem` refuses a binding onto an item that already has one (409 `binding_exists` — at most one, ADR 0028), so a change sends `binding: null` and then `binding: <new>`, and puts the previous binding back if the second write fails rather than leaving the item unbound."
+                "What sits inside each tab is on the tab's own node: `panel-overview`, `panel-intent`, `panel-comments`, `panel-history`, `panel-docs`, `panel-links`, `panel-decisions`, `panel-config`."
             ),
-            "detail": (
-                "See `docs/nodes/atlas-panel/architecture.md` (this node's Docs tab) for the render pipeline.\n"
-                "\n"
-                "**Sections that resolve to nothing remove themselves.** Acceptance and Result delete their own section rather than leave a header over an empty body, because a label with nothing under it reads as a failed load — not a rare path, since plenty of workitems carry no acceptance criterion or no result yet. The intent strip on Overview starts `hidden` for the same reason.\n"
-                "\n"
-                "**Badges settle at different times.** Work is synchronous for a world object (`work_load` is already on the node from `/api/graph`) and asynchronous for a workitem (it waits on `renderConnections`); Intent, History and Links are topped up when their fetch resolves. A synchronous zero would be wrong for Intent — a node with none of its own usually inherits some.\n"
-                "\n"
-                "**Intent inheritance is computed server-side** (`app._intents_for`) and arrives already split into `own` and `inherited`. This module must not walk ancestors to derive it: no module may encode the graph. Inherited statements render read-only with a row that navigates to the owning node — editing one means editing *that* node, for every descendant.\n"
-                "\n"
-                "**The seam, and the writes.** `panel.js` keeps its internals private and exposes `hooks` for the two functions `board.html` owns and it cannot import: `navigateTo` (cross-tree) and `refreshGraph`. The status control calls `refreshGraph` after `POST /api/node/{id}/status`, and the binding control after a successful `PATCH /api/workitem`, because both move rollups that live on *other* nodes. The one deliberate exception is the restore leg of a failed re-bind: a refresh re-renders the panel and would take the error message down with it, and on balance nothing changed. `selectNode` is imported from `map.js` directly — a sub-node or Links row never crosses trees. A 403 surfaces next to the control that earned it rather than bouncing to a login form the user is already past, and world objects get no write controls at all: their colour is a health hint, not a lifecycle, and the API refuses to set one."
-            ),
+            "detail": "**The legacy panel** (`frontend/panel.js`, at `/board/legacy`) is frozen; its render pipeline is kept in `docs/nodes/atlas-panel/architecture.md` for reference only.",
             "docs": [
                 {
                     "path": "docs/nodes/atlas-panel/architecture.md",
@@ -3468,6 +4321,8 @@ PROFILE = {
                     "format": "mermaid",
                     "content": (
                         "# atlas-panel — architecture\n"
+                        "\n"
+                        "**Legacy only.** This describes `frontend/panel.js` on the frozen `/board/legacy`; board v2's panel is described on the node itself.\n"
                         "\n"
                         "`docs[]` entry: `{kind: architecture, title: \"Panel render pipeline\", path: \"docs/nodes/atlas-panel/architecture.md\", format: mermaid}`\n"
                         "\n"
@@ -3634,7 +4489,7 @@ PROFILE = {
             "id": "atlas-postgres",
             "type": "db",
             "name": "atlas-postgres",
-            "summary": "The PostgreSQL 16 instance holding all of Project Atlas's persisted state — one dedicated database, no shared instance with anything else in the estate.",
+            "summary": "The PostgreSQL database that holds all of Atlas's persisted state; the bundled container by default, or a managed service an install points Atlas at.",
             "abstract": (
                 "atlas-postgres is a PostgreSQL 16 container holding the entirety of Project Atlas's persisted state — the legacy v0 `component`/`gate`/`requirement`/`decision` tables (ADR 0017) and the object-graph tables (`node`, `node_type`, `edge`, `probe`, `probe_result`), plus identity (`auth_user`, `auth_session`, `auth_service_token`, `auth_login_throttle`, `auth_event`) and `node_visibility` — in a single `atlas` database. It is a dedicated instance: it shares no database with any other stack, so Atlas's data has no coupling to any other store.\n"
                 "\n"
@@ -3644,7 +4499,7 @@ PROFILE = {
                 "\n"
                 "The only connection to it is from **atlas-api**, over `ATLAS_DB_URL` built from the server `.env` — no other service or client reaches this database directly. atlas-api is both the sole reader (all `/api/*` endpoints) and sole writer, and every write is a request-time write: there is no startup ingest that reconciles this database against markdown files any more, so boot no longer changes data at all.\n"
                 "\n"
-                "What persists across a container recreate is exactly the `atlas-pgdata` named volume; removing that volume is a full data reset. No migration framework is in place — schema changes rely on `create_all()` plus an additive-only `ALTER TABLE ADD COLUMN` reconcile step at startup. No backup/retention policy exists (deliberately — see the intent on `atlas`)."
+                "What persists across a container recreate is exactly the `atlas-pgdata` named volume; removing that volume is a full data reset. No Alembic, by decision (TASK-1015): `atlas-migrate upgrade` runs startup's schema steps (`create_all` plus the additive `_reconcile_graph_schema`) and exits; see `atlas-postgres-migrations`. This install keeps no backup, by decision (intent `no-backup` on `atlas`); the product's opt-in backup service is `atlas-backup`."
             ),
             "detail": "See `docs/nodes/atlas-postgres/architecture.md` (this node's Docs tab) for the connection diagram — atlas-api is the only client — and `docs/nodes/atlas-postgres/design.md` for the full table list and the migration/retention gaps. There is no `api` doc for this node: a `db`-type node does not expose an API surface of its own, all access goes through atlas-api's endpoints, which are documented on that node instead.",
             "docs": [
@@ -3660,9 +4515,8 @@ PROFILE = {
                         "\n"
                         "## What this is\n"
                         "\n"
-                        "`atlas-postgres` is Project Atlas's **own** PostgreSQL 16 instance (`postgres:16`, `atlas-pgdata` volume)\n"
-                        "— it shares no database with any other stack. (The `docker-compose.yml` header still reads \"Its own\n"
-                        "Postgres (does NOT touch Redmine's DB)\", written while the now-retired Redmine ran beside it.) Everything Atlas persists — the legacy v0 Component/Gate/Requirement\n"
+                        "`atlas-postgres` is Project Atlas's **own** PostgreSQL 16 instance (built from `deploy/postgres/Dockerfile` (postgres:16 with a setpriv shim), `atlas-pgdata` volume)\n"
+                        "— it shares no database with any other stack. Everything Atlas persists — the legacy v0 Component/Gate/Requirement\n"
                         "tables and the ADR 0019 node/edge/probe graph — lives in this one database (`atlas`).\n"
                         "\n"
                         "## Connections\n"
@@ -3673,7 +4527,7 @@ PROFILE = {
                         "        DB[(\"atlas database<br/>node · node_type · edge · probe · probe_result<br/>component · gate · requirement · decision\")]\n"
                         "    end\n"
                         "\n"
-                        "    API[\"atlas-api<br/>(FastAPI, container :8000)\"] -->|\"ATLAS_DB_URL=<br/>postgresql+psycopg2://atlas:atlas@atlas-postgres:5432/atlas\"| DB\n"
+                        "    API[\"atlas-api<br/>(FastAPI, container :8000)\"] -->|\"ATLAS_DB_URL=<br/>postgresql+psycopg2://atlas:${ATLAS_DB_PASSWORD}@atlas-postgres:5432/atlas\"| DB\n"
                         "\n"
                         "    Vol[(\"atlas-pgdata volume\")] -.->|\"persists\"| atlas-postgres\n"
                         "```\n"
@@ -3687,8 +4541,7 @@ PROFILE = {
                         "\n"
                         "The `atlas-pgdata` named volume is the only thing that survives a container recreate — recreating the\n"
                         "`atlas-postgres` container without removing the volume preserves all data; removing the volume is a full\n"
-                        "reset — and since TASK-1058 there is **no startup ingest to re-populate it from**. Boot creates the\n"
-                        "`node_type` registry and nothing else, so losing this volume loses the graph. That is accepted: backup is\n"
+                        "reset — and since TASK-1058 there is **no startup ingest to re-populate it from**. Boot reads no file and never overwrites graph data. What it does write is schema-shaped: the `node_type` and `edge_type` registries and the `task_id_seq` floor, every boot; on an empty graph, the seed the install's `ATLAS_SEED` profile names (homelab v0 tables, demo, self, plus the system node). So losing this volume loses the graph. That is accepted: backup is\n"
                         "out of scope for Atlas by standing decision.\n"
                     ),
                 },
@@ -3708,58 +4561,96 @@ PROFILE = {
                         "object-graph tables. Both are defined via SQLAlchemy `DeclarativeBase` models and created with\n"
                         "`create_all()` at `atlas-api` startup (additive-only; see the schema-reconcile note below).\n"
                         "\n"
-                        "**Legacy v0 (ADR 0017), in `backend/app.py`:**\n"
-                        "\n"
-                        "| table | purpose |\n"
-                        "|---|---|\n"
-                        "| `component` | the original Component tree — org/program/project/system/service/etc., WBS-coded, RAG-rollup source |\n"
-                        "| `gate` | named checkpoints attached to a component subtree |\n"
-                        "| `requirement` | checkable units under a gate (`axis` + `verify` method) |\n"
-                        "| `decision` | decisions attached to a node (kind/ref/title/status) |\n"
-                        "\n"
-                        "**Object-graph (ADR 0019), in `backend/models_graph.py`:**\n"
-                        "\n"
-                        "| table | purpose |\n"
-                        "|---|---|\n"
-                        "| `node_type` | the type registry — JSON-Schema per type, `family` (`workitem`/`object`/`bridge`), status (`proposed`/`approved`) |\n"
-                        "| `node` | the graph's nodes — `id`, `type`, `name`, `summary`/`abstract`/`detail`, `owner`, `source`, `attributes` (JSONB), cached `attention`/`completion`/`attention_count` |\n"
-                        "| `edge` | directed edges — `src`, `dst`, `edge_type` (`contains`, `depends_on`, `serves`, `works_on`, `for`, …) |\n"
-                        "| `probe` | per-node probe configuration (kind, interval, target) |\n"
-                        "| `probe_result` | cached probe results |\n"
+                        "The legacy v0 tables (ADR 0017: `component`, `gate`, `requirement`, `decision`) are defined in\n"
+                        "`backend/db.py`; the object-graph tables (ADR 0019) in `backend/models_graph.py`. The tables, grouped,\n"
+                        "are described on the child nodes of `atlas-postgres-schema`: `atlas-postgres-tables-graph`,\n"
+                        "`atlas-postgres-tables-accounts`, `atlas-postgres-tables-audit` and `atlas-postgres-tables-settings`.\n"
                         "\n"
                         "`node.attributes` is validated **app-side** against its `node_type`'s JSON-Schema (not a DB constraint) —\n"
-                        "see `models_graph.py`'s `validate_required_world_link` / attribute-validation helpers. This is the\n"
+                        "see `models_graph.py`'s attribute-validation helpers. This is the\n"
                         "deliberate JSONB-over-table-per-type tradeoff from ADR 0019: structure without a migration per type, at\n"
                         "the cost of pushing validation into the application layer.\n"
                         "\n"
                         "## Migrations\n"
                         "\n"
-                        "No migration framework (Alembic, etc.) is in place yet. Startup runs `create_all()` (creates missing\n"
-                        "tables) plus a manual **additive-only reconcile step** (`_reconcile_graph_schema` in `app.py`) that\n"
-                        "issues `ALTER TABLE ... ADD COLUMN` for any column present in the SQLAlchemy models but missing from the\n"
-                        "live table. It cannot drop/rename columns or backfill data — a genuinely destructive or renaming schema\n"
-                        "change still needs a manual `ALTER`/migration outside this mechanism. See the \"Atlas Postgres schema\n"
-                        "deploy gotcha\" note in project memory: fresh-SQLite test runs don't exercise this path (SQLite recreates\n"
-                        "the whole file), so a schema change that passes tests can still fail against the persistent Postgres\n"
-                        "volume — always sanity-check a real schema change against a running `atlas-postgres` volume, not just\n"
-                        "`pytest`.\n"
+                        "See `atlas-postgres-migrations`. `atlas-migrate upgrade` (`backend/migrate_cli.py`) runs startup's schema\n"
+                        "steps and exits: `create_all()` (creates missing tables) plus the additive-only reconcile step\n"
+                        "`_reconcile_graph_schema` in `main.py`, which issues `ALTER TABLE ... ADD COLUMN` for any column present\n"
+                        "in the SQLAlchemy models but missing from the live table. It cannot drop/rename columns or backfill\n"
+                        "data — a genuinely destructive or renaming schema change still needs a manual `ALTER`/migration outside\n"
+                        "this mechanism. Always sanity-check a real schema change against a populated `atlas-postgres` volume,\n"
+                        "not just `pytest`.\n"
                         "\n"
                         "## Retention\n"
                         "\n"
-                        "No backup/retention policy is configured today (`attributes.retention: none`). Data loss tolerance is\n"
-                        "currently \"acceptable\" — the node/edge graph is largely re-derivable by re-running the backlog and world\n"
-                        "manifest ingests (both are idempotent, re-run on every `atlas-api` startup); the Component/Gate/Requirement\n"
-                        "tables are less trivially re-derivable (some are hand-seeded) and would need restoring from a manual\n"
-                        "export if ever lost. A real backup policy is unbuilt — track it as a gap, not an assumption.\n"
+                        "No backup on this install, by decision (intent `no-backup` on `atlas`). Nothing re-derives the graph:\n"
+                        "there is no ingest, so losing the `atlas-pgdata` volume loses the data. The product ships an opt-in\n"
+                        "backup service, `atlas-backup`.\n"
                     ),
                 },
             ],
         },
         {
+            "id": "atlas-postgres-config",
+            "type": "component",
+            "name": "Configuration",
+            "summary": "How Atlas finds and uses its database: the connection setting `ATLAS_DB_URL` and the seed profile that decides what an empty database starts with.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-postgres-migrations",
+            "type": "component",
+            "name": "Migrations",
+            "summary": "How the schema is built and brought up to date: `atlas-migrate upgrade` runs the same schema steps as API startup, then exits.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-postgres-schema",
+            "type": "component",
+            "name": "Schema",
+            "summary": "The tables Atlas keeps its state in, grouped by what they hold: the graph and work, accounts and access, the audit trail, and settings.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-postgres-tables-accounts",
+            "type": "component",
+            "name": "Account tables",
+            "summary": "Who may do what: users, sessions, service tokens, groups, project role bindings, node grants and visibility marks.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-postgres-tables-audit",
+            "type": "component",
+            "name": "Audit tables",
+            "summary": "The record of what happened: graph changes, sign-in events and, when read audit is on, who read what.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-postgres-tables-graph",
+            "type": "component",
+            "name": "Graph tables",
+            "summary": "Nodes, edges and their type registries, plus what hangs off them: node documents, intents, acceptance criteria and proposals, results, comments and ADR records.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-postgres-tables-settings",
+            "type": "component",
+            "name": "Settings tables",
+            "summary": "Install-level state that is configuration rather than graph: board-set config values, crunch week state and history, and setup guide answers.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-postgres-vector",
+            "type": "component",
+            "name": "Vector store",
+            "summary": "The pgvector tables behind the optional semantic retrieval add-on: text chunks and their embeddings, derived from the database and rebuildable from it.",
+            "docs": [],
+        },
+        {
             "id": "atlas-retrieval",
             "type": "capability",
             "name": "Semantic retrieval (add-on)",
-            "summary": "Opt-in add-on (ADR 0044): semantic search over world-node prose and served documents, embedded into pgvector through any OpenAI-compatible endpoint; agents ask in their own words or in Swedish with atlas_node_search(mode=\"hybrid\"). Atlas is complete without it.",
+            "summary": "Opt-in semantic search over world-node prose and served documents, embedded into pgvector through any OpenAI-compatible endpoint; Atlas works the same without it.",
             "abstract": (
                 "`atlas-retrieval` is the **optional** semantic half of \"tell me about X\" (ADR 0044, EPIC-atlas-context). It keeps a vector index of what Atlas already holds — one *card* per world node (name, type, summary, abstract, detail) and the **served** documents of those nodes, split on headings — and answers searches with it, so a question asked in someone's own words, or in Swedish about something documented in English, finds its starting points. The index lives in Atlas' own Postgres (pgvector), never in another service, and every row of it is derived: it can be dropped and rebuilt at any time.\n"
                 "\n"
@@ -3987,17 +4878,25 @@ PROFILE = {
             ],
         },
         {
+            "id": "atlas-search",
+            "type": "capability",
+            "name": "Search",
+            "summary": "Full-text search across every node Atlas holds, its prose, bodies, served documents, acceptance criteria, results, comments and ADRs, filtered by what the caller may see.",
+            "abstract": "The full-text search route `/api/search`; `atlas-retrieval` adds the optional semantic half, and `atlas-context` uses this search for its seeds.",
+            "docs": [],
+        },
+        {
             "id": "atlas-security",
             "type": "capability",
             "name": "Security",
-            "summary": "Who may pass and what they may see: login, sessions, service tokens, password policy, node visibility, redaction. Ingress is the path in; this is the policy.",
+            "summary": "The policy applied once a request arrives: who may pass, what they may see, what agents may do, and the record of it. Ingress is the path in; this is the policy.",
             "abstract": (
-                "`atlas-security` is the **policy** umbrella for Project Atlas: who may pass, and what they may see. It owns no code directly — it is the node its two children hang from. `atlas-identity` is **authentication** (who you are and how you prove it: the gate, login, passwords, sessions, accounts, service tokens). `atlas-visibility` is **authorisation to see** (what a signed-in caller may read: the private mark, its inheritance, the serialiser choke point). Nothing binds to `atlas-security` itself — work sits on those two children and rolls up here.\n"
+                "`atlas-security` is the **policy** umbrella for Project Atlas: who may pass, and what they may see. It owns no code directly — it is the node its four children hang from. `atlas-identity` is **authentication** (who you are and how you prove it: the gate, login, passwords, sessions, accounts, service tokens). `atlas-visibility` is **authorisation to see** (what a signed-in caller may read: the private mark, its inheritance, the serialiser choke point). `atlas-audit-trail` is the record of who did what (sign-in events, graph changes, the opt-in read audit and its export). `atlas-guardrails` is what an agent may do on its own per environment. Nothing binds to `atlas-security` itself — work sits on the children and rolls up here.\n"
                 "\n"
                 "Commitments that hold across both children and are the posture of the whole product:\n"
                 "\n"
                 "- **Deny by default at one gate.** `AuthGate` is ASGI middleware, not route-level `Depends`, so it covers every route, every mount and every path that does not exist — including a route added six months from now. `/api/health` is deliberately not on the public exempt list.\n"
-                "- **The exempt list is short, pinned, and reviewed by a failing test.** `PUBLIC_ROUTES` in `backend/auth.py` is the whole of what the gate does not refuse; `verify_object_graph.py` asserts it equals an exact frozenset, so an addition cannot land without someone editing the assertion, and the convention is that an addition carries an ADR note. Two entries are there because a page you can only read *after* signing in is not available to the person deciding whether to sign in: `/auth/privacy` (TASK-941, ADR-less by age) and — since 2026-08-25, ADR 0035 — **`/`, the bare domain**, which now serves a public description of the product instead of the login form.\n"
+                "- **The exempt list is short, pinned, and reviewed by a failing test.** `PUBLIC_ROUTES` in `backend/auth.py` is the whole of what the gate does not refuse; `verify_object_graph.py` asserts it equals an exact frozenset, so an addition cannot land without someone editing the assertion, and the convention is that an addition carries an ADR note. Two entries are there because a page you can only read *after* signing in is not available to the person deciding whether to sign in: `/auth/privacy` (TASK-941, ADR-less by age) and — since 2026-08-25, ADR 0035 — **`/`, the bare domain**, which now serves a public description of the product instead of the login form. Three opt-in settings extend it with exact paths, never a prefix: the OIDC start and callback routes (`ATLAS_AUTH_PROVIDERS`, ADR 0041), the handbook (`ATLAS_PUBLIC_DOCS=1`, ADR 0047) and the landing site's files (`ATLAS_LANDING=v2`, ADR 0049); unset, the list is exactly the one above.\n"
                 "- **A public route is not the same as a fixed response.** `/` reads `auth.current_principal` in its own handler and redirects a signed-in browser to `/board`; the gate is what does not refuse it, and the handler is what decides what it says. `/board` itself was NOT made public, and neither was anything under `/assets/*` — measured on both live hosts on the day it shipped, because a login gate that fails for a path *prefix* is the shape of this project's two worst near-misses.\n"
                 "- **Fail closed at boot.** The peppers and the origin allow-list raise at *import*, before uvicorn binds. There is no `ATLAS_AUTH_DISABLED` and no bootstrap account.\n"
                 "- **One write guard.** `auth.guard_write` is the only answer to \"may this request change data\", and — since TASK-1086 (2026-08-15) — it enforces the caller's scope on top of authenticating them, fail-closed for any route it has no scope mapping for.\n"
@@ -4007,11 +4906,11 @@ PROFILE = {
             "detail": (
                 "See `docs/nodes/atlas-security/architecture.md` (this node's Docs tab).\n"
                 "\n"
-                "**Where the code is.** `backend/auth.py` (the gate, sessions, CSRF, service tokens), `backend/passwords.py` (hashing, policy, breach screening, per-IP throttling), `backend/models_auth.py` (`auth_user`, `auth_session`, `auth_service_token`, `auth_event`, `auth_login_throttle`, and `node_visibility` under its own separate `Base`), and `backend/admin.py` (the operator CLI). All five auth tables are live in Postgres.\n"
+                "**Where the code is.** `backend/auth.py` (the gate, sessions, CSRF, service tokens), `backend/passwords.py` (hashing, policy, breach screening, per-IP throttling), `backend/models_auth.py` (the auth tables, `node_visibility` and `node_grant` under their own `Base`, and the RBAC and IdP-link tables), and `backend/admin.py` (the operator CLI).\n"
                 "\n"
-                "**Decisions.** ADR 0025 (*Atlas grows its own identity*) is **Accepted and live**; ADR 0022 (*external access via an authenticated tunnel*) is still **Proposed**. **ADR 0026, the per-node visibility decision, has never been written** even though `backend/app.py` and several task files cite it by number — treat any reference to it as a forward reference, not a source.\n"
+                "**Decisions.** ADR 0025 (*Atlas grows its own identity*) is **Accepted and live**; ADR 0022 (*external access via an authenticated tunnel*) is Accepted, partly superseded by 0025. **ADR 0026, the per-node visibility decision, has never been written** even though `backend/app.py` and several task files cite it by number — treat any reference to it as a forward reference, not a source.\n"
                 "\n"
-                "**Operating it** is a CLI on the container, never a web form: `docker exec -it atlas-api python -m admin user|bot|token|session|init-db`. There is no self-registration route, no password-reset route and no seeded default account, now or later.\n"
+                "**Human accounts and operator actions** are a CLI on the container, never a web form (a person's own agent credentials are the one exception: Settings → Agent credentials): `docker exec -it atlas-api atlas-admin <group> …` (groups: see `atlas-cli`). There is no self-registration route, no password-reset route and no seeded default account, now or later.\n"
                 "\n"
                 "**Scope enforcement closed the one gap that mattered here.** Until TASK-1086 (2026-08-15) a service token's scopes were recorded and displayed but never checked; that is fixed — every mutating route now maps to a required scope and refuses a caller who does not carry it. The remaining discipline is choosing what scope to mint, not hoping nothing checks it."
             ),
@@ -4028,12 +4927,15 @@ PROFILE = {
                         "\n"
                         "`atlas-security` is the **policy** umbrella, at level 2 of `atlas` beside `atlas-backend`,\n"
                         "`atlas-frontend`, `atlas-ingress`, `atlas-ops` and `atlas-mcp` (ADR 0030). It owns no code of its\n"
-                        "own — it is the node its two children hang from, and work binds to them, not to it:\n"
+                        "own — it is the node its four children hang from, and work binds to them, not to it:\n"
                         "\n"
                         "- **`atlas-identity`** — *who you are and how you prove it*: the deny-by-default gate, login,\n"
                         "  passwords, sessions, machine credentials, accounts.\n"
                         "- **`atlas-visibility`** — *what a signed-in caller may read*: the per-node private mark, the\n"
                         "  per-account grant, their inheritance down `contains`, and the one place they are enforced.\n"
+                        "- **`atlas-audit-trail`** — *the record of who did what*: sign-in events, graph changes, the\n"
+                        "  opt-in read audit and its export.\n"
+                        "- **`atlas-guardrails`** — *what an agent may do on its own* per environment.\n"
                         "\n"
                         "**The boundary against `atlas-ingress`**, its sibling: ingress is *the path in* — TLS termination,\n"
                         "routing, tunnels, which hostnames exist at all. Security is the policy applied once a request has\n"
@@ -4117,7 +5019,7 @@ PROFILE = {
             "id": "atlas-signals",
             "type": "capability",
             "name": "Attention & rollup",
-            "summary": "Attention derivation, health, worst-child rollup, completion, work-load counts.",
+            "summary": "Derives the marks a node wears on the board, attention colour, completion and attention count, from statuses and edges, recomputed in the same write that changes them.",
             "abstract": (
                 "`atlas-signals` is the derivation layer — one module, `backend/attention.py`, that turns statuses\n"
                 "and edges into the three marks a node wears on the board: **fill** (`attention` — \"where do I\n"
@@ -4138,11 +5040,10 @@ PROFILE = {
                 "when its own state is grey — **red** when its own dependencies are all clear (the actionable\n"
                 "frontier, \"do this next\") and **orange** when it is itself still blocked. So a dependency chain\n"
                 "shows one red frontier, not an all-red chain. A node with children takes `worst()` over them along\n"
-                "`contains`, **with grey excluded** — which is why `atlas-backend` reads green rather than being\n"
-                "dragged grey by the capabilities beneath it.\n"
+                "`contains`, **with grey excluded** — so one no-signal child cannot drag a parent's colour to grey. (A parent whose children are all grey reads grey: the health hint applies to leaves only.)\n"
                 "\n"
                 "**`purple` is reserved and never returned in v1.** ADR 0019's ageing awaiting-decision state needs a\n"
-                "persistent `since` timestamp and a decision store; neither exists, so no node on the board is purple.\n"
+                "persistent `since` timestamp and a decision store; neither exists, so no node on the board is purple. ADR 0048's `decision` workitem type (not yet built) is the likely decision store.\n"
                 "How many nodes wear each colour is a query, not a fact about this capability — the board renders it."
             ),
             "detail": (
@@ -4263,20 +5164,27 @@ PROFILE = {
                         "So on a world node today: the colour is a hand-set hint rolled up, the ring is empty, and the badge\n"
                         "never appears. The number people actually read on an object comes from `work_load` instead — the\n"
                         "panel's \"N workitems · M done (X%)\" — and the panel says so in as many words: *\"Direct links only —\n"
-                        "a rollup over this object's sub-tree isn't computed yet.\"* `TASK-999` is that rollup.\n"
+                        "a rollup over this object's sub-tree isn't computed yet.\"* That rollup (TASK-999) was cancelled; nothing is scheduled to add it.\n"
                     ),
                 },
             ],
         },
         {
+            "id": "atlas-tls",
+            "type": "service",
+            "name": "atlas-tls",
+            "summary": "The TLS front: the one published port, the internal origin the MCP calls the API through, the install's certificate authority and optional client certificates.",
+            "docs": [],
+        },
+        {
             "id": "atlas-tooling",
             "type": "component",
             "name": "Atlas tooling",
-            "summary": "The developer scripts that ship and inspect the board — `tools/stage.sh` for staging, and the verify_*.py suite (object graph, status lifecycle).",
+            "summary": "The command-line tools for running Atlas: the admin CLI used inside the API container, and the desktop scripts that stage, fork, deploy, check and snapshot the stacks.",
             "abstract": (
-                "atlas-tooling is the tooling surface of Project Atlas, not a runtime service: `tools/stage.sh` (put a committed branch on the staging stack), the optional frontend bind-mount in `deploy/staging.override.yml` (serve a working tree through the real staging app, no image rebuild), and the verifiers `backend/verify_object_graph.py` and `backend/verify_status_lifecycle.py`.\n"
+                "atlas-tooling is the tooling surface of Project Atlas, not a runtime service: the admin CLI (`atlas-cli`, run inside the API container) and the delivery scripts (`atlas-delivery-scripts`: stage, fork, deploy, check, snapshot).\n"
                 "\n"
-                "It exists as a node because the scripts it holds needed somewhere to bind that wasn't a project root itself — before ADR 0030 gave the tree capability nodes, binding tooling work straight to the `atlas` project root would have turned that root into a shadow backlog. Nothing is deployed here — it runs on a developer workstation, which is why it carries no `hosted_on` edge."
+                "It exists as a node because the scripts it holds needed somewhere to bind that wasn't a project root itself — before ADR 0030 gave the tree capability nodes, binding tooling work straight to the `atlas` project root would have turned that root into a shadow backlog. Nothing is deployed here — the scripts run from a workstation (snapshot on the server, by way of `deploy.sh snapshot`) and the CLI inside `atlas-api`, which is why it carries no `hosted_on` edge."
             ),
             "docs": [
                 {
@@ -4333,27 +5241,24 @@ PROFILE = {
                         "a historical record — not something to edit and re-run expecting the board to follow.**\n"
                         "\n"
                         "**`tools/stage.sh` ships a committed tree, never the working directory**, over `git archive | ssh`\n"
-                        "— so staging always reflects a real commit, and a branch that predates the staging overlay still\n"
-                        "stages against the overlay in *this* clone, not whatever shipped with the branch. See `atlas-ops`\n"
+                        "— so staging always reflects a real commit, and the staging overlay is read from that same ref. See `atlas-ops`\n"
                         "for the isolation mechanics (containers, volumes, network, port) once the branch lands there.\n"
                         "\n"
-                        "**The admin CLI is the only way to create or change an account or a service token — there is no\n"
-                        "web form.** `admin user add` prints a generated temp password once and forces a change on first\n"
+                        "**The admin CLI is the only way to create or change a *human* account; a person's own agent token\n"
+                        "can also be minted from Settings → Agent credentials.** `admin user add` prints a generated temp password once and forces a change on first\n"
                         "login; `admin bot add` creates a service principal with no usable password at all\n"
                         "(`is_service`, and the DB `CHECK` constraint forbids a password on that row); `admin token add`\n"
                         "mints `atlas_svc_<prefix>_<secret>`, requires `--scopes` explicitly (an unscoped token is refused\n"
                         "at creation, by the same domain `atlas-security` enforces at request time now), and shows the raw\n"
                         "value exactly once. `admin session mint` is the one command gated by an environment flag\n"
-                        "(`ATLAS_ALLOW_SESSION_MINT`, set only on staging) rather than a role check — it hands out a real,\n"
+                        "(`ATLAS_ALLOW_SESSION_MINT`, set only on non-live stacks (staging and the fork), never on live) rather than a role check — it hands out a real,\n"
                         "password-free browser session, which is the only way to drive the synchronizer-token CSRF path\n"
                         "from an automated browser.\n"
                         "\n"
                         "## What will bite someone\n"
                         "\n"
-                        "- **Nothing here runs by itself.** There is no CI workflow and no pre-commit hook in this repo.\n"
-                        "  `node --check`, the verify suite, staging, driving the board and closing the ticket all happen\n"
-                        "  because a person or an agent remembers to run them — the same shape of gap that let the old\n"
-                        "  markdown-sync bridge go stale for a full day before anyone noticed.\n"
+                        "- **CI checks; it does not gate.** The verify suite runs on every push, but nothing blocks a\n"
+                        "  merge, and staging, measuring and closing the ticket still depend on someone doing them.\n"
                         "- **A live-facing tool and a test-facing tool look similar and are not interchangeable.**\n"
                         "  `apply_intents.py`/`apply_node_docs.py` need a real `--base` URL and a minted, then revoked,\n"
                         "  Bearer token; `verify_all.py` needs neither — it never touches a deployed database, only a\n"
@@ -4371,6 +5276,83 @@ PROFILE = {
                     ),
                 },
             ],
+        },
+        {
+            "id": "atlas-view-access",
+            "type": "component",
+            "name": "Access administration",
+            "summary": "Owner-only overlay on board v2 for editing groups and project role bindings, saving each list whole as the access API replaces rather than merges.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-dashboard",
+            "type": "component",
+            "name": "Dashboard",
+            "summary": "An optional board v2 pane holding a grid of collapsible boxes about the signed-in person, starting with their open tasks.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-graph",
+            "type": "component",
+            "name": "Graph view",
+            "summary": "Board v2's graph pane: the world drawn as a radial tree around a focused node, grown by steps, where clicking sets the scope the work board and panel follow.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-graph-glyphs",
+            "type": "component",
+            "name": "Glyphs",
+            "summary": "The graph's node mark: attention fill, a type pictogram, a completion ring, an attention-count badge, and pips for intents, docs and skills.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-graph-labels",
+            "type": "component",
+            "name": "Label placement",
+            "summary": "Decides which graph labels show and where, by each node's on-screen size and a priority order, using measured text width.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-graph-layout",
+            "type": "component",
+            "name": "Radial layout",
+            "summary": "Places graph nodes as a radial tree around the focus, laid out for the rings that show, so moving the steps slider re-spaces the graph.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-search",
+            "type": "component",
+            "name": "Search box",
+            "summary": "Find-as-you-type over the loaded graph by name or id: a world node becomes the focus, a piece of work opens in the panel.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-settings",
+            "type": "component",
+            "name": "Settings",
+            "summary": "Board v2's settings: it opens the legacy Settings overlay and adds v2's own parts to it, the crunch-week tab and the password notice.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-settings-crunch",
+            "type": "component",
+            "name": "Crunch week panel",
+            "summary": "The owner's Settings tab for crunch week, a set period when changes that pass CI deploy straight to production, plus the banner everyone sees while it runs.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-settings-password",
+            "type": "component",
+            "name": "Password notice",
+            "summary": "A dismissible board notice for a single-sign-on account that has no personal password yet, leading through a fresh sign-in to set one.",
+            "docs": [],
+        },
+        {
+            "id": "atlas-view-work",
+            "type": "component",
+            "name": "Work board",
+            "summary": "Board v2's work pane, scoped by the graph: epics with progress, a kanban board where dragging a card sets its status, and a backlog tree.",
+            "docs": [],
         },
         {
             "id": "atlas-visibility",
@@ -4553,7 +5535,7 @@ PROFILE = {
             "id": "atlas-work-store",
             "type": "capability",
             "name": "Workitem store",
-            "summary": "Workitem prose, acceptance criteria, the result record, comments, authoring and full-text search. The SUBSYSTEM that stores workitems — the workitems themselves live in the work tree and attach here via works_on.",
+            "summary": "The subsystem that stores workitem content, spec, acceptance criteria, result record, comments and assignee, and the routes that author and read it; not the workitems themselves.",
             "abstract": (
                 "`atlas-work-store` is the **subsystem that stores workitems** — not the workitems themselves. Those are `workitem`-family nodes living in the work tree, and they attach to the world through a `works_on` edge; this node owns the tables their content sits in and the routes that read and write it.\n"
                 "\n"
@@ -4580,17 +5562,17 @@ PROFILE = {
                 "\n"
                 "## Priority\n"
                 "\n"
-                "**A workitem has no priority field.** The WSJF-style score in `app.compute_priority` (`value`, `effort`, `urgency`, `risk`) belongs to world components, not to workitems, so `POST`/`PATCH /api/workitem` accept a `priority` key and store nothing, and the board offers no control for it. Urgency is carried in the name instead, as a `CRITICAL:` prefix (TASK-1208, TASK-1221).\n"
+                "**A workitem has no priority field.** The WSJF-style score in `routers/legacy_v0.compute_priority` (`value`, `effort`, `urgency`, `risk`) belongs to world components, not to workitems, so `POST`/`PATCH /api/workitem` accept a `priority` key and store nothing, and the board offers no control for it. Urgency is carried in the name instead, as a `CRITICAL:` prefix (TASK-1208, TASK-1221).\n"
                 "\n"
                 "## The two prose stores, and who may write what\n"
                 "\n"
                 "**A workitem's prose is TWO stores.** `node.body` holds the spec; its `## Result`/`## Outcome` block is a `workitem_result` row. **Record an outcome with `result`, never by rewriting `body`** — `result: null` DELETES the row, omitting the key changes nothing. A `body` PATCH still replaces wholesale, deliberately, because the routine operation that used to force one is gone.\n"
                 "\n"
-                "**Acceptance criteria are not writable by a machine principal** (2026-08-23). A Bearer caller `PATCH`ing `acceptance` on an EXISTING workitem gets **403**; a browser session may, and creation is unaffected. `app.acceptance_rail_refusal()` carries the reasoning, including why it is deliberately NOT scoped to the assignee.\n"
+                "**Acceptance criteria are not writable by a machine principal** (2026-08-23). A Bearer caller `PATCH`ing `acceptance` on an EXISTING workitem gets **403**; a browser session may, and creation is unaffected. Two paths remain: an agent may PROPOSE criteria (`acceptance_proposal`, approved by a person on the board), and an install with `ATLAS_ACCEPTANCE_AGENT_WRITE=attested` lets an agent write them by citing a person's approval, recorded with the change. `routers/workitems.acceptance_rail_refusal()` carries the reasoning, including why it is deliberately NOT scoped to the assignee.\n"
                 "\n"
                 "## Assignment\n"
                 "\n"
-                "**A workitem's assignee is an account, not a string** — `node.assignee_user_id`, NULL for unassigned. `POST`/`PATCH /api/workitem` return **400 `owner_retired`** on any `owner` key, `null` included, because presence is what identifies a stale caller; `app.owner_retired_refusal` argues 400 over silently ignoring it. `owner` remains the right field on object-family nodes, where it means who looks after that part of the world.\n"
+                "**A workitem's assignee is an account, not a string** — `node.assignee_user_id`, NULL for unassigned. `POST`/`PATCH /api/workitem` return **400 `owner_retired`** on any `owner` key, `null` included, because presence is what identifies a stale caller; `routers/workitems.owner_retired_refusal` argues 400 over silently ignoring it. `owner` remains the right field on object-family nodes, where it means who looks after that part of the world.\n"
                 "\n"
                 "## Search and the result splitter\n"
                 "\n"
@@ -4628,7 +5610,7 @@ PROFILE = {
                         "| recorded outcome | `workitem_result` (`heading`, `text`, `position`) | the `result` field — **never** touches `body` | 234 rows, 176 KB |\n"
                         "| comments | `workitem_comment` (`node_id`, `body`, `created_at`, `created_by_user_id`/`_subject`, `edited_at`, `deleted_at`, `deleted_by_user_id`/`_subject`) | `POST /api/workitem/{id}/comments`; `PATCH`/`DELETE /api/comment/{id}` (`routers/comments.py`) | since 2026-10-28. The author is copied off the principal, never the body. Only the author edits; the author or an instance owner deletes. Read = whoever sees the item, write = editor. Each act is a `node.comment.*` graph_event naming the id, never the text. Searched since 2026-10-29 (`matched_in: comment`, full text only). **A delete hides, never removes** (since 2026-10-30): `deleted_at` and the deleter are set, the row and its text stay, and every read (list, search, snippet) filters `deleted_at IS NULL`; editing or deleting it again is 404 |\n"
                         "| comment edit history | `workitem_comment_revision` (`comment_id`, `body`, `written_at`, `replaced_at`, `replaced_by_user_id`/`_subject`) | `PATCH /api/comment/{id}`, in the same transaction as the overwrite, only when the text changes | since 2026-10-30. Every text a comment had before an edit replaced it. An audit record: no route reads it, read it in the database |\n"
-                        "| parent | `contains` edge, workitem → workitem | create/patch | `WORK_HIERARCHY_EDGE_TYPE`; becomes `decomposes_into` at TASK-1030 |\n"
+                        "| parent | `contains` edge, workitem → workitem | create/patch | `WORK_HIERARCHY_EDGE_TYPE` |\n"
                         "| world binding | `works_on` edge, workitem → object | create/patch | **at most one** (ADR 0028), enforced in the generic edge route too |\n"
                         "| dependencies | `depends_on` edges | create/patch | 288 live |\n"
                         "\n"
@@ -4677,18 +5659,18 @@ PROFILE = {
             "id": "atlas-world-model",
             "type": "capability",
             "name": "World model",
-            "summary": "The ontology and what the graph is used to SAY: node families, edge vocabulary, ownership, and how work binds to world objects. Distinct from atlas-graph, which is the machinery that stores and serves it.",
+            "summary": "The vocabulary of the graph, node families, edge types, roots and how work binds to world objects: what the graph may say, as opposed to atlas-graph, which stores it.",
             "abstract": "`atlas-world-model` is the **vocabulary** — what the graph is used to say. `atlas-graph` is the machinery that stores and serves it; this node decides what may be stored: which node families exist, what each edge type means, where the roots are, and how a piece of work binds to a world object. Change the storage engine and this node is untouched; change what `contains` means and every consumer moves.",
             "detail": (
                 "See `docs/nodes/atlas-world-model/architecture.md` (this node's Docs tab) for the roots and edge vocabulary diagram.\n"
                 "\n"
                 "**The edge vocabulary is a TABLE now, not a list in prose** (2026-08-26). `edge_type` holds one row per type — its legal `(src_family, dst_family)` pairs, a description of what it means, and a `status` of `active` or `dead` — seeded every boot by `node_types.ensure_edge_types()`, exactly as `node_type` is, and read live at `GET /api/vocabulary`. Query it rather than trusting any list, including the one in this node's own abstract: that prose is the human explanation and this table is the authority.\n"
                 "\n"
-                "**What renders, and what does not.** The map draws the non-`contains` world edges as dashed arcs behind the Links control, but only the types in `board.html`'s `WORLD_EDGES` list and its `#xedgeType` dropdown. **`instance_of` is not among them** — it is active and family-validated, yet absent from `WORLD_EDGES`, the dropdown and `board.css`, so it renders nowhere (checked 2026-09-10 and again 2026-09-15: no file under `frontend/` mentions it).\n"
+                "**What renders, and what does not.** On the legacy board (`/board/legacy`), the map draws the non-`contains` world edges as dashed arcs behind the Links control, but only the types in `board.html`'s `WORLD_EDGES` list and its `#xedgeType` dropdown. **`instance_of` is not among them** — it is active and family-validated, yet absent from `WORLD_EDGES`, the dropdown and `board.css`, so it renders nowhere (checked 2026-09-10 and again 2026-09-15: no file under `frontend/` mentions it).\n"
                 "\n"
                 "**Drift is reported, not enforced.** `/api/health` carries `edge_type_warnings`, a list that is normally empty (the `token_warnings` shape, never a boolean), with four conditions: a type in use that no row declares; an `active` type with zero rows; a `dead` type that has GAINED rows; and a `(src_family, dst_family)` combination in real use that the type's `pairs` does not list. The third is the one the table exists for — `serves` is declared `dead`, and a single `serves` row would bring back the rollup double-count ADR 0028 exists to prevent, so that hazard is now *watched* rather than *remembered*. It returns `[]` on live and legitimately non-empty on staging, whose world predates the ADR 0030 restructure.\n"
                 "\n"
-                "**Where the vocabulary is still ENFORCED, and the hole that remains.** `OBJECT_TYPES` and `BRIDGE_TYPES` live in `backend/node_types.py` **and are copied in `frontend/state.js`** — the frontend copy is what splits world roots from work roots at boot, so a type added to one and not the other is silently treated as a workitem. They move together. On edges, `EDGE_FAMILY_RULES` in `app.py` still constrains `contains`, `uses`, `instance_of` and `requires` to object → object and `works_on` to workitem → object, and **`_check_family` treats a type absent from that dict as a permissive NO-OP** — so `depends_on`, `hosted_on`, `contributes_to` and both `dead` types get no family check at all through generic `POST /api/edge`. `_refuse_second_binding` still enforces the single binding on both that route and the workitem routes.\n"
+                "**Where the vocabulary is still ENFORCED, and the hole that remains.** `OBJECT_TYPES` and `BRIDGE_TYPES` live in `backend/node_types.py`. On the legacy board (`/board/legacy`) they **are copied in `frontend/state.js`** — the frontend copy is what splits world roots from work roots at boot, so a type added to one and not the other is silently treated as a workitem. They move together. Board v2 holds no copy of the families: it filters with `families=` on `/api/graph`. On edges, `EDGE_FAMILY_RULES` in `deps.py` still constrains `contains`, `uses`, `instance_of` and `requires` to object → object and `works_on` to workitem → object, and **`_check_family` treats a type absent from that dict as a permissive NO-OP** — so `depends_on`, `hosted_on`, `contributes_to` and both `dead` types get no family check at all through generic `POST /api/edge`. `_refuse_second_binding` still enforces the single binding on both that route and the workitem routes.\n"
                 "\n"
                 "## Where work binds\n"
                 "\n"
@@ -4740,7 +5722,7 @@ PROFILE = {
                         "graph LR\n"
                         "  W[\"workitem family<br/>epic · story · task\"]\n"
                         "  O[\"object family<br/>org project system service component<br/>agent db host capability\"]\n"
-                        "  B[\"bridge family<br/>skill · doc · vision\"]\n"
+                        "  B[\"bridge family<br/>skill · vision (doc: retired, still seeded)\"]\n"
                         "\n"
                         "  W -->|contains| W\n"
                         "  W -->|depends_on| W\n"
@@ -4816,12 +5798,33 @@ PROFILE = {
             ],
         },
         {
+            "id": "panel-comments",
+            "type": "component",
+            "name": "Comments tab",
+            "summary": "The node panel's Comments tab: the markdown conversation on an epic, story or task, where editors write and authors edit or delete their own.",
+            "docs": [],
+        },
+        {
+            "id": "panel-config",
+            "type": "component",
+            "name": "Config tab",
+            "summary": "The node panel's owner-only Configuration tab: each setting belonging to an install part, its effective value and where it comes from, with secrets shown as state only.",
+            "docs": [],
+        },
+        {
+            "id": "panel-decisions",
+            "type": "component",
+            "name": "Decisions tab",
+            "summary": "The node panel's Decisions tab: the architecture decision records of a project, or of any node with records, as a list, and one record's status, links, source and text.",
+            "docs": [],
+        },
+        {
             "id": "panel-docs",
             "type": "component",
             "name": "Docs tab",
-            "summary": "The node-doc viewer (ADR 0029) and the docs[] artifact list.",
+            "summary": "The node panel's Docs tab: a row per entry in the node's docs[], each fetched on open and rendered as markdown with diagrams; external documents are only labelled.",
             "abstract": (
-                "`panel-docs` is the detail panel's Docs tab — the reader for a node's authored documentation. It is a region of `frontend/panel.js`. It lists `node.attributes.docs[]`, one `renderDocRow` per entry (`{kind, title, path, format}`, the schema ADR 0020 fixed), and for entries rooted at `docs/nodes/` — `DOC_INTERNAL_PREFIX` — the row header is a button that expands an inline viewer. `renderDocViewer` fetches `GET /api/node/{id}/doc?path=…`, renders the markdown through the same `marked` configuration the rest of the panel uses (raw HTML **escaped**, not emitted), and replaces every fenced ```mermaid block with inline SVG via `mermaid.render` — vendored, `startOnLoad: false`, `securityLevel: \"strict\"`, rendered on demand rather than auto-scanned.\n"
+                "`panel-docs` is the node panel's Docs tab, `frontend/v2/views/panel/docs.js`: one expandable row per `docs[]` entry, fetched from `GET /api/node/{id}/doc?path=` when first opened and rendered as markdown with Mermaid diagrams (`ui/md.js`).\n"
                 "\n"
                 "**`docs[]` is an allowlist, not a directory listing**, and that is the tab's boundary. The read route matches `path` **exactly** against this node's own entries before it touches any table, so a node can only ever read its own documents and an unlisted path gets a 404 with no lookup at all. Since **ADR 0029** the content lives in Postgres (`node_doc`), not on disk: there is no `open()`, and therefore no path-traversal guard — the old one was deleted rather than left in place misstating what the code does.\n"
                 "\n"
@@ -4830,7 +5833,7 @@ PROFILE = {
             "detail": (
                 "**Read-only.** The tab renders documents; it does not author them. `PUT` and `DELETE /api/node/{id}/doc` exist (TASK-1076, the authoring half of ADR 0029) but nothing in this tab calls them, and *publishing* a stored document stays a separate visible act — a PATCH on the node's `attributes`. `PUT` reports `served: false` with an `expected-not-served` note when the allowlist entry is missing, which is how that state is meant to be discovered.\n"
                 "\n"
-                "**Behaviour worth knowing.** The badge is `docs.length`, known synchronously; most nodes show none and get *\"No docs attached.\"* Viewer content loads lazily on first expand and is not refetched on collapse. A Mermaid failure renders a visible `Diagram render failed: …` line rather than a blank pane. External rows are plain `<div>`s and never clickable, which makes the viewer's external branch unreachable today — it is kept precisely because it is one deleted filter away from a silent empty page.\n"
+                "**Behaviour worth knowing.** The badge is `docs.length`, known synchronously; most nodes show none and get *\"No docs attached.\"* Viewer content loads lazily on first expand and is not refetched on collapse. A Mermaid failure renders a visible `Diagram render failed: …` line rather than a blank pane. An external entry opens to a note that its content lives outside Atlas; a listed path with no stored content says so instead of rendering blank. A node with one document opens it at once.\n"
                 "\n"
                 "**Paths are database keys, not files.** `docs/nodes/` was deleted from git on 2026-08-12; writing a file there would not make the board serve anything.\n"
                 "\n"
@@ -4844,6 +5847,8 @@ PROFILE = {
                     "format": "md",
                     "content": (
                         "# panel-docs\n"
+                        "\n"
+                        "**Legacy only.** This describes `frontend/panel.js` on the frozen `/board/legacy`; board v2's Docs tab is described on the node itself.\n"
                         "\n"
                         "## What it is\n"
                         "\n"
@@ -4930,23 +5935,27 @@ PROFILE = {
             ],
         },
         {
+            "id": "panel-history",
+            "type": "component",
+            "name": "History tab",
+            "summary": "The node panel's History tab: who changed this node and on whose authority, read from the graph event log on first open and paged by the server's total.",
+            "docs": [],
+        },
+        {
+            "id": "panel-intent",
+            "type": "component",
+            "name": "Intent tab",
+            "summary": "The node panel's Intent tab: the node's own intents, then those it inherits grouped by the node they come from, as the API computes them.",
+            "docs": [],
+        },
+        {
             "id": "panel-links",
             "type": "component",
             "name": "Links tab",
-            "summary": "Lateral edges, depends_on, and the sub-node list.",
-            "abstract": (
-                "`panel-links` is the detail panel's Links tab — how a node connects **sideways and downwards**, as distinct from what work is on it (Work) or what it is for (Intent). It is a region of `frontend/panel.js`, built inline by `renderPanel`, and it has two sections whose presence depends on `isObject(node)`.\n"
-                "\n"
-                "For a **workitem** it renders **Depends on** in both directions — *Blocked by* (this node's outbound `depends_on`) and *Blocks* (inbound) — from a single `GET /api/graph?focus={id}&depth=1`, filtered client-side to `depends_on` edges and drawn as `renderLinkRow`s. For an **object** that whole section is replaced by one line pointing at the Work tab, because a dependency between world objects is not a thing the model expresses.\n"
-                "\n"
-                "Both cases end with **Sub-nodes**: `node.children` off the tree payload, one clickable glyph row each, *\"No children — this is a leaf.\"* when empty. Rows here call `selectNode` directly rather than going through the `hooks.navigateTo` seam, and that is deliberate — a sub-node or a `depends_on` neighbour is always in the *same* tree as the node already open, so there is no World/Work tab switch to bridge.\n"
-                "\n"
-                "**What it does not show.** Not parents: `contains` is rendered downward only. Not the world bindings — `works_on`/`serves` are the Work tab's Connections. And not, today, the other lateral edge types at all: `hosted_on`, `instance_of`, `contributes_to` and `uses` — the dashed arcs the map draws behind the Links control — reach this tab not at all. How many rows each of those carries is a query, not a fact to write down here: `GET /api/vocabulary` names the declared types and `/api/health`'s `edge_type_warnings` reports drift between the registry and what `edge` actually holds."
-            ),
+            "summary": "The node panel's Links tab: every edge of the node, world nodes included — dependencies first for work, then the rest grouped by edge type and direction.",
+            "abstract": "`panel-links` is the node panel's Links tab, `frontend/v2/views/panel/links.js`: every connection the node has, world nodes included. For work, **Dependencies** come first: *Blocked by* (its `depends_on`) and *Blocks* (what depends on it). Then **Connections**: every other edge, grouped by type and direction (`contains →`, `← contains`, `hosted_on →`, `requires →` / `← required by`, …), at most 30 rows a group. A world node's work is not listed again here; it is on the work board. Clicking a world node focuses the graph on it, and clicking work selects it. The rows come from the graph index the board already holds (one bounded `/api/graph` read, see `atlas-frontend`), with no request of their own. An edge to a node outside that read is therefore not shown.",
             "detail": (
-                "**The badge tells you which branch ran.** It starts as `kids.length` (synchronous) and is topped up to `blockedBy + blocks + children` once the `depends_on` fetch resolves. On an object node that fetch never runs, so the badge stays at the child count — which is correct, and also the quickest way to tell from the tab bar which of the two shapes you are looking at. A failed fetch prints *\"Could not load links.\"* into both dependency lists and leaves the badge alone.\n"
-                "\n"
-                "**A redundancy worth knowing before touching this.** `GET /api/node/{id}` already returns `dependencies` and `dependants`, computed server-side from the same edges, and the panel already issues that call for Acceptance, Result and Intent via the shared `fetchFull`. This tab re-derives both lists from a second `/api/graph` call instead. Collapsing the two would remove a request per panel open; nothing in the code explains why it was not done, so treat it as unfinished rather than as a decision.\n"
+                "The legacy tab (`frontend/panel.js`) showed only `depends_on` and sub-nodes.\n"
                 "\n"
                 "One workitem binds here: **TASK-862** (`done`) — the cross-link connections panel."
             ),
@@ -5021,24 +6030,23 @@ PROFILE = {
             "id": "panel-overview",
             "type": "component",
             "name": "Overview tab",
-            "summary": "Status, assignee and binding controls, completion bar, description prose, acceptance criteria, result.",
+            "summary": "The node panel's default tab: intent titles, work facts and their edit controls, progress, description, acceptance and result, documents, and where the node sits.",
             "abstract": (
-                "`panel-overview` is the Atlas detail panel's default tab — what shows when a node is selected, and where `renderPanel` falls back if the remembered tab names one that no longer exists. It is a **region of `frontend/panel.js`**, not a module of its own: `renderPanel` builds it inline, appending sections to `tabBodies.overview` in a deliberate order — the intent strip, the status control, the assignee control, the binding control, the completion bar, **Description** (with `detail` behind a `More` disclosure), a pointer through to this node's own **Documentation**, **Acceptance**, **Result**.\n"
+                "`panel-overview` is the node panel's default tab, `frontend/v2/views/panel/overview.js`. It answers the questions in the order they arrive: what this is for (intent titles; the statements are on Intent), the small facts, how far along, what it is, where to read more, where it sits.\n"
                 "\n"
-                "**Boundary.** Overview carries a node's own text, lifecycle and the small authoritative facts you change in place. It renders no lists: sub-nodes and dependencies are `panel-links`, the work that touches a node is `panel-work`, full intent statements are the Intent tab. Its one deliberate exception is the intent strip (ADR 0032), which shows intent *titles* only, above everything else, and clicks through to Intent. The binding control is not an exception to that: it edits this item's own single `works_on` edge, it does not list anything.\n"
+                "- **For work** (*This item*): status, assignee, priority, labels, *Works on* (the one `works_on` binding, ADR 0028, or the one inherited from the epic), epic, story, parent (a move, TASK-1355) and finished date. Changing an existing binding is not supported on board v2 yet (TASK-1508); remove it first. Status goes through `POST /api/node/{id}/status`; the rest through `PATCH /api/workitem`. The description (`body`) and the acceptance list are edited in place. A pending acceptance proposal from an agent shows as a diff with **Approve** / **Reject**, which work only from a person's session, and the last attested change is named (STORY-atlas-acceptance-human-approved). Result shows under its own heading (`result_heading`).\n"
+                "- **For a project**: its task-id key, read-only.\n"
+                "- **For any node with work below it**: tiles (done %, active, blocked, need attention), a stacked bar, and a link to the open items on the work board.\n"
+                "- **Description**: a world node's `abstract`, with `detail` under *More*; a workitem's `body`.\n"
+                "- **Documentation**: one link per `docs[]` entry, opening it on the Docs tab.\n"
+                "- **Context** (world nodes): its containers up to a root, the types it contains, and attached skills.\n"
                 "\n"
-                "**It holds the panel's write surfaces — plural, and every one of them workitems only.** `renderStatusSection` POSTs `/api/node/{id}/status` for the settable statuses (`pending`, `analyze`, `in_progress`, `blocked`, `done`, `cancelled`), maps authored equivalents (`planned`, `wip`, `accepted`…) onto them so clicking the lit button is never a silent rewrite, and calls `hooks.refreshGraph` afterwards because a status change moves rollups on *other* nodes. Beside it, all through `PATCH /api/workitem`: `renderAssigneeSection` (who is doing it), `renderBindingSection` (what part of the world it works on, shipped 2026-08-28), and in-place editing of the description (`node.body`) and the acceptance list. Object nodes get none of them — their colour is a health hint, not a lifecycle, and the API refuses to set one.\n"
-                "\n"
-                "**A re-bind is TWO writes**, and it is the API's shape rather than a workaround: `PATCH /api/workitem` refuses a binding onto an item that already has one (409 `binding_exists` — at most one, ADR 0028), so a *change* sends `binding: null` and then `binding: <new>`. If the second write fails the item would be left unbound, which nobody asked for, so the control puts the previous binding back — and says so on screen if even that fails.\n"
-                "\n"
-                "Prose is **rendered, not printed**: `renderMarkdown` is wired to Description, the More disclosure, Acceptance (inline mode) and the Result block."
+                "World nodes get no write controls."
             ),
             "detail": (
                 "See `docs/nodes/panel-overview/architecture.md` (this node's Docs tab).\n"
                 "\n"
-                "**Where the data comes from.** `abstract`, `detail`, `status` and `completion_counts` ride on the tree payload the board already holds, so the top of the tab paints synchronously. Acceptance, result and intents come from **one** shared `GET /api/node/{id}` fetch (`fetchFull`), cached by node id and cleared at the top of every `renderPanel` — so re-opening the same node after a status write refetches rather than redisplaying what was on screen before it.\n"
-                "\n"
-                "**The empty-section rule.** Acceptance and Result *remove themselves* when empty rather than leaving a header over nothing — a label above blank space reads as a failed load. Most workitems carry acceptance criteria; a meaningful share carry no result yet, which is exactly why the header-removal behaviour matters rather than being a rare edge case. The one empty state that does print text is a missing `abstract`: *\"No description authored yet.\"*\n"
+                "**Where the data comes from.** Everything below the head comes from the panel's one `GET /api/node/{id}?intents=all` per selection; the tiles are counted from the graph index (`workCounts`). An empty acceptance list prints *\"No acceptance criteria yet.\"* rather than dropping its heading.\n"
                 "\n"
                 "The result heading is read from `result_heading` rather than hardcoded, because some workitems write `## Outcome` instead of `## Result`. Result lives in `workitem_result` and never touches `body`.\n"
                 "\n"
@@ -5052,6 +6060,8 @@ PROFILE = {
                     "format": "md",
                     "content": (
                         "# panel-overview\n"
+                        "\n"
+                        "**Legacy only.** This describes `frontend/panel.js` on the frozen `/board/legacy`; board v2's Overview tab is described on the node itself.\n"
                         "\n"
                         "## What it is\n"
                         "\n"
@@ -5134,9 +6144,9 @@ PROFILE = {
             "id": "panel-work",
             "type": "component",
             "name": "Work tab",
-            "summary": "What work touches this node: an object's direct `works_on` list and counts, a workitem's own bindings, and the sub-tree rollup gap the tab admits to on screen.",
+            "summary": "The legacy board's Work tab: the work bound directly to a world node, or a workitem's own bindings; board v2 has no Work tab, the work board replaces it.",
             "abstract": (
-                "`panel-work` is the detail panel's Work tab — the answer to *what work touches this node*. It is a region of `frontend/panel.js`, and it renders **one of two shapes**, chosen by `isObject(node)`:\n"
+                "`panel-work` is the **legacy** board's Work tab (`frontend/panel.js`, served at `/board/legacy`, frozen by ADR 0043). **Board v2's panel has no Work tab**: the work board (`atlas-view-work`), scoped by the graph, and Overview's progress tiles replace it. What follows describes the legacy tab. It is a region of `frontend/panel.js`, and it renders **one of two shapes**, chosen by `isObject(node)`:\n"
                 "\n"
                 "- an **object** gets `renderWorkList` — synchronous, no fetch, reading `node.work_load` which `/api/graph` and `/api/graph/tree` already attach to every node (`attention.work_load`). Count, done, completion percentage, and a clickable row per workitem;\n"
                 "- a **workitem** gets `renderConnections` — a live `GET /api/graph?focus={id}&edges=works_on,serves,for&depth=1`, grouped **Works on** / **Serves**, whose settled count sets the tab badge. (A workitem's own decomposition is not here: its children are the Sub-nodes list on the Links tab.)\n"
@@ -5144,6 +6154,8 @@ PROFILE = {
                 "**What it deliberately does not do** is walk `node.children` to compute a subtree rollup. `work_load` is a rollup over the `works_on` *bridge* edge, not over `contains`, and the tab says so on screen — *\"Direct links only — a rollup over this object's sub-tree isn't computed yet.\"* Re-deriving it client-side would duplicate backend logic over a tree the board has already pruned by the age filter and the detail slider, so the number would drift from the badge with nobody able to say which one lied."
             ),
             "detail": (
+                "None of this is built in v2.\n"
+                "\n"
                 "**No open work binds here.** Everything that did was cancelled on backlog triage: the two `STORY-atlas-node-panel-tabs` tasks in August's first pass, and the panel-dashboard pair (the backlog widget and its filter bar) on 2026-08-27. `GET /api/workitems?binding=panel-work` is the live answer; this paragraph is not.\n"
                 "\n"
                 "**Two counting rules for whoever ever builds a subtree rollup here.** First, `work_load` counts **effective** bindings since TASK-1025: a workitem with no `works_on` of its own counts against its nearest bound ancestor in the work hierarchy, so an unbound item filed tomorrow is not invisible. Second, the world graph is multi-root and a node may have several `contains` parents — `max` rollups (health, attention) are idempotent and safe, but any `sum` rollup must collect a **set** of reachable ids or a node reachable by two paths is counted twice.\n"
@@ -5254,8 +6266,163 @@ PROFILE = {
         },
         {
             "src": "atlas-api",
+            "edge_type": "contains",
+            "dst": "atlas-api-group-access",
+        },
+        {
+            "src": "atlas-api",
+            "edge_type": "contains",
+            "dst": "atlas-api-group-graph",
+        },
+        {
+            "src": "atlas-api",
+            "edge_type": "contains",
+            "dst": "atlas-api-group-knowledge",
+        },
+        {
+            "src": "atlas-api",
+            "edge_type": "contains",
+            "dst": "atlas-api-group-platform",
+        },
+        {
+            "src": "atlas-api",
+            "edge_type": "contains",
+            "dst": "atlas-api-group-search",
+        },
+        {
+            "src": "atlas-api",
+            "edge_type": "contains",
+            "dst": "atlas-api-group-work",
+        },
+        {
+            "src": "atlas-api",
             "edge_type": "requires",
             "dst": "atlas-postgres",
+        },
+        {
+            "src": "atlas-api-group-access",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-access",
+        },
+        {
+            "src": "atlas-api-group-access",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-audit",
+        },
+        {
+            "src": "atlas-api-group-access",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-auth",
+        },
+        {
+            "src": "atlas-api-group-access",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-events",
+        },
+        {
+            "src": "atlas-api-group-access",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-me",
+        },
+        {
+            "src": "atlas-api-group-graph",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-edges",
+        },
+        {
+            "src": "atlas-api-group-graph",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-graph",
+        },
+        {
+            "src": "atlas-api-group-graph",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-intents",
+        },
+        {
+            "src": "atlas-api-group-graph",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-legacy",
+        },
+        {
+            "src": "atlas-api-group-graph",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-nodes",
+        },
+        {
+            "src": "atlas-api-group-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-adrs",
+        },
+        {
+            "src": "atlas-api-group-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-docs",
+        },
+        {
+            "src": "atlas-api-group-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-handbook",
+        },
+        {
+            "src": "atlas-api-group-platform",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-assets",
+        },
+        {
+            "src": "atlas-api-group-platform",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-config",
+        },
+        {
+            "src": "atlas-api-group-platform",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-crunch",
+        },
+        {
+            "src": "atlas-api-group-platform",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-health",
+        },
+        {
+            "src": "atlas-api-group-platform",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-landing",
+        },
+        {
+            "src": "atlas-api-group-platform",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-setup",
+        },
+        {
+            "src": "atlas-api-group-search",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-context",
+        },
+        {
+            "src": "atlas-api-group-search",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-retrieval",
+        },
+        {
+            "src": "atlas-api-group-search",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-search",
+        },
+        {
+            "src": "atlas-api-group-work",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-comments",
+        },
+        {
+            "src": "atlas-api-group-work",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-stats",
+        },
+        {
+            "src": "atlas-api-group-work",
+            "edge_type": "contains",
+            "dst": "atlas-api-route-workitems",
         },
         {
             "src": "atlas-backend",
@@ -5265,17 +6432,12 @@ PROFILE = {
         {
             "src": "atlas-backend",
             "edge_type": "contains",
-            "dst": "atlas-context",
+            "dst": "atlas-backend-graph-work",
         },
         {
             "src": "atlas-backend",
             "edge_type": "contains",
-            "dst": "atlas-docs",
-        },
-        {
-            "src": "atlas-backend",
-            "edge_type": "contains",
-            "dst": "atlas-graph",
+            "dst": "atlas-backend-knowledge",
         },
         {
             "src": "atlas-backend",
@@ -5283,24 +6445,189 @@ PROFILE = {
             "dst": "atlas-postgres",
         },
         {
-            "src": "atlas-backend",
+            "src": "atlas-backend-graph-work",
+            "edge_type": "contains",
+            "dst": "atlas-graph",
+        },
+        {
+            "src": "atlas-backend-graph-work",
             "edge_type": "contains",
             "dst": "atlas-signals",
         },
         {
-            "src": "atlas-backend",
+            "src": "atlas-backend-graph-work",
             "edge_type": "contains",
             "dst": "atlas-work-store",
         },
         {
-            "src": "atlas-backend",
+            "src": "atlas-backend-graph-work",
             "edge_type": "contains",
             "dst": "atlas-world-model",
+        },
+        {
+            "src": "atlas-backend-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-adr-registry",
+        },
+        {
+            "src": "atlas-backend-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-context",
+        },
+        {
+            "src": "atlas-backend-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-docs",
+        },
+        {
+            "src": "atlas-board-foundations",
+            "edge_type": "contains",
+            "dst": "atlas-board-core-api",
+        },
+        {
+            "src": "atlas-board-foundations",
+            "edge_type": "contains",
+            "dst": "atlas-board-core-graph-model",
+        },
+        {
+            "src": "atlas-board-foundations",
+            "edge_type": "contains",
+            "dst": "atlas-board-core-prefs",
+        },
+        {
+            "src": "atlas-board-foundations",
+            "edge_type": "contains",
+            "dst": "atlas-board-core-state",
+        },
+        {
+            "src": "atlas-board-foundations",
+            "edge_type": "contains",
+            "dst": "atlas-board-core-ui",
+        },
+        {
+            "src": "atlas-board-views",
+            "edge_type": "contains",
+            "dst": "atlas-panel",
+        },
+        {
+            "src": "atlas-board-views",
+            "edge_type": "contains",
+            "dst": "atlas-view-access",
+        },
+        {
+            "src": "atlas-board-views",
+            "edge_type": "contains",
+            "dst": "atlas-view-dashboard",
+        },
+        {
+            "src": "atlas-board-views",
+            "edge_type": "contains",
+            "dst": "atlas-view-graph",
+        },
+        {
+            "src": "atlas-board-views",
+            "edge_type": "contains",
+            "dst": "atlas-view-search",
+        },
+        {
+            "src": "atlas-board-views",
+            "edge_type": "contains",
+            "dst": "atlas-view-settings",
+        },
+        {
+            "src": "atlas-board-views",
+            "edge_type": "contains",
+            "dst": "atlas-view-work",
+        },
+        {
+            "src": "atlas-ci-pipelines",
+            "edge_type": "contains",
+            "dst": "atlas-ci-images",
+        },
+        {
+            "src": "atlas-ci-pipelines",
+            "edge_type": "contains",
+            "dst": "atlas-ci-scrub",
+        },
+        {
+            "src": "atlas-ci-pipelines",
+            "edge_type": "contains",
+            "dst": "atlas-ci-security",
+        },
+        {
+            "src": "atlas-ci-pipelines",
+            "edge_type": "contains",
+            "dst": "atlas-ci-smoke",
+        },
+        {
+            "src": "atlas-ci-pipelines",
+            "edge_type": "contains",
+            "dst": "atlas-ci-verify",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-agents",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-audit",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-backups",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-cicd",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-guardrails",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-init-db",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-rbac",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-sessions",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-tokens",
+        },
+        {
+            "src": "atlas-cli",
+            "edge_type": "contains",
+            "dst": "atlas-cli-users",
+        },
+        {
+            "src": "atlas-client-packs",
+            "edge_type": "contains",
+            "dst": "atlas-client-claude-code",
         },
         {
             "src": "atlas-context",
             "edge_type": "contains",
             "dst": "atlas-retrieval",
+        },
+        {
+            "src": "atlas-context",
+            "edge_type": "contains",
+            "dst": "atlas-search",
         },
         {
             "src": "atlas-context",
@@ -5313,24 +6640,89 @@ PROFILE = {
             "dst": "atlas-visibility",
         },
         {
-            "src": "atlas-frontend",
+            "src": "atlas-delivery-scripts",
             "edge_type": "contains",
-            "dst": "atlas-board-shell",
+            "dst": "atlas-delivery-check",
+        },
+        {
+            "src": "atlas-delivery-scripts",
+            "edge_type": "contains",
+            "dst": "atlas-delivery-deploy",
+        },
+        {
+            "src": "atlas-delivery-scripts",
+            "edge_type": "contains",
+            "dst": "atlas-delivery-fork",
+        },
+        {
+            "src": "atlas-delivery-scripts",
+            "edge_type": "contains",
+            "dst": "atlas-delivery-snapshot",
+        },
+        {
+            "src": "atlas-delivery-scripts",
+            "edge_type": "contains",
+            "dst": "atlas-delivery-stage",
         },
         {
             "src": "atlas-frontend",
             "edge_type": "contains",
-            "dst": "atlas-map",
+            "dst": "atlas-board-foundations",
         },
         {
             "src": "atlas-frontend",
             "edge_type": "contains",
-            "dst": "atlas-panel",
+            "dst": "atlas-board-views",
+        },
+        {
+            "src": "atlas-frontend",
+            "edge_type": "contains",
+            "dst": "atlas-frontend-legacy",
         },
         {
             "src": "atlas-frontend",
             "edge_type": "requires",
             "dst": "atlas-api",
+        },
+        {
+            "src": "atlas-frontend-legacy",
+            "edge_type": "contains",
+            "dst": "atlas-board-shell",
+        },
+        {
+            "src": "atlas-frontend-legacy",
+            "edge_type": "contains",
+            "dst": "atlas-map",
+        },
+        {
+            "src": "atlas-ingress",
+            "edge_type": "contains",
+            "dst": "atlas-gateway",
+        },
+        {
+            "src": "atlas-ingress",
+            "edge_type": "contains",
+            "dst": "atlas-tls",
+        },
+        {
+            "src": "atlas-mcp",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-read",
+        },
+        {
+            "src": "atlas-mcp",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-session",
+        },
+        {
+            "src": "atlas-mcp",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-work",
+        },
+        {
+            "src": "atlas-mcp",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-write",
         },
         {
             "src": "atlas-mcp",
@@ -5338,14 +6730,264 @@ PROFILE = {
             "dst": "atlas-api",
         },
         {
+            "src": "atlas-mcp-read",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-read-graph",
+        },
+        {
+            "src": "atlas-mcp-read",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-read-knowledge",
+        },
+        {
+            "src": "atlas-mcp-read",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-read-search",
+        },
+        {
+            "src": "atlas-mcp-read",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-read-server",
+        },
+        {
+            "src": "atlas-mcp-read-graph",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-get",
+        },
+        {
+            "src": "atlas-mcp-read-graph",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-outline",
+        },
+        {
+            "src": "atlas-mcp-read-graph",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-path",
+        },
+        {
+            "src": "atlas-mcp-read-graph",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-structure",
+        },
+        {
+            "src": "atlas-mcp-read-graph",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-tree",
+        },
+        {
+            "src": "atlas-mcp-read-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-adr-get",
+        },
+        {
+            "src": "atlas-mcp-read-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-adr-search",
+        },
+        {
+            "src": "atlas-mcp-read-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-doc-read",
+        },
+        {
+            "src": "atlas-mcp-read-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-intents",
+        },
+        {
+            "src": "atlas-mcp-read-search",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-context",
+        },
+        {
+            "src": "atlas-mcp-read-search",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-node-search",
+        },
+        {
+            "src": "atlas-mcp-read-search",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-search",
+        },
+        {
+            "src": "atlas-mcp-read-server",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-capabilities",
+        },
+        {
+            "src": "atlas-mcp-read-server",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-health",
+        },
+        {
+            "src": "atlas-mcp-session",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-save-work",
+        },
+        {
+            "src": "atlas-mcp-session",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-setup-guide",
+        },
+        {
+            "src": "atlas-mcp-work",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-comment-write",
+        },
+        {
+            "src": "atlas-mcp-work",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-comments",
+        },
+        {
+            "src": "atlas-mcp-work",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-file-work",
+        },
+        {
+            "src": "atlas-mcp-work",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-update-work",
+        },
+        {
+            "src": "atlas-mcp-write",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-delete",
+        },
+        {
+            "src": "atlas-mcp-write",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-write-graph",
+        },
+        {
+            "src": "atlas-mcp-write",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-write-knowledge",
+        },
+        {
+            "src": "atlas-mcp-write-graph",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-edge-delete",
+        },
+        {
+            "src": "atlas-mcp-write-graph",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-edge-write",
+        },
+        {
+            "src": "atlas-mcp-write-graph",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-node-write",
+        },
+        {
+            "src": "atlas-mcp-write-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-doc-write",
+        },
+        {
+            "src": "atlas-mcp-write-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-intent-delete",
+        },
+        {
+            "src": "atlas-mcp-write-knowledge",
+            "edge_type": "contains",
+            "dst": "atlas-mcp-tool-intent-write",
+        },
+        {
+            "src": "atlas-operator-features",
+            "edge_type": "contains",
+            "dst": "atlas-op-config",
+        },
+        {
+            "src": "atlas-operator-features",
+            "edge_type": "contains",
+            "dst": "atlas-op-crunch",
+        },
+        {
+            "src": "atlas-operator-features",
+            "edge_type": "contains",
+            "dst": "atlas-op-install",
+        },
+        {
+            "src": "atlas-operator-features",
+            "edge_type": "contains",
+            "dst": "atlas-op-migrate",
+        },
+        {
+            "src": "atlas-operator-features",
+            "edge_type": "contains",
+            "dst": "atlas-op-setup",
+        },
+        {
             "src": "atlas-ops",
             "edge_type": "contains",
+            "dst": "atlas-client-packs",
+        },
+        {
+            "src": "atlas-ops",
+            "edge_type": "contains",
+            "dst": "atlas-operator-features",
+        },
+        {
+            "src": "atlas-ops",
+            "edge_type": "contains",
+            "dst": "atlas-ops-delivery",
+        },
+        {
+            "src": "atlas-ops",
+            "edge_type": "contains",
+            "dst": "atlas-ops-environments",
+        },
+        {
+            "src": "atlas-ops-delivery",
+            "edge_type": "contains",
+            "dst": "atlas-ci-pipelines",
+        },
+        {
+            "src": "atlas-ops-delivery",
+            "edge_type": "contains",
             "dst": "atlas-tooling",
+        },
+        {
+            "src": "atlas-ops-environments",
+            "edge_type": "contains",
+            "dst": "atlas-env-fork",
+        },
+        {
+            "src": "atlas-ops-environments",
+            "edge_type": "contains",
+            "dst": "atlas-env-staging",
+        },
+        {
+            "src": "atlas-panel",
+            "edge_type": "contains",
+            "dst": "panel-comments",
+        },
+        {
+            "src": "atlas-panel",
+            "edge_type": "contains",
+            "dst": "panel-config",
+        },
+        {
+            "src": "atlas-panel",
+            "edge_type": "contains",
+            "dst": "panel-decisions",
         },
         {
             "src": "atlas-panel",
             "edge_type": "contains",
             "dst": "panel-docs",
+        },
+        {
+            "src": "atlas-panel",
+            "edge_type": "contains",
+            "dst": "panel-history",
+        },
+        {
+            "src": "atlas-panel",
+            "edge_type": "contains",
+            "dst": "panel-intent",
         },
         {
             "src": "atlas-panel",
@@ -5363,9 +7005,64 @@ PROFILE = {
             "dst": "panel-work",
         },
         {
+            "src": "atlas-postgres",
+            "edge_type": "contains",
+            "dst": "atlas-backup",
+        },
+        {
+            "src": "atlas-postgres",
+            "edge_type": "contains",
+            "dst": "atlas-postgres-config",
+        },
+        {
+            "src": "atlas-postgres",
+            "edge_type": "contains",
+            "dst": "atlas-postgres-migrations",
+        },
+        {
+            "src": "atlas-postgres",
+            "edge_type": "contains",
+            "dst": "atlas-postgres-schema",
+        },
+        {
+            "src": "atlas-postgres",
+            "edge_type": "contains",
+            "dst": "atlas-postgres-vector",
+        },
+        {
+            "src": "atlas-postgres-schema",
+            "edge_type": "contains",
+            "dst": "atlas-postgres-tables-accounts",
+        },
+        {
+            "src": "atlas-postgres-schema",
+            "edge_type": "contains",
+            "dst": "atlas-postgres-tables-audit",
+        },
+        {
+            "src": "atlas-postgres-schema",
+            "edge_type": "contains",
+            "dst": "atlas-postgres-tables-graph",
+        },
+        {
+            "src": "atlas-postgres-schema",
+            "edge_type": "contains",
+            "dst": "atlas-postgres-tables-settings",
+        },
+        {
             "src": "atlas-retrieval",
             "edge_type": "requires",
             "dst": "atlas-postgres",
+        },
+        {
+            "src": "atlas-security",
+            "edge_type": "contains",
+            "dst": "atlas-audit-trail",
+        },
+        {
+            "src": "atlas-security",
+            "edge_type": "contains",
+            "dst": "atlas-guardrails",
         },
         {
             "src": "atlas-security",
@@ -5376,6 +7073,41 @@ PROFILE = {
             "src": "atlas-security",
             "edge_type": "contains",
             "dst": "atlas-visibility",
+        },
+        {
+            "src": "atlas-tooling",
+            "edge_type": "contains",
+            "dst": "atlas-cli",
+        },
+        {
+            "src": "atlas-tooling",
+            "edge_type": "contains",
+            "dst": "atlas-delivery-scripts",
+        },
+        {
+            "src": "atlas-view-graph",
+            "edge_type": "contains",
+            "dst": "atlas-view-graph-glyphs",
+        },
+        {
+            "src": "atlas-view-graph",
+            "edge_type": "contains",
+            "dst": "atlas-view-graph-labels",
+        },
+        {
+            "src": "atlas-view-graph",
+            "edge_type": "contains",
+            "dst": "atlas-view-graph-layout",
+        },
+        {
+            "src": "atlas-view-settings",
+            "edge_type": "contains",
+            "dst": "atlas-view-settings-crunch",
+        },
+        {
+            "src": "atlas-view-settings",
+            "edge_type": "contains",
+            "dst": "atlas-view-settings-password",
         },
     ],
     "intents": [
@@ -5391,7 +7123,7 @@ PROFILE = {
             "slug": "oss-work-graph",
             "kind": "outcome",
             "title": "A self-hostable, open-source work and context layer for humans and their agents",
-            "statement": "Atlas is self-hostable and open source. The core is the work: the work hierarchy (Epic > Feature > Story > Task > Sub-task), the board, a REST API and an MCP server, so an agent reads and writes the same work a person sees, within limits a person sets. Everything else is an add-on an install turns on when it needs it: context retrieval, single sign-on, guardrails, CI integration. The source is open and Atlas documents itself, so a team can change Atlas with its own agents. The product ships without anyone's world in it: an instance is configuration and data, never code.",
+            "statement": "Atlas is self-hostable and open source. The core is the work: the work hierarchy (Epic > Story > Task), the board, a REST API and an MCP server, so an agent reads and writes the same work a person sees, within limits a person sets. Everything else is an add-on an install turns on when it needs it: semantic retrieval, single sign-on, guardrails, CI integration. The source is open and Atlas documents itself, so a team can change Atlas with its own agents. The product ships without anyone's world in it: an instance is configuration and data, never code.",
         },
         {
             "node_id": "atlas",
@@ -5412,7 +7144,7 @@ PROFILE = {
             "slug": "no-write-back-to-git",
             "kind": "non-goal",
             "title": "Atlas does not write data back into git",
-            "statement": "The git export was built, verified and removed the same day. It was not a backup — it covered no auth, override, probe or derived state — and not an audit trail, because snapshot diffs cannot say who or when. Auditing's real answer is the `graph_event` table beside `auth_event`, which shipped on 2026-08-24 with one enforced writer, `app.record_graph_event`.",
+            "statement": "The git export was built, verified and removed the same day. It was not a backup — it covered no auth, override, probe or derived state — and not an audit trail, because snapshot diffs cannot say who or when. Auditing's real answer is the `graph_event` table beside `auth_event`, which shipped on 2026-08-24 with one enforced writer, `deps.record_graph_event`.",
         },
         {
             "node_id": "atlas-backend",
@@ -5489,7 +7221,7 @@ PROFILE = {
             "slug": "contains-is-part-of",
             "kind": "principle",
             "title": "`contains` means \"is part of\" — nothing else",
-            "statement": "It is the product decomposition. Not ownership, not a permission grammar, and not deployment — where something runs is `hosted_on`'s job. A thing that is not a part of the product does not get a `contains` edge, however convenient the nesting looks.",
+            "statement": "It is the product decomposition, with one stated exception: the environments an install operates beside live (staging, a fork, CI runners) sit under `atlas-ops` so they can be found. Their running instances are excluded from export; the grouping nodes ship only as a generic example of how to set such environments up. Not ownership, not a permission grammar, and not where something runs — that is `hosted_on`'s job. Anything else that is not a part of the product does not get a `contains` edge, however convenient the nesting looks.",
         },
         {
             "node_id": "atlas-world-model",

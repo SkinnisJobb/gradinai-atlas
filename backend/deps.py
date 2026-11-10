@@ -424,9 +424,8 @@ WORKITEM_TYPES = node_types.WORKITEM_TYPES
 #: the seeds that have one (TASK-1389): a workitem type is no longer a rung just
 #: by being in `WORKITEM_TYPES`, so a type off the ladder (ADR 0048's
 #: `decision`) can join the vocabulary without becoming a rung below task. The
-#: company ladder is Epic > Feature > Story > Task > Sub-task; `feature` and a
-#: sub-task type are not workitem types in this backend yet, and when one is
-#: seeded with a `rank` at its rung this rule takes it with no other edit.
+#: ladder is epic > story > task (owner decision 2026-11-10). A further rung,
+#: if one is ever seeded with a `rank`, is taken by this rule with no other edit.
 #: Levels may be skipped (a task straight under an epic); a level may not be
 #: repeated (a story under a story) or inverted (an epic under a task).
 #: Enforced by `routers/workitems._check_work_parent` (create, PATCH re-parent,
@@ -653,7 +652,8 @@ def _responsible_user_id(principal) -> str | None:
 #:
 #:   1. IT WIDENED SOMETHING NOBODY ASKED IT TO. `edge_type.pairs` lists
 #:      `["workitem","workitem"]` for `contains`, because both hierarchies
-#:      share that one string until TASK-1030 renames the work one. Reading
+#:      share that one string (permanently: TASK-1030's rename was cancelled
+#:      on 2026-08-27). Reading
 #:      the same list as PERMISSION makes a work-hierarchy `contains` edge
 #:      creatable through generic POST /api/edge — and therefore through
 #:      `atlas_edge_write`, i.e. by every federated MCP client. That route
