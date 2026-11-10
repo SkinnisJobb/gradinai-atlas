@@ -128,7 +128,7 @@ older run.
 | | backend suite via pytest | the pytest wrapper |
 | `scrub` | scrub | a personal reference in an enforced path. See [The scrub gate](#the-scrub-gate). |
 | `sast` | SAST, secrets, end-of-life, locks | a new high Semgrep or Bandit finding, a leaked secret (gitleaks), a runtime near end of support, or a `requirements-lock.txt` out of step with `requirements.txt` |
-| `sbom-sca` | SBOM + SCA | a fixable critical or high vulnerability in an image, a lock file or the vendored JavaScript. Skipped for documentation-only changes. |
+| `sbom-sca` | SBOM + SCA | a fixable critical or high vulnerability in an image, a lock file or the vendored JavaScript. One scan job per artefact, then this gate over all of them. On a pull request that changes no dependency a finding is a warning (it predates the change); master, the weekly run and a release fail on it. |
 | `images` | build, check and scan | the hardened images fail to build, fail their checks or fail the vulnerability gate |
 | `dast` | ZAP scan | a high-risk alert. Runs on a pull request only when its own files change, and on a schedule. |
 | `pins` | pins, dependabot schema | an invalid `dependabot.yml`. Unpinned images and actions are reported, not failed. |

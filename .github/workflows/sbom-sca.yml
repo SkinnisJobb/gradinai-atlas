@@ -22,17 +22,20 @@
 # THE GATE (tools/ci/sca_gate.py): a CRITICAL or HIGH finding WITH a fix fails the job; one with
 # no fix is reported in the summary and the artifact, never failing; tools/ci/sca-accepted.json
 # can defer a fixable one until a date, in the artefacts its `in` names (the report names below:
-# `scan NAME`, and an image's repo basename-tag). --full-scan: this job scans everything, so an
-# acceptance whose artefact has no report here, or that matches no finding, fails as stale.
+# `scan NAME`, and an image's repo basename-tag). --full-scan: this workflow scans everything, so
+# an acceptance whose artefact has no report here, or that matches no finding, fails as stale.
+# --advisory on a pull request that changes no dependency: findings are warnings there
+# (sca_gate.py says why); master, the weekly run, a release and dependency changes are strict.
 #
 # WHEN. Every pull request, docs-only ones included: the ruleset requires this check, and a
 # required check that never reports blocks the pull request for good. Also a weekly run (new
 # CVEs land against unchanged code; that run also compares tools/ci/eol.json with
 # endoflife.date), a published release (the SBOMs are attached to it), and by hand.
 #
-# MINUTES. One job. Image layers come from the GitHub Actions cache (buildx type=gha), the Trivy
-# binary and its vulnerability DB from actions/cache (the DB at most once a day). No SARIF:
-# code scanning on a private repository needs GitHub Code Security, which this account lacks.
+# MINUTES. One scan job per artefact, in parallel, then one gate job (2026-11-10). Image layers
+# come from the GitHub Actions cache (buildx type=gha), the Trivy binary and its vulnerability DB
+# from actions/cache (the DB at most once a day). No SARIF: code scanning on a private
+# repository needs GitHub Code Security, which this account lacks.
 
 name: sbom-sca
 
@@ -61,10 +64,32 @@ env:
   TRIVY_DISABLE_VEX_NOTICE: "true"
 
 jobs:
-  sbom-sca:
-    name: SBOM + SCA (images, locks, vendored JS)
+  # ONE JOB PER ARTEFACT (2026-11-10). Each builds one image (or, for `pulled-locks-js`, nothing)
+  # and uploads its Trivy reports and SBOMs; the `sbom-sca` job below gathers them all and runs
+  # the one gate over the whole set, as the single job did. A cache-cold run took 8-12 min
+  # building eight images in a row; in parallel it takes about as long as the slowest image.
+  # `name` is the report name sca_gate.py and sca-accepted.json use.
+  scan:
+    name: scan ${{ matrix.name }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: atlas-api, context: ., file: backend/Dockerfile, scope: atlas-api}
+          - {name: atlas-mcp, context: mcp, scope: atlas-mcp}
+          - {name: atlas-caddy, context: deploy/caddy, scope: atlas-caddy}
+          # The OpenShift images (TASK-1483), on images.yml's cache scopes (the same recipes). The
+          # mcp and Caddy builds are handed the repository root as the named context `repo`, for
+          # the LICENSE and NOTICE in their /licenses.
+          - {name: atlas-api-hardened-ubi, context: ., file: backend/Dockerfile, target: hardened-ubi, scope: atlas-api-hardened-ubi}
+          - {name: atlas-mcp-hardened-ubi, context: mcp, target: hardened-ubi, contexts: repo=., scope: atlas-mcp-hardened-ubi}
+          - {name: atlas-caddy-ubi, context: deploy/caddy, file: deploy/caddy/Dockerfile.ubi, contexts: repo=., scope: atlas-tls-ubi}
+          - {name: atlas-postgres, context: deploy/postgres, scope: atlas-postgres}
+          - {name: atlas-postgres-pgvector, context: deploy/postgres, file: deploy/postgres/pgvector.Dockerfile, scope: atlas-postgres-pgvector}
+          # No build: every pulled image the compose files ship, the Python locks, the vendored JS.
+          - {name: pulled-locks-js}
     defaults:
       run:
         shell: bash
@@ -79,7 +104,7 @@ jobs:
         id: prep
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/sbom" "$RUNNER_TEMP/sca" "$RUNNER_TEMP/locks/backend" "$RUNNER_TEMP/locks/mcp"
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/out/sbom" "$RUNNER_TEMP/out/sca" "$RUNNER_TEMP/locks/backend" "$RUNNER_TEMP/locks/mcp"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
@@ -124,132 +149,120 @@ jobs:
       # last run built are reused. The GitHub Actions cache needs the docker-container driver, so it
       # is used only on GitHub's runners. operations.md on atlas-ci-runner, "Builds".
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: matrix.context
         with:
           driver: ${{ vars.CI_RUNNER && 'docker' || 'docker-container' }}
 
-      - name: build atlas-api
+      - name: build ${{ matrix.name }}
+        if: matrix.context
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
-          file: backend/Dockerfile
-          tags: atlas-api:ci
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          build-contexts: ${{ matrix.contexts }}
+          tags: scan/${{ matrix.name }}:ci
           load: true
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-api' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-api' || '' }}
+          cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', matrix.scope) || '' }}
+          cache-to: ${{ !vars.CI_RUNNER && format('type=gha,mode=max,scope={0}', matrix.scope) || '' }}
 
-      - name: build atlas-mcp
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: mcp
-          tags: atlas-mcp:ci
-          load: true
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-mcp' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-mcp' || '' }}
-
-      - name: build atlas-caddy (deploy/caddy, the TLS fronts and deploy/oss's atlas-tls)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: deploy/caddy
-          tags: atlas-caddy:ci
-          load: true
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-caddy' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-caddy' || '' }}
-
-      # The OpenShift images (TASK-1483), on images.yml's cache scopes (the same recipes). The mcp
-      # and Caddy builds are handed the repository root as the named context `repo`, for the
-      # LICENSE and NOTICE in their /licenses.
-      - name: build atlas-api (hardened-ubi)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: backend/Dockerfile
-          target: hardened-ubi
-          tags: atlas-api:hardened-ubi
-          load: true
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-api-hardened-ubi' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-api-hardened-ubi' || '' }}
-
-      - name: build atlas-mcp (hardened-ubi)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: mcp
-          target: hardened-ubi
-          build-contexts: repo=.
-          tags: atlas-mcp:hardened-ubi
-          load: true
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-mcp-hardened-ubi' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-mcp-hardened-ubi' || '' }}
-
-      - name: build atlas-caddy-ubi (deploy/caddy/Dockerfile.ubi, OpenShift's atlas-tls)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: deploy/caddy
-          file: deploy/caddy/Dockerfile.ubi
-          build-contexts: repo=.
-          tags: atlas-caddy:ubi
-          load: true
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-tls-ubi' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-tls-ubi' || '' }}
-
-      - name: build atlas-postgres (deploy/postgres, the homelab's Postgres)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: deploy/postgres
-          tags: atlas-postgres:ci
-          load: true
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-postgres' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-postgres' || '' }}
-
-      - name: build atlas-postgres-pgvector (deploy/postgres/pgvector.Dockerfile, deploy/oss's Postgres)
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: deploy/postgres
-          file: deploy/postgres/pgvector.Dockerfile
-          tags: atlas-postgres-pgvector:ci
-          load: true
-          cache-from: ${{ !vars.CI_RUNNER && 'type=gha,scope=atlas-postgres-pgvector' || '' }}
-          cache-to: ${{ !vars.CI_RUNNER && 'type=gha,mode=max,scope=atlas-postgres-pgvector' || '' }}
-
-      - name: scan the images and write their SBOMs
+      - name: scan
+        env:
+          NAME: ${{ matrix.name }}
+          BUILT: ${{ matrix.context && 'true' || '' }}
         run: |
           set -euo pipefail
+          out="$RUNNER_TEMP/out"
           scan() {  # name ref
-            trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/$1.json" "$2"
-            trivy convert --quiet --format cyclonedx -o "$RUNNER_TEMP/sbom/$1.cdx.json" "$RUNNER_TEMP/sca/$1.json"
+            trivy image --quiet --scanners vuln --list-all-pkgs --format json -o "$out/sca/$1.json" "$2"
+            trivy convert --quiet --format cyclonedx -o "$out/sbom/$1.cdx.json" "$out/sca/$1.json"
             echo "$1: $2"
           }
-          scan atlas-api atlas-api:ci
-          scan atlas-mcp atlas-mcp:ci
-          scan atlas-caddy atlas-caddy:ci
-          scan atlas-api-hardened-ubi atlas-api:hardened-ubi
-          scan atlas-mcp-hardened-ubi atlas-mcp:hardened-ubi
-          scan atlas-caddy-ubi atlas-caddy:ubi
-          scan atlas-postgres atlas-postgres:ci
-          scan atlas-postgres-pgvector atlas-postgres-pgvector:ci
-          # Every pulled image the compose files ship, exactly as referenced (tag@digest).
-          for ref in $(grep -hE '^\s*image:' docker-compose.yml deploy/oss/docker-compose.yml deploy/*.override.yml \
-                         | awk '{print $2}' | grep -v '\${' | sort -u); do
-            name=$(echo "${ref%%@*}" | sed -E 's#.*/##; s#[:]#-#g')
-            scan "$name" "$ref"
-          done
+          if [ -n "$BUILT" ]; then
+            scan "$NAME" "scan/$NAME:ci"
+          else
+            # Every pulled image the compose files ship, exactly as referenced (tag@digest).
+            for ref in $(grep -hE '^\s*image:' docker-compose.yml deploy/oss/docker-compose.yml deploy/*.override.yml \
+                           | awk '{print $2}' | grep -v '\${' | sort -u); do
+              name=$(echo "${ref%%@*}" | sed -E 's#.*/##; s#[:]#-#g')
+              scan "$name" "$ref"
+            done
+            # Trivy's pip analyzer reads files named requirements.txt only: scan a copy of each lock.
+            for c in backend mcp; do
+              cp "$c/requirements-lock.txt" "$RUNNER_TEMP/locks/$c/requirements.txt"
+              trivy fs --quiet --scanners vuln --list-all-pkgs --format json -o "$out/sca/python-$c.json" "$RUNNER_TEMP/locks/$c"
+              trivy convert --quiet --format cyclonedx -o "$out/sbom/python-$c.cdx.json" "$out/sca/python-$c.json"
+            done
+            python tools/ci/vendor_sbom.py "$out/sbom/vendored-js.cdx.json"
+            trivy sbom --quiet --scanners vuln --format json -o "$out/sca/vendored-js.json" "$out/sbom/vendored-js.cdx.json"
+          fi
+          ls -l "$out/sbom" "$out/sca"
 
-      - name: scan the Python locks and the vendored JS
+      - uses: actions/upload-artifact@v7
+        with:
+          name: part-${{ matrix.name }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          retention-days: 3
+
+  # THE GATE, over every report at once; the check the ruleset requires, by this name.
+  sbom-sca:
+    name: SBOM + SCA (images, locks, vendored JS)
+    needs: scan
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2      # a pull request's merge commit and its base, for the change check
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: every artefact was scanned
+        env:
+          RESULT: ${{ needs.scan.result }}
+        run: |
+          if [ "$RESULT" != success ]; then
+            echo "::error::a scan job did not succeed ($RESULT): the gate would judge an incomplete set"; exit 1
+          fi
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: part-*
+          path: ${{ runner.temp }}/out
+          merge-multiple: true
+
+      # ADVISORY on a pull request that changes nothing the artefacts are built from (see
+      # sca_gate.py's docstring): a finding there predates the pull request. Everything else
+      # (master, the weekly run, a release, a pull request touching a dependency) gets the full gate.
+      - name: does this change a dependency?
+        id: deps
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # Trivy's pip analyzer reads files named requirements.txt only: scan a copy of each lock.
-          for c in backend mcp; do
-            cp "$c/requirements-lock.txt" "$RUNNER_TEMP/locks/$c/requirements.txt"
-            trivy fs --quiet --scanners vuln --list-all-pkgs --format json -o "$RUNNER_TEMP/sca/python-$c.json" "$RUNNER_TEMP/locks/$c"
-            trivy convert --quiet --format cyclonedx -o "$RUNNER_TEMP/sbom/python-$c.cdx.json" "$RUNNER_TEMP/sca/python-$c.json"
-          done
-          python tools/ci/vendor_sbom.py "$RUNNER_TEMP/sbom/vendored-js.cdx.json"
-          trivy sbom --quiet --scanners vuln --format json -o "$RUNNER_TEMP/sca/vendored-js.json" "$RUNNER_TEMP/sbom/vendored-js.cdx.json"
-          ls -l "$RUNNER_TEMP/sbom"
+          if [ "$EVENT" != pull_request ]; then echo "full gate: $EVENT"; echo "advisory=" >> "$GITHUB_OUTPUT"; exit 0; fi
+          deps=$(git diff --name-only HEAD^1 HEAD | grep -E '^(backend|mcp)/(Dockerfile|requirements[^/]*\.txt)$|^deploy/(caddy|postgres)/|docker-compose[^/]*\.ya?ml$|^deploy/[^/]*\.override\.yml$|^frontend/vendor/|^tools/ci/(sca_gate\.py|sca-accepted\.json|vendor_sbom\.py)$|^\.github/workflows/sbom-sca\.yml$' || true)
+          if [ -n "$deps" ]; then
+            echo "full gate: this pull request changes"; printf '  %s\n' $deps
+            echo "advisory=" >> "$GITHUB_OUTPUT"
+          else
+            echo "advisory: this pull request changes no dependency"
+            echo "advisory=--advisory" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: "gate: a fixable critical or high fails"
+        env:
+          ADVISORY: ${{ steps.deps.outputs.advisory }}
         run: |
           python tools/ci/sca_gate.py --self-test
-          python tools/ci/sca_gate.py "$RUNNER_TEMP/sca" --full-scan --summary-md "$RUNNER_TEMP/sca/summary.md"
+          python tools/ci/sca_gate.py "$RUNNER_TEMP/out/sca" --full-scan $ADVISORY --summary-md "$RUNNER_TEMP/out/sca/summary.md"
 
       - name: "weekly: tools/ci/eol.json against endoflife.date"
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -260,7 +273,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sbom
-          path: ${{ runner.temp }}/sbom
+          path: ${{ runner.temp }}/out/sbom
           if-no-files-found: warn
           retention-days: 30
 
@@ -269,7 +282,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: sca
-          path: ${{ runner.temp }}/sca
+          path: ${{ runner.temp }}/out/sca
           if-no-files-found: warn
           retention-days: 30
 
