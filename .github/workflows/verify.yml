@@ -50,6 +50,10 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # THE MERGE QUEUE (2026-11-10): this workflow reports a check the master-gate ruleset
+  # requires, so it also runs on the queue's commit; without it the queue waits for ever.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 # ONE RUN PER CHANGE (2026-10-25; master narrowed 2026-10-26). A pull request runs on
