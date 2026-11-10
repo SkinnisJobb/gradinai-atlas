@@ -2,7 +2,7 @@
 # superseding Dependabot #110/#119. fastapi 0.162 resolves starlette 1.x. The one break it
 # brought: `include_router` no longer copies routes onto the app, so `app.routes` holds one
 # `_IncludedRouter` per router; route-enumerating verifies read `route_table.live_routes`.
-fastapi==0.162.0
+fastapi==0.162.2
 uvicorn[standard]==0.54.0
 # Pinned here as well as in mcp/requirements.txt, at the SAME version: CI installs both
 # files into one environment (verify.yml, the mcp job), so two different pins would not

@@ -2,7 +2,7 @@
 # Pinned per ADR 0006. Versions aligned with the other MCP services this one was
 # modelled on, where the dependency is shared.
 
-fastapi==0.162.0
+fastapi==0.162.2
 uvicorn[standard]==0.54.0
 # The same pins as backend/requirements.txt (TASK-1361): CI installs both files into
 # one environment, so the two must agree. mcp 1.30.0 accepts this stack: it needs
