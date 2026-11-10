@@ -1,0 +1,62 @@
+# Dependabot security updates merge themselves once CI is green (owner decision, 2026-11-10).
+#
+# WHAT. A pull request Dependabot opens for a SECURITY update (a known vulnerability that has a
+# fixed version) lands in one of the `*-security` groups in .github/dependabot.yml. For those,
+# and only those, this job approves the pull request and turns on auto-merge. GitHub then merges
+# it when every check the master-gate ruleset requires is green: the full backend suite, the SCA
+# gate (which a dependency change always meets in full), scrub, pins and the rest. A red check
+# leaves it open for a human.
+#
+# WHAT IT DOES NOT TOUCH. Version updates (the weekly groups, new base image digests included),
+# anything not opened by Dependabot, and any group not named `*-security` stay a human merge.
+#
+# WHY APPROVE. The ruleset requires one approving review, so auto-merge alone would wait for
+# ever. The approval comes from GitHub Actions; the repository setting "Allow GitHub Actions to
+# create and approve pull requests" must be on for it to count.
+#
+# SAFETY. `pull_request`, not `pull_request_target`: the job never runs code from the pull
+# request, and for a Dependabot-triggered run GitHub grants only the permissions below. The
+# actor check stops it acting on anyone else's pull request.
+
+name: dependabot-security
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  automerge:
+    name: auto-merge a Dependabot security update
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # public-ci: allow-permissions approves and enables auto-merge on Dependabot security updates only
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: what kind of update
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: approve and enable auto-merge (security groups only)
+        if: endsWith(steps.meta.outputs.dependency-group, '-security')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.html_url }}
+          GROUP: ${{ steps.meta.outputs.dependency-group }}
+          DEPS: ${{ steps.meta.outputs.dependency-names }}
+        run: |
+          set -euo pipefail
+          echo "security update ($GROUP): $DEPS"
+          gh pr review --approve --body "Security update ($GROUP): approved for auto-merge once every required check is green." "$PR"
+          gh pr merge --auto --squash "$PR"
+
+      - name: not a security update
+        if: ${{ !endsWith(steps.meta.outputs.dependency-group, '-security') }}
+        env:
+          GROUP: ${{ steps.meta.outputs.dependency-group }}
+        run: echo "group '${GROUP:-none}' is not a security group; left for a human merge"

@@ -29,7 +29,12 @@
 #
 # SECURITY UPDATES are switched on at repository level (Settings -> Code security ->
 # Dependabot security updates), not in this file. The `applies-to: security-updates`
-# groups below only shape those PRs once that setting is on.
+# groups below only shape those PRs once that setting is on. A group named `*-security`
+# MERGES ITSELF once every required check is green (owner decision, 2026-11-10;
+# .github/workflows/dependabot-security.yml): it exists because a known vulnerability has a
+# fix, and the full suite is the test that the fix does not break anything. Every other PR
+# here stays a human merge. Dependabot raises no security alerts for container images, so a
+# base image's CVE is fixed by the weekly digest PR, which is a human merge.
 #
 # Validated against the published schema (https://json.schemastore.org/dependabot-2.0.json)
 # by the `dependabot-schema` job in pins.yml.
