@@ -110,7 +110,9 @@ Several conventions are checks, not advice. You find out about them either way:
 
 Every workflow under `.github/workflows/` runs on a pull request to `master`. Some run only when
 the paths they cover change, as noted below. A newer push to the same pull request cancels the
-older run.
+older run. The workflows that report a check the ruleset requires (`verify`, `scrub`, `sast`,
+`pins`, `tools`, `sbom-sca`) also run in the merge queue, on the pull request squashed onto the
+current `master`, before it is merged.
 
 | Workflow | Job | What fails it |
 |---|---|---|
