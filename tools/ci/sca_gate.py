@@ -30,10 +30,18 @@ AN ACCEPTANCE THAT MATCHES NOTHING FAILS. For each artefact in its `in`:
     the repo ships) FAIL, the artefact is gone or renamed (an image bumped to a new tag);
     without it (images.yml scans only the OSS images) it is skipped: that run never looked.
 
-  python tools/ci/sca_gate.py REPORT_DIR [--full-scan] [--summary-md OUT.md]
+ADVISORY (--advisory, 2026-11-10). A pull request that changes nothing the scanned artefacts
+are built from (sbom-sca.yml decides, from the changed files) cannot have brought a finding in:
+a new CVE against an unchanged base image or lock lands on every open pull request at once. On
+such a run the failures are printed as warnings and the gate exits 0, so unrelated work is not
+held up; the fix arrives as a Dependabot security pull request, which changes a dependency and
+therefore meets the full gate. Master, the weekly run, a release and every pull request that
+touches a dependency are never advisory, so a release cannot be cut past a fixable finding.
+
+  python tools/ci/sca_gate.py REPORT_DIR [--full-scan] [--advisory] [--summary-md OUT.md]
   python tools/ci/sca_gate.py --self-test
 
-Exit 0 pass, 1 a fixable high/critical or an unused acceptance, 2 no reports.
+Exit 0 pass (or advisory), 1 a fixable high/critical or an unused acceptance, 2 no reports.
 """
 from __future__ import annotations
 
@@ -188,6 +196,11 @@ def self_test() -> int:
     f, w, u, c, un = evaluate({"img": rep}, only, today, full_scan=True)
     checks.append(("an images.yml-only artefact is not missing from a full scan", un == []))
 
+    f, w, u, c, un = evaluate({"img": rep}, acc, today, full_scan=True)
+    checks.append(("advisory: a fixable finding passes, the same run without it fails",
+                   exit_code(f, un, advisory=True, quiet=True) == 0 and exit_code(f, un, advisory=False) == 1
+                   and exit_code([], [], advisory=False) == 0))
+
     bad = [n for n, ok in checks if not ok]
     print("self-test", "passed" if not bad else f"FAILED: {bad}")
     return 0 if not bad else 1
@@ -214,12 +227,29 @@ def main() -> int:
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
             fh.write(text)
+    advisory = "--advisory" in sys.argv
+    level = "warning" if advisory else "error"
     for r in warn:
         print(f"::warning::{r['artifact']}: {r['id']} {r['pkg']} {r['installed']} -> {r['fixed']} accepted {r['accepted']}")
     for r in fail:
-        print(f"::error::{r['artifact']}: {r['severity']} {r['id']} in {r['pkg']} {r['installed']}, fixed in {r['fixed']}")
+        print(f"::{level}::{r['artifact']}: {r['severity']} {r['id']} in {r['pkg']} {r['installed']}, fixed in {r['fixed']}")
     for u in unused:
-        print(f"::error::tools/ci/sca-accepted.json: {u['acceptance']} in {u['artifact']}: {u['why']}")
+        print(f"::{level}::tools/ci/sca-accepted.json: {u['acceptance']} in {u['artifact']}: {u['why']}")
+    return exit_code(fail, unused, advisory)
+
+
+def exit_code(fail: list, unused: list, advisory: bool, quiet: bool = False) -> int:
+    """1 when the gate fails; an advisory run (see the docstring) never does."""
+    if (fail or unused) and advisory:
+        if quiet:
+            return 0
+        note = ("ADVISORY: this pull request changes no dependency, so the findings above are not "
+                "its doing and do not fail it. Master, the weekly run and a release still fail on them.")
+        print(f"::notice::{note}")
+        if os.environ.get("GITHUB_STEP_SUMMARY"):
+            with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+                fh.write(f"\n\n**{note}**\n")
+        return 0
     return 1 if fail or unused else 0
 
 

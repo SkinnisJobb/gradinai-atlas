@@ -884,8 +884,11 @@ What CI does upstream ([SECURITY.md](../SECURITY.md#supply-chain) has the full t
 
 - **SCA.** Trivy scans the images, the Python locks and the vendored browser JavaScript on every
   pull request and weekly (`sbom-sca.yml`, `tools/ci/sca_gate.py`). A critical or high
-  vulnerability that has a fix fails the build. The released images go through the same gate
-  before they are published (`images.yml`).
+  vulnerability that has a fix fails the build, except on a pull request that changes no
+  dependency: there it is a warning, because the change did not bring it in, and the fix comes
+  as a Dependabot security pull request, which meets the full gate. Master, the weekly run and a
+  release always fail on it. The released images go through the same gate before they are
+  published (`images.yml`).
 - **EOL gate.** `tools/ci/check_eol.py` checks every runtime the tree names (Python, Postgres,
   Caddy, Node) against a dated end-of-life table (`tools/ci/eol.json`) and fails within six months
   of end of support, or when the table is stale. The weekly run compares the table with
