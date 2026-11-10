@@ -26,7 +26,10 @@ FROM caddy:2.11.7-builder@sha256:c4cd20eaa0b69112fd5d4f721ffc9671687e1d5d0b155c8
 # Caddy 2.11.7 dependency graph resolves v4.1.5. `--replace` writes a go.mod replace directive to an
 # exact tag, so the build stays reproducible and only that one module moves; Caddy and the plugin
 # are unchanged. Drop this flag once the Caddy release pinned above requires go-jose >= 4.1.6.
-RUN xcaddy build --with github.com/caddy-dns/cloudflare     --replace github.com/go-jose/go-jose/v4=github.com/go-jose/go-jose/v4@v4.1.6
+# x/net forced to v0.62.0 (2026-11-10) the same way: CVE-2026-78661 (HIGH, x/net/html DoS, fixed in
+# 0.62.0) and CVE-2026-78669 (HIGH, fixed in 0.60.0); Caddy 2.11.7 resolves v0.59.0. Drop the flag
+# once the Caddy release pinned above requires x/net >= 0.62.0.
+RUN xcaddy build --with github.com/caddy-dns/cloudflare     --replace github.com/go-jose/go-jose/v4=github.com/go-jose/go-jose/v4@v4.1.6     --replace golang.org/x/net=golang.org/x/net@v0.62.0
 
 # Tag added (TASK-1365): digest unchanged, read on the server 2026-10-25; its image config says CADDY_VERSION=v2.11.4.
 FROM caddy:2.11.7@sha256:36c24ad91a7ff7bc4c87fe22bfa8df3c4b18da0773d73fc12ee2c52b98c0bb7e

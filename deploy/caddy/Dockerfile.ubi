@@ -17,8 +17,11 @@
 # `auto_https disable_certs` or `off`, or Caddy tries to order a certificate for the public host).
 # Caddy and xcaddy are pinned to exact release tags below and Go verifies every module against
 # the checksum database, so the binary is reproducible from this file. Caddy v2.11.9 requires
-# go-jose v4.1.6 and x/net v0.60.0 itself, so deploy/caddy/Dockerfile's `--replace` (TASK-1434)
-# and the atlas-caddy x/net acceptance in tools/ci/sca-accepted.json have nothing to do here.
+# go-jose v4.1.6 itself, so deploy/caddy/Dockerfile's go-jose `--replace` (TASK-1434) has nothing
+# to do here. It requires x/net v0.60.0, though: x/net is forced to v0.62.0 below (2026-11-10,
+# CVE-2026-78661, HIGH, x/net/html DoS, fixed in 0.62.0). `--replace` writes a go.mod replace
+# directive to an exact tag, so only that one module moves. Drop it once CADDY_VERSION requires
+# x/net >= 0.62.0.
 # To bump Caddy, change CADDY_VERSION; the base images are tag@digest (tools/ci/check_pins.py)
 # and Dependabot's docker ecosystem watches /deploy/caddy.
 #
@@ -34,6 +37,7 @@ ARG XCADDY_VERSION=v0.4.7
 ENV CGO_ENABLED=0
 RUN go install "github.com/caddyserver/xcaddy/cmd/xcaddy@${XCADDY_VERSION}" \
  && "$(go env GOPATH)/bin/xcaddy" build "${CADDY_VERSION}" --output /tmp/caddy \
+      --replace golang.org/x/net=golang.org/x/net@v0.62.0 \
  && /tmp/caddy version
 # Caddy's own licence (Apache-2.0), from the module the binary was built from, for /licenses.
 RUN cp "$(go env GOMODCACHE)/github.com/caddyserver/caddy/v2@${CADDY_VERSION}/LICENSE" /tmp/caddy-LICENSE

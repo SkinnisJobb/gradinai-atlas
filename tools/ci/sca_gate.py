@@ -19,7 +19,8 @@ atlas-postgres-pgvector, python-backend, python-mcp, vendored-js, and every pull
 last path part of its repository plus `-<tag>` (cloudflare/cloudflared:2026.10.6@sha256:... is
 cloudflared-2026.10.6). images.yml reports an image built from the same recipe under the same
 name (its atlas-tls as atlas-caddy, its atlas-postgres as atlas-postgres-pgvector), plus
-atlas-api-hardened, atlas-mcp-hardened and atlas-backup. The same CVE in an artefact not listed
+atlas-api-hardened, atlas-mcp-hardened and atlas-backup (IMAGES_YML_ONLY: a full scan never has
+their reports, so naming them in `in` is not "gone"). The same CVE in an artefact not listed
 still fails.
 
 AN ACCEPTANCE THAT MATCHES NOTHING FAILS. For each artefact in its `in`:
@@ -46,6 +47,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ACCEPTED = ROOT / "tools" / "ci" / "sca-accepted.json"
 GATE = ("CRITICAL", "HIGH")
+# Built and scanned only by images.yml, never by sbom-sca.yml's --full-scan: an acceptance naming
+# one of these is not "gone" just because the full scan has no report for it.
+IMAGES_YML_ONLY = frozenset({"atlas-api-hardened", "atlas-mcp-hardened", "atlas-backup"})
 
 
 def vulns(report: dict):
@@ -107,7 +111,7 @@ def evaluate(reports: dict[str, dict], accepted: list[dict], today: dt.date, ful
             if art in reports:
                 unused.append({"acceptance": label, "artifact": art,
                                "why": "scanned, but no fixable critical/high finding there matches it: stale"})
-            elif full_scan:
+            elif full_scan and art not in IMAGES_YML_ONLY:
                 unused.append({"acceptance": label, "artifact": art,
                                "why": "no report of that name in a full scan: the artefact is gone or renamed"})
     return fail, warn, unfixed, counts, unused
@@ -180,6 +184,9 @@ def self_test() -> int:
                    [(x["acceptance"], x["artifact"]) for x in un]
                    == [("CVE-9 z", "img"), ("CVE-3 c", "img"), ("CVE-3 c", "gone-1.0"), ("CVE-1 a", "-")]))
     checks.append(("an unused acceptance is in the summary", "match nothing" in render(f, w, u, c, un)))
+    only = [{"id": "CVE-1", "pkg": "a", "in": ["img", "atlas-backup"], "until": "2026-12-01", "reason": "r"}]
+    f, w, u, c, un = evaluate({"img": rep}, only, today, full_scan=True)
+    checks.append(("an images.yml-only artefact is not missing from a full scan", un == []))
 
     bad = [n for n, ok in checks if not ok]
     print("self-test", "passed" if not bad else f"FAILED: {bad}")
