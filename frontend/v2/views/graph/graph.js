@@ -11,14 +11,20 @@
 //
 // d3 is the vendored global (`/assets/d3.min.js`).
 
-import { stepSearch, pruneTypes, isHub, workCounts, containsParents } from "../../core/graph-model.js";
+import { focusSearch, rootsSearch, ANCHOR, collapseSeen, pruneTypes, isHub, workCounts, containsParents, allContainers } from "../../core/graph-model.js";
 import { uniqueShorts } from "../../core/shortlabel.js";
-import { radialTree, overview, pathLayout, linkPath, relPath, fitTransform, MAX_STEPS } from "./layout.js";
+import { radialTree, radiusOf, pathLayout, linkPath, relPath, fitTransform, MAX_STEPS } from "./layout.js";
 import { fetchJSON } from "../../core/api.js";
 import { placeLabels, lodOf } from "./labels.js";
 import { drawGlyph } from "./glyph.js";
 import { el, svgEl, button } from "../../ui/dom.js";
 import { uiScale } from "../../ui/viewprefs.js";
+import { prefs } from "../../core/prefs.js";
+import { snapshotView, viewMatches, viewPatch, saveView, deleteView, readViews, nextViewName } from "../../core/views.js";
+
+// How far a press on a node may move and still be a click: the legacy map's
+// tolerance. Only node presses have a click handler, so nothing else changes.
+const CLICK_SLOP_PX = 20;
 
 const RELATION_CLASSES = new Set(["contains", "works_on", "depends_on", "hosted_on", "requires"]);
 const relClass = (/** @type {string} */ t) => (RELATION_CLASSES.has(t) ? t : "other");
@@ -55,6 +61,12 @@ export function mountGraph(pane, store, ix, chrome) {
 
   /** @type {{all: import("./layout.js").Placed[], radii: number[]}|null} */
   let cached = null; let cachedKey = "";
+  // The search behind the layout, kept apart so a slider move only lays out again:
+  // `pruned` is the search after types and collapse, `deepest` how many steps down it goes.
+  /** @type {Map<string, any>} */ let pruned = new Map(); let searchKey = "", deepest = 0;
+  /** @type {string|null} */ let west = null;
+  /** How far down the search looks. The slider ends where the graph does; this only bounds the walk. */
+  const SEARCH_DEPTH = 64;
   /** @type {Map<string, number>} node types reachable from the focus, before the type filter, with counts */
   let typesHere = new Map();
   /** @type {any} */ let current = null;
@@ -62,7 +74,9 @@ export function mountGraph(pane, store, ix, chrome) {
   let labelTimer = 0;
   /** @type {Map<string, {x:number,y:number}>} */ let lastPos = new Map();
 
-  const zoom = d3.zoom().scaleExtent([0.02, 8])
+  // clickDistance: d3 swallows the click after any pointer movement by default,
+  // so a hand that moved a pixel or two between press and release opened nothing.
+  const zoom = d3.zoom().scaleExtent([0.02, 8]).clickDistance(CLICK_SLOP_PX)
     .on("zoom", (/** @type {any} */ e) => { gZoom.attr("transform", e.transform); positionLabels(e.transform); })
     .on("end", () => { clearTimeout(labelTimer); labelTimer = window.setTimeout(labelPass, 60); });
   svg.call(zoom).on("dblclick.zoom", null);
@@ -97,7 +111,7 @@ export function mountGraph(pane, store, ix, chrome) {
     const off = [...hidden].filter((t) => typesHere.has(t)).length;
     typesSum.textContent = off ? `Types · ${off} hidden` : "Types";
     types.classList.toggle("on", off > 0);
-    types.hidden = !s.focus || !typesHere.size;
+    types.hidden = !typesHere.size;
     typesList.replaceChildren();
     for (const [t, n] of [...typesHere].sort((a, b) => a[0].localeCompare(b[0]))) {
       const cb = /** @type {HTMLInputElement} */ (el("input")); cb.type = "checkbox"; cb.checked = !hidden.has(t);
@@ -110,6 +124,65 @@ export function mountGraph(pane, store, ix, chrome) {
     }
     if (off) typesList.append(button("Show all types", () => store.set({ hideTypes: [] }), "linkbtn"));
   }
+  // Saved views (core/views.js): the focus, steps, types and collapsed nodes under a name.
+  // A small see-through box in the graph's top right corner, which the radial
+  // layout leaves empty, rather than one more control in the bar. It folds to
+  // its title line; folded until opened, and remembered across reloads.
+  const views = el("div", "views-box");
+  views.setAttribute("role", "region"); views.setAttribute("aria-label", "Saved views");
+  const viewsSum = el("span", "vb-title", "Views"), viewsList = el("div", "vb-body");
+  const fold = button("", () => setFolded(!views.classList.contains("min")), "linkbtn vb-min");
+  /** @param {boolean} min */
+  const setFolded = (min) => {
+    views.classList.toggle("min", min);
+    fold.textContent = min ? "+" : "−";
+    fold.title = min ? "Show saved views" : "Fold away";
+    fold.setAttribute("aria-expanded", String(!min));
+    prefs.remember("graph.viewsFolded", min);
+  };
+  const vhead = el("div", "vb-head"); vhead.append(viewsSum, fold);
+  // Folded, the whole box is the way to open it, not only the small button.
+  vhead.addEventListener("click", (e) => { if (e.target !== fold && views.classList.contains("min")) setFolded(false); });
+  views.append(vhead, viewsList);
+  setFolded(!!prefs.recall("graph.viewsFolded", true));
+  pane.append(views);
+  const viewName = /** @type {HTMLInputElement} */ (el("input", "vname"));
+  Object.assign(viewName, { type: "text", maxLength: 60, placeholder: "Name this view" });
+  viewName.setAttribute("aria-label", "Name for the saved view");
+  const saveCurrent = () => {
+    const s = store.get(), name = viewName.value.trim() || nextViewName(s.views);
+    store.set({ views: saveView(s.views, snapshotView(s, name)) });
+    viewName.value = "";
+  };
+  viewName.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); saveCurrent(); } });
+  const saveBtn = button("Save view", saveCurrent, "btn");
+  saveBtn.title = "Save the focus, steps, types and collapsed nodes as a view";
+  function syncViews() {
+    const s = store.get(), list = readViews(s.views), on = list.find((v) => viewMatches(v, s));
+    viewsSum.textContent = "Views";
+    viewsSum.title = on ? `Showing “${on.name}”` : "";
+    views.classList.toggle("on", !!on);
+    viewsList.replaceChildren();
+    for (const v of list) {
+      const row = el("div", "vrow");
+      const go = button(v.name, () => { store.set(viewPatch(v, (id) => ix.byId.has(id))); }, "linkbtn vgo");
+      go.title = `Show “${v.name}”`;
+      if (on && on.name === v.name) go.setAttribute("aria-current", "true");
+      const del = button("×", () => store.set({ views: deleteView(s.views, v.name) }), "linkbtn vdel");
+      del.title = `Delete “${v.name}”`; del.setAttribute("aria-label", `Delete view ${v.name}`);
+      row.append(go, del); viewsList.append(row);
+    }
+    if (!list.length) viewsList.append(el("div", "vnone", "No saved views yet."));
+    const add = el("div", "vadd"); add.append(viewName, saveBtn); viewsList.append(add);
+    const n = (/** @type {string[]} */ (s.collapsed || [])).length;
+    if (n) viewsList.append(button(`Expand all (${n} collapsed)`, () => store.set({ collapsed: [] }), "btn vb-expand"));
+  }
+  /** Collapse or expand one node. @param {string} id */
+  function toggleCollapse(id) {
+    const c = new Set(/** @type {string[]} */ (store.get().collapsed || []));
+    if (c.has(id)) c.delete(id); else c.add(id);
+    store.set({ collapsed: [...c] });
+  }
   chrome.tools.prepend(
     group("Steps", steps, stepsVal),
     group("Step along", seg("Which links count as a step", [["contains", "Structure", "Steps follow what contains what"], ["all", "All links", "Steps follow every link, stopping at hubs"]], "links")),
@@ -120,7 +193,10 @@ export function mountGraph(pane, store, ix, chrome) {
   );
   function syncControls() {
     const s = store.get();
-    steps.value = String(s.steps); steps.disabled = !s.focus; stepsVal.textContent = String(s.steps);
+    // The slider runs from 1 to as deep as the graph goes below what is chosen (MAX_STEPS when that is not known).
+    const top = current && current.maxSteps ? current.maxSteps : MAX_STEPS, shown = current && current.k ? current.k : Number(s.steps);
+    steps.max = String(top); steps.value = String(shown); stepsVal.textContent = String(shown);
+    steps.title = `1 to ${top} steps: as deep as it goes from here`;
     work.checked = !!s.work;
     for (const b of chrome.tools.querySelectorAll("[data-key]")) {
       const k = /** @type {HTMLElement} */ (b).dataset.key;
@@ -136,24 +212,53 @@ export function mountGraph(pane, store, ix, chrome) {
       const P = pathLayout(pathRes);
       return { nodes: P.all, radii: [], overview: false, hops: P.links, pos: new Map(P.all.map((p) => [p.id, p])) };
     }
-    if (!s.focus || !ix.byId.has(/** @type {string} */ (s.focus))) {
-      const extra = stars.filter((id) => ix.byId.has(id) && !ix.roots.includes(id));
-      const o = overview(ix.roots, extra);
-      return { nodes: o.all, radii: o.radii, overview: true, pos: new Map(o.all.map((p) => [p.id, p])) };
-    }
-    const focus = /** @type {string} */ (s.focus);
+    // The Steps slider counts DOWN from what is chosen: the focus, whose
+    // containers all show however far up they go, or, with no focus, the roots
+    // and starred nodes. Laid out for the rings that SHOW (owner decision 2026-11-09): rings
+    // further out take no room, so moving the slider re-spaces the graph.
     const opts = { links: /** @type {"contains"|"all"} */ (s.links), work: !!s.work };
     const hidden = new Set(/** @type {string[]} */ (s.hideTypes || []));
-    const key = [focus, s.links, s.work, [...hidden].sort().join(",")].join("|");
-    if (key !== cachedKey) {
-      const full = stepSearch(ix, focus, MAX_STEPS, opts);
+    const isRoots = !s.focus || !ix.byId.has(/** @type {string} */ (s.focus));
+    const seeds = isRoots ? [...ix.roots, ...stars.filter((id) => ix.byId.has(id) && !ix.roots.includes(id))] : [];
+    const centre = isRoots ? ANCHOR : /** @type {string} */ (s.focus);
+    const collapsed = new Set(/** @type {string[]} */ (s.collapsed || []));
+    const skey = [isRoots ? "roots:" + seeds.join(",") : centre + "<" + crumbs.join(","), s.links, s.work, [...hidden].sort().join(","), [...collapsed].sort().join(",")].join("|");
+    if (skey !== searchKey) {
+      // The way up follows the trail of focuses that led here, so it is the limb you came down.
+      const full = isRoots ? rootsSearch(ix, seeds, SEARCH_DEPTH, opts) : focusSearch(ix, centre, SEARCH_DEPTH, { ...opts, prefer: crumbs });
       typesHere = new Map();
-      for (const id of full.keys()) if (id !== focus) { const t = /** @type {any} */ (ix.byId.get(id)).type; typesHere.set(t, (typesHere.get(t) || 0) + 1); }
-      cached = radialTree(ix, pruneTypes(ix, full, hidden), focus, { d3 }); cachedKey = key;
+      for (const [id, v] of full) if (id !== centre && v.depth > (isRoots ? 1 : 0)) { const t = /** @type {any} */ (ix.byId.get(id)).type; typesHere.set(t, (typesHere.get(t) || 0) + 1); }
+      // The focus's parent sits straight left, so the way back up never swaps sides.
+      west = isRoots ? null : [...full].find(([, v]) => v.up && v.depth === 1)?.[0] ?? null;
+      // Collapsing lays the tree out again, so a collapsed branch gives its room to the rest.
+      pruned = collapseSeen(pruneTypes(ix, full, hidden), collapsed);
+      deepest = 0;
+      for (const v of pruned.values()) if (!v.up) deepest = Math.max(deepest, v.depth - (isRoots ? 1 : 0));
+      searchKey = skey;
     }
-    const k = Number(s.steps) || 2;
-    const nodes = /** @type {NonNullable<typeof cached>} */ (cached).all.filter((p) => p.depth <= k);
-    return { nodes, radii: /** @type {NonNullable<typeof cached>} */ (cached).radii.slice(0, k + 1), overview: false, pos: new Map(nodes.map((p) => [p.id, p])), opts, focus };
+    // The chosen step count, held to what exists here; the store keeps the wish for a deeper node.
+    const maxSteps = Math.max(1, deepest);
+    const k = Math.max(1, Math.min(Number(s.steps) || 2, maxSteps));
+    const key = skey + "|" + k;
+    if (key !== cachedKey) {
+      const lim = isRoots ? k + 1 : k;
+      const shown = new Map([...pruned].filter(([, v]) => v.up || v.depth <= lim));
+      cached = radialTree(ix, shown, centre, { d3 }, west); cachedKey = key;
+    }
+    const C = /** @type {NonNullable<typeof cached>} */ (cached);
+    if (isRoots) {
+      // The anchor is never drawn; the roots are the outermost things, so they get the focus's size.
+      const nodes = C.all.filter((p) => p.id !== ANCHOR && p.depth <= k + 1).map((p) => ({ ...p, parent: p.parent === ANCHOR ? null : p.parent, rr: radiusOf(p.depth - 1) }));
+      return { nodes, radii: C.radii.slice(0, k + 2), overview: true, seeds, pos: new Map(nodes.map((p) => [p.id, p])), opts, kids: kidsOf(nodes), collapsed, k, maxSteps };
+    }
+    const nodes = C.all.filter((p) => p.up || p.depth <= k);
+    return { nodes, radii: C.radii.slice(0, k + 1), overview: false, pos: new Map(nodes.map((p) => [p.id, p])), opts, focus: centre, kids: kidsOf(nodes), collapsed, k, maxSteps };
+  }
+  /** The nodes with something drawn below them: those a "−" can collapse. @param {import("./layout.js").Placed[]} nodes */
+  function kidsOf(nodes) {
+    const k = new Set();
+    for (const p of nodes) if (!p.up && p.parent) k.add(p.parent);
+    return k;
   }
 
   /** Tree links are each node's link to the parent it was reached from; relations are every other edge between drawn nodes. */
@@ -173,18 +278,21 @@ export function mountGraph(pane, store, ix, chrome) {
     const L = layout();
     current = L;
     Object.assign(current, L.hops ? { links: L.hops, rels: [] } : edges(L));
+    // What lies above the focus, toward its root: drawn faded, so the way back up reads at a glance.
+    current.upstream = L.focus ? allContainers(ix, L.focus) : new Set();
+    const onWayUp = (/** @type {string} */ id) => id === L.focus || current.upstream.has(id);
     const line = (/** @type {any} */ l) => { const a = L.pos.get(l.s), b = L.pos.get(l.d); return L.hops ? `M${a.x},${a.y}L${b.x},${b.y}` : linkPath(a, b); };
     current.shorts = uniqueShorts(L.nodes.map((n) => ({ ...(/** @type {any} */ (ix.byId.get(n.id))), parent: n.parent })));
     gLabel.selectAll("g").remove();
 
-    const guides = gGuide.selectAll("circle").data(L.overview ? [] : L.radii.slice(1));
+    const guides = gGuide.selectAll("circle").data(L.radii.slice(1));
     guides.exit().remove();
     guides.enter().append("circle").attr("class", "ring-guide").merge(guides).attr("r", (/** @type {number} */ r) => r);
 
     const ls = gLink.selectAll("path").data(current.links, (/** @type {any} */ l) => l.key);
     ls.exit().remove();
     ls.enter().append("path").attr("class", "link").style("opacity", 0).attr("d", line)
-      .merge(ls).classed("hop", !!L.hops).transition().duration(DUR).style("opacity", null).attr("d", line);
+      .merge(ls).classed("hop", !!L.hops).classed("upstream", (/** @type {any} */ l) => onWayUp(l.s) && onWayUp(l.d)).transition().duration(DUR).style("opacity", null).attr("d", line);
 
     // In path mode every hop says what kind of edge it is, and which way it points.
     const arrow = (/** @type {string} */ d) => (d === "out" ? " →" : d === "in" ? " ←" : "");
@@ -211,6 +319,7 @@ export function mountGraph(pane, store, ix, chrome) {
       .on("keydown", (/** @type {KeyboardEvent} */ e, /** @type {any} */ n) => {
         if (e.key === "Enter") { e.preventDefault(); store.get().focus ? focusOn(n.id) : activate(n.id); }
         else if (e.key === " ") { e.preventDefault(); select(n.id); }
+        else if (e.key === "-" || e.key === "+") { e.preventDefault(); toggleCollapse(n.id); }
       })
       .on("mouseenter", (/** @type {any} */ _e, /** @type {any} */ n) => store.set({ hover: n.id, hoverFrom: "graph" }))
       .on("mouseleave", () => store.set({ hover: null, hoverFrom: null }));
@@ -226,6 +335,19 @@ export function mountGraph(pane, store, ix, chrome) {
         hasWork: node.isWork || c.count > 0, skills: ix.skills.get(n.id) || 0,
         hub: !!focus && isHub(ix, n.id, /** @type {string} */ (focus), { links: /** @type {any} */ (store.get().links) }),
       });
+      // "−" collapses what hangs below; "+" brings it back. Top right; the badge moves to top left for it.
+      const shut = !!L.collapsed?.has(n.id);
+      if (!L.hops && (shut || L.kids?.has(n.id))) {
+        const tr = Math.max(5, n.rr * 0.4), t = svgEl("g", { class: "tog" + (shut ? " on" : ""), transform: `translate(${n.rr * 0.8},${-n.rr * 0.8})`, role: "button" });
+        t.setAttribute("aria-label", shut ? "Expand" : "Collapse");
+        const tt = svgEl("title"); tt.textContent = shut ? "Expand: show what is below" : "Collapse: hide what is below";
+        const tx = svgEl("text", { dy: "0.35em", "font-size": tr * 1.7 }); tx.textContent = shut ? "+" : "−";
+        t.append(tt, svgEl("circle", { r: tr }), tx);
+        t.addEventListener("click", (e) => { e.stopPropagation(); toggleCollapse(n.id); });
+        t.addEventListener("dblclick", (e) => { e.stopPropagation(); e.preventDefault(); });
+        // @ts-ignore d3 binds `this` to the element
+        this.appendChild(t);
+      }
     });
     all.attr("class", (/** @type {any} */ n) => "node" + (n.id === focus ? " focus" : "") + (n.id === store.get().selected ? " selected" : ""))
       .attr("aria-label", (/** @type {any} */ n) => { const b = ix.byId.get(n.id); return `${b?.type}, ${b?.name}`; });
@@ -233,7 +355,7 @@ export function mountGraph(pane, store, ix, chrome) {
     all.transition().duration(DUR).style("opacity", null).attr("transform", (/** @type {any} */ n) => `translate(${n.x},${n.y})`);
 
     lastPos = new Map(L.nodes.map((n) => [n.id, { x: n.x, y: n.y }]));
-    applyRelations(); highlight(); renderCrumbs(); syncControls(); syncTypes(); fit(true);
+    applyRelations(); highlight(); renderCrumbs(); syncControls(); syncTypes(); syncViews(); fit(true);
     window.setTimeout(labelPass, DUR + 40);
     statusEl.textContent = L.hops ? "" : `${L.nodes.length} nodes · ${current.links.length} structure · ${current.rels.length} relations`;
     paintBanner();
@@ -266,11 +388,12 @@ export function mountGraph(pane, store, ix, chrome) {
       // @ts-ignore
       const c = this.classList; c.remove("lod1", "lod2", "lod3"); c.add("lod" + lodOf(n.rr * t.k));
     });
-    const vip = new Set([s.focus, s.selected, s.hover].filter(Boolean).map(String));
+    // With nothing focused, every root is named; what hangs below them earns a label by size, like any ring.
+    const vip = new Set([s.focus, s.selected, s.hover, ...(current.seeds || [])].filter(Boolean).map(String));
     const stars = new Set(/** @type {string[]} */ (s.stars || []));
     const star = (/** @type {string} */ id) => (stars.has(id) ? "★ " : "");
     const placed = placeLabels(current.nodes, t, {
-      width: r.width, height: r.height, vip, focus: /** @type {string|null} */ (s.focus), overview: current.overview,
+      width: r.width, height: r.height, vip, focus: /** @type {string|null} */ (s.focus), overview: false,
       full: (id) => { const nm = ix.byId.get(id)?.name || id; return star(id) + (nm.length > 36 ? nm.slice(0, 35) + "…" : nm); },
       short: (id) => star(id) + (current.shorts.get(id) || id),
       work: (id) => { const c = wc(id); return c.count ? `${c.count} ${c.count === 1 ? "item" : "items"} · ${Math.round(c.completion * 100)}%${c.active ? ` · ${c.active} active` : ""}${c.blocked ? ` · ${c.blocked} blocked` : ""}` : null; },
@@ -317,6 +440,11 @@ export function mountGraph(pane, store, ix, chrome) {
     applyRelations();
     const raw = /** @type {string|null} */ (store.get().hover);
     const h = nearestDrawn(raw);
+    // A faded node comes back to full strength while it is the one being looked at.
+    const sel = store.get().selected;
+    const faded = (/** @type {string} */ id) => !!current && current.upstream.has(id) && id !== sel && id !== h;
+    gNode.selectAll("g.node").classed("upstream", (/** @type {any} */ n) => faded(n.id));
+    gLabel.selectAll("g").classed("upstream", (/** @type {any} */ p) => faded(p.id));
     // A pulse marks a node pointed at from ANOTHER pane (a card on the work board).
     gNode.selectAll("g.node").classed("pulse", (/** @type {any} */ n) => !!h && n.id === h && store.get().hoverFrom !== "graph");
     if (!h || !current) {
@@ -324,10 +452,12 @@ export function mountGraph(pane, store, ix, chrome) {
       gRel.selectAll("path").classed("dim", false).classed("hot", false); gLabel.selectAll("g").classed("dim", false);
       return;
     }
-    const near = new Set([h]);
+    // What stays lit: the node, its neighbours, and its whole way up to the root.
+    const chain = new Set([h, ...allContainers(ix, h)]);
+    const near = new Set(chain);
     for (const e of [...current.links, ...current.rels]) { if (e.s === h) near.add(e.d); if (e.d === h) near.add(e.s); }
     gNode.selectAll("g.node").classed("dim", (/** @type {any} */ n) => !near.has(n.id));
-    gLink.selectAll("path").classed("dim", (/** @type {any} */ e) => e.s !== h && e.d !== h);
+    gLink.selectAll("path").classed("dim", (/** @type {any} */ e) => e.s !== h && e.d !== h && !(chain.has(e.s) && chain.has(e.d)));
     gRel.selectAll("path").classed("dim", (/** @type {any} */ e) => e.s !== h && e.d !== h).classed("hot", (/** @type {any} */ e) => e.s === h || e.d === h);
     gLabel.selectAll("g").classed("dim", (/** @type {any} */ p) => !near.has(p.id));
   }
@@ -395,8 +525,9 @@ export function mountGraph(pane, store, ix, chrome) {
   }
 
   // ---------------------------------------------------------------- wiring
-  store.subscribe(["focus", "steps", "links", "work", "stars", "hideTypes"], render);
-  store.subscribe(["rev"], () => { wcMemo.clear(); cachedKey = ""; render(); });
+  store.subscribe(["focus", "steps", "links", "work", "stars", "hideTypes", "collapsed"], render);
+  store.subscribe(["views"], syncViews);
+  store.subscribe(["rev"], () => { wcMemo.clear(); cachedKey = ""; searchKey = ""; render(); });
   store.subscribe(["path"], loadPath);
   store.subscribe(["rel"], () => { applyRelations(); syncControls(); });
   store.subscribe(["selected"], () => {
@@ -422,6 +553,7 @@ function legend() {
     '<span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5" fill="none" stroke="var(--ring-track)" stroke-width="2.5"/><path d="M7 2 A5 5 0 0 1 12 7" fill="none" stroke="var(--done)" stroke-width="2.5"/></svg>ring = work done</span>',
     '<span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5" fill="var(--att-red)"/></svg>badge = needs attention</span>',
     '<span><svg viewBox="0 0 14 14"><circle cx="7" cy="7" r="5.5" fill="var(--panel)" stroke="var(--line-strong)"/><circle cx="7" cy="7" r="3" fill="none" stroke="var(--att-purple)" stroke-width="1.4"/></svg>intents</span>',
+    '<span><i class="lg upstream"></i>faded = above the focus</span>',
     '<span><i class="lg contains"></i>contains</span><span><i class="lg works_on"></i>works on</span><span><i class="lg depends_on"></i>depends on</span><span><i class="lg hosted_on"></i>hosted on</span><span><i class="lg requires"></i>requires</span>',
   ].join("");
   return box;

@@ -153,6 +153,7 @@ ASSET_FILES = {
     "v2/core/store.js": "v2/core/store.js",
     "v2/core/sync.js": "v2/core/sync.js",
     "v2/core/vocabulary.js": "v2/core/vocabulary.js",
+    "v2/core/views.js": "v2/core/views.js",
     "v2/styles/board.css": "v2/styles/board.css",
     "v2/styles/graph.css": "v2/styles/graph.css",
     "v2/styles/layout.css": "v2/styles/layout.css",
@@ -163,6 +164,7 @@ ASSET_FILES = {
     "v2/ui/md.js": "v2/ui/md.js",
     "v2/ui/panes.js": "v2/ui/panes.js",
     "v2/ui/toast.js": "v2/ui/toast.js",
+    "v2/ui/usermenu.js": "v2/ui/usermenu.js",
     "v2/ui/viewprefs.js": "v2/ui/viewprefs.js",
     "v2/views/search.js": "v2/views/search.js",
     "v2/views/access/access.css": "v2/views/access/access.css",
@@ -182,6 +184,7 @@ ASSET_FILES = {
     "v2/views/panel/panel.js": "v2/views/panel/panel.js",
     "v2/views/work/board.js": "v2/views/work/board.js",
     # Crunch week (STORY-atlas-crunch-mode): the owner's Settings tab and the board banner.
+    "v2/views/settings/tabs.js": "v2/views/settings/tabs.js",
     "v2/views/settings/crunch.css": "v2/views/settings/crunch.css",
     "v2/views/settings/crunch.js": "v2/views/settings/crunch.js",
     "v2/views/settings/crunch-banner.js": "v2/views/settings/crunch-banner.js",

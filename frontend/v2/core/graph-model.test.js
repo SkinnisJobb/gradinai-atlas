@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildIndex, workStatus, boardColumn, STATUS_EQUIVALENT, BOARD_COLUMNS, cmpNodes, stepSearch, pruneTypes, ancestry, boundNode, parentChoices, epicOf, storyOf, worldDesc, scopeItems, workCounts, isHub, HUB_DEGREE,
+  buildIndex, workStatus, boardColumn, STATUS_EQUIVALENT, BOARD_COLUMNS, cmpNodes, stepSearch, focusSearch, rootsSearch, ANCHOR, collapseSeen, pruneTypes, ancestry, allContainers, boundNode, parentChoices, epicOf, storyOf, worldDesc, scopeItems, workCounts, isHub, HUB_DEGREE,
 } from "./graph-model.js";
 
 // An invented world, built to contain each case once. No real node ids.
@@ -87,6 +87,75 @@ test("the same inputs give the same tree", () => {
   const a = [...stepSearch(world(), "proj", 4, { links: "all", work: true }).entries()];
   const b = [...stepSearch(world(), "proj", 4, { links: "all", work: true }).entries()];
   assert.deepEqual(a, b);
+});
+
+test("a focus shows every container above it, at no cost in steps", () => {
+  const ix = world([E("cap", "leaf", "contains")], [N("leaf", "capability")]);
+  const seen = focusSearch(ix, "leaf", 1);
+  assert.deepEqual([...seen.keys()].sort(), ["cap", "comp", "leaf", "proj"]);
+  assert.equal(seen.get("proj").depth, 3);
+  assert.equal(seen.get("proj").up, true);
+  assert.ok(!seen.get("leaf").up);
+});
+
+test("a focus steps only down: a parent's other children are not shown", () => {
+  const ix = world([E("comp", "sib", "contains"), E("cap", "leaf", "contains"), E("leaf", "deep", "contains")],
+    [N("sib", "capability"), N("leaf", "capability"), N("deep", "capability")]);
+  assert.deepEqual([...focusSearch(ix, "cap", 1).keys()].sort(), ["cap", "comp", "leaf", "proj"]);
+  const two = focusSearch(ix, "cap", 2);
+  assert.ok(two.has("deep") && !two.has("sib"));
+  assert.equal(two.get("deep").depth, 2);
+});
+
+test("with all links, a focus steps sideways only inside its own subtree", () => {
+  // comp hosted_on host: host is outside comp's limb, so it is not a step
+  assert.ok(!focusSearch(world(), "comp", 1, { links: "all" }).has("host"));
+  // a sideways link inside the limb is a step: proj > comp > cap > leaf, and comp depends_on leaf
+  const ix = world([E("cap", "leaf", "contains"), E("comp", "leaf", "depends_on")], [N("leaf", "capability")]);
+  assert.equal(focusSearch(ix, "proj", 2, { links: "all" }).get("leaf")?.depth, 2);
+  assert.ok(!focusSearch(ix, "proj", 2).has("leaf"));
+  // open work still hangs off the node it works on
+  assert.ok(focusSearch(world(), "comp", 1, { links: "all", work: true }).has("epic"));
+});
+
+test("the way up is one chain: the parent on the trail, else the first", () => {
+  const ix = world([E("other", "comp", "contains")]);
+  const first = [...focusSearch(ix, "cap", 1).keys()].sort();
+  assert.equal(first.filter((id) => id === "proj" || id === "other").length, 1);
+  assert.ok(focusSearch(ix, "cap", 1, { prefer: ["other"] }).has("other"));
+  assert.ok(!focusSearch(ix, "cap", 1, { prefer: ["other"] }).has("proj"));
+  assert.ok(focusSearch(ix, "cap", 1, { prefer: ["proj"] }).has("proj"));
+});
+
+test("with nothing focused, the steps run down from the roots under an invisible anchor", () => {
+  const seen = rootsSearch(world(), ["proj", "other"], 1);
+  assert.deepEqual([...seen.keys()].sort(), [ANCHOR, "comp", "other", "proj"].sort());
+  assert.equal(seen.get("proj").parent, ANCHOR);
+  assert.equal(seen.get("comp").depth, 2);
+  assert.ok(rootsSearch(world(), ["proj", "other"], 2).has("cap"));
+  assert.deepEqual([...rootsSearch(world(), ["proj", "comp", "nope"], 0).keys()].sort(), [ANCHOR, "comp", "proj"].sort());
+});
+
+test("collapsing a node hides what hangs below it, never the way up from the focus", () => {
+  const ix = world([E("cap", "leaf", "contains"), E("comp", "sib", "contains")], [N("leaf", "capability"), N("sib", "capability")]);
+  const seen = focusSearch(ix, "comp", 3);
+  assert.deepEqual([...collapseSeen(seen, new Set(["cap"])).keys()].sort(), ["cap", "comp", "proj", "sib"]);
+  assert.deepEqual([...collapseSeen(seen, new Set(["comp"])).keys()].sort(), ["comp", "proj"]);
+  // collapsing a container above the focus hides nothing
+  assert.equal(collapseSeen(seen, new Set(["proj"])).size, seen.size);
+  assert.equal(collapseSeen(seen, new Set()), seen);
+});
+
+test("allContainers is everything above a node, through every parent", () => {
+  assert.deepEqual([...allContainers(world(), "cap")].sort(), ["comp", "proj"]);
+  assert.deepEqual([...allContainers(world(), "proj")], []);
+  const two = world([E("other", "comp", "contains")]);
+  assert.deepEqual([...allContainers(two, "cap")].sort(), ["comp", "other", "proj"]);
+});
+
+test("allContainers ends on a cycle and never lists the node itself", () => {
+  const loop = world([E("cap", "proj", "contains")]);
+  assert.deepEqual([...allContainers(loop, "cap")].sort(), ["comp", "proj"]);
 });
 
 test("ancestry walks up the containers, outermost first", () => {

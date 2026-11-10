@@ -6,7 +6,8 @@ import { createStore, INITIAL } from "./store.js";
 test("parse reads node, focus and a bounded steps", () => {
   assert.deepEqual(parse("?node=atlas-map&focus=atlas&steps=3"), { node: "atlas-map", focus: "atlas", steps: 3 });
   assert.equal(parse("?steps=0").steps, null);
-  assert.equal(parse("?steps=9").steps, null);
+  assert.equal(parse("?steps=9").steps, 9);
+  assert.equal(parse("?steps=65").steps, null);
   assert.equal(parse("?steps=2.5").steps, 2, "parseInt, as the slider only ever writes integers");
   assert.deepEqual(parse(""), { node: null, focus: null, steps: null });
 });

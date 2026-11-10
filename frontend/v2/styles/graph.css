@@ -15,10 +15,13 @@ svg.graph:active { cursor: grabbing; }
 .rel.other { stroke: var(--att-green); stroke-dasharray: 4 3; }
 .rel.off { opacity: 0; pointer-events: none; }
 .rel.hot { opacity: 1; stroke-width: 2.2; }
-.link.dim, .rel.dim { opacity: .07; }
+/* The way back up from the focus. Before .dim, so hovering still dims it further. */
+.link.upstream { stroke-dasharray: 5 4; opacity: .45; }
+.link.dim, .rel.dim { opacity: .15; }
 
 .node { cursor: pointer; transition: opacity .15s; }
-.node.dim { opacity: .14; }
+.node.upstream { opacity: .42; }
+.node.dim { opacity: .28; }
 .node .disc { stroke: var(--panel); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .node.focus .disc { stroke: var(--ink); stroke-width: 2.5; }
 .node .ico { fill: none; stroke: var(--panel); stroke-linecap: round; stroke-linejoin: round; }
@@ -34,6 +37,14 @@ svg.graph:active { cursor: grabbing; }
 .node.selected .sel { opacity: 1; }
 .node.pulse .disc { stroke: var(--att-orange); stroke-width: 4; }
 .node.pulse .sel { opacity: 1; stroke: var(--att-orange); }
+/* collapse toggle: "−" / "+", top right of the disc (the badge sits top left) */
+.node .tog { display: none; cursor: pointer; }
+.node.lod2 .tog, .node.lod3 .tog, .node:hover .tog, .node .tog.on { display: inline; }
+.node .tog circle { fill: var(--panel); stroke: var(--ink-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.node .tog text { fill: var(--ink); font-weight: 700; text-anchor: middle; font-family: var(--font-sans); pointer-events: none; }
+.node .tog:hover circle { stroke: var(--accent); stroke-width: 1.8; }
+.node .tog.on circle { fill: var(--accent); stroke: var(--accent); }
+.node .tog.on text { fill: var(--panel); }
 .node:focus-visible { outline: none; }
 .node:focus-visible .sel { opacity: 1; stroke: var(--ink); }
 /* level of detail, set per node by labels.js from its radius on screen */
@@ -47,7 +58,8 @@ svg.graph:active { cursor: grabbing; }
 .labels .short .nm { font-size: calc(11px * var(--ui-scale)); font-weight: 400; fill: var(--ink-soft); }
 .labels .focus .nm { font-size: calc(13px * var(--ui-scale)); font-weight: 700; }
 .labels .wl { font-size: calc(10.5px * var(--ui-scale)); fill: var(--ink-soft); font-variant-numeric: tabular-nums; }
-.labels .dim { opacity: .12; }
+.labels .upstream { opacity: .62; }
+.labels .dim { opacity: .25; }
 
 .graph-status { position: absolute; top: 8px; left: 12px; font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint);
   font-variant-numeric: tabular-nums; pointer-events: none; }
@@ -56,6 +68,7 @@ svg.graph:active { cursor: grabbing; }
   border-radius: 8px; background: color-mix(in srgb, var(--panel) 90%, transparent); font-size: calc(11px * var(--ui-scale)); color: var(--ink-soft); }
 .graph-legend svg { width: 14px; height: 14px; vertical-align: -3px; margin-right: 3px; }
 .graph-legend .lg { display: inline-block; width: 18px; border-top: 2px solid var(--line-strong); vertical-align: middle; margin-right: 4px; }
+.graph-legend .lg.upstream { border-top: 2px dashed var(--line-strong); opacity: .45; }
 .graph-legend .lg.works_on { border-top: 2px dashed var(--accent); }
 .graph-legend .lg.depends_on { border-top: 2px dotted var(--att-orange); }
 .graph-legend .lg.hosted_on { border-top: 2px dashed var(--att-purple); }
@@ -86,6 +99,33 @@ input[type=range] { accent-color: var(--accent); width: 110px; }
   padding: 10px 12px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); }
 .tfilter-menu .chk { color: var(--ink); }
 .tcount { margin-left: auto; padding-left: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+/* Saved views: a small see-through box in the graph's top right corner, folding to its title. */
+.views-box { position: absolute; top: 10px; right: 12px; z-index: 4; width: 210px; max-width: calc(100% - 24px); padding: 5px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel) 62%, transparent);
+  font-size: calc(12px * var(--ui-scale)); color: var(--ink-soft); opacity: .8; transition: opacity .15s, background .15s; }
+.views-box:hover, .views-box:focus-within { opacity: 1; background: color-mix(in srgb, var(--panel) 92%, transparent); }
+.views-box.min { width: auto; cursor: pointer; }
+.vb-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.vb-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.views-box.on .vb-title { color: var(--accent); }
+/* the fold button: a small bordered square, so it reads as something to click (scoped, to beat .linkbtn's border: 0) */
+.views-box .vb-min { flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; padding: 0;
+  border: 1px solid var(--line-strong); border-radius: 4px; background: var(--panel); color: var(--ink-soft); font-weight: 700; line-height: 1; text-align: center; }
+.views-box .vb-min:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+/* minmax(0, 1fr): a grid row otherwise grows to the input's own width and spills out of the box */
+.vb-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; margin-top: 6px; }
+.vb-body > * { min-width: 0; }
+.views-box.min .vb-body { display: none; }
+.vb-expand { justify-self: start; font-size: calc(12px * var(--ui-scale)); padding: 3px 9px; }
+.vrow { display: flex; align-items: center; gap: 8px; }
+.vrow .vgo { flex: 1; text-align: left; }
+.vrow .vgo[aria-current="true"] { font-weight: 700; }
+.vrow .vdel { color: var(--ink-faint); padding: 0 4px; }
+.vrow .vdel:hover { color: var(--att-red); }
+.vnone { color: var(--ink-faint); }
+.vadd { display: flex; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.vadd .btn { flex-shrink: 0; padding: 3px 8px; font-size: calc(12px * var(--ui-scale)); }
+.vadd .vname { flex: 1; width: 0; min-width: 0; font: inherit; padding: 3px 6px; border: 1px solid var(--line-strong); border-radius: 5px; background: var(--ground); color: var(--ink); }
 /* On a phone the bar scrolls sideways, which would clip an absolute menu. */
 @media (max-width: 760px) { .tfilter-menu { position: fixed; top: auto; left: 16px; right: 16px; } }
 

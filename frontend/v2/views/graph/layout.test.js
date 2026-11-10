@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { hierarchy, tree } from "../../test-support/d3-hierarchy.js";
-import { buildIndex, stepSearch } from "../../core/graph-model.js";
-import { radialTree, overview, pathLayout, fitTransform, GAP, MAX_STEPS } from "./layout.js";
+import { buildIndex, stepSearch, focusSearch } from "../../core/graph-model.js";
+import { radialTree, pathLayout, fitTransform, GAP, MAX_STEPS } from "./layout.js";
 
 const d3 = { hierarchy, tree };
 const N = (id, type = "component") => ({ id, type, name: id });
@@ -31,21 +31,28 @@ test("a child sits in its parent's sector: siblings' subtrees do not interleave"
   for (const k of ["a1", "a2", "a1x"]) assert.ok((at[k] < at.b) === (at.a < at.b), k);
 });
 
-test("positions do not depend on how many rings are shown", () => {
-  // layout is computed once at MAX_STEPS; showing fewer steps just filters it
-  const once = place(fan(), "root").all;
-  const again = place(fan(), "root").all;
-  assert.deepEqual(once, again);
-  const shownAt2 = once.filter((p) => p.depth <= 2).map((p) => [p.id, p.x, p.y]);
-  const fromFull = once.filter((p) => p.depth <= 2).map((p) => [p.id, p.x, p.y]);
-  assert.deepEqual(shownAt2, fromFull);
+test("laid out for one ring, that ring is spread evenly; deeper rings do not crowd it", () => {
+  const ix = fan();
+  const one = new Map([...stepSearch(ix, "root", MAX_STEPS)].filter(([, v]) => v.depth <= 1));
+  const at = Object.fromEntries(radialTree(ix, one, "root", { d3 }).all.map((p) => [p.id, p.a]));
+  const gaps = [at.b - at.a, at.c - at.b].map((g) => Math.abs(g));
+  assert.ok(Math.abs(gaps[0] - gaps[1]) < 1e-9, String(gaps));
+  // with every ring, a (three leaves below it) takes a wider sector than c (none)
+  const full = Object.fromEntries(place(ix, "root").all.map((p) => [p.id, p.a]));
+  assert.ok(Math.abs(full.b - full.a) > Math.abs(full.c - full.b));
+  assert.deepEqual(place(ix, "root").all, place(ix, "root").all);
 });
 
-test("the opening view puts roots on one ring and stars outside it", () => {
-  const { all } = overview(["r1", "r2", "r3"], ["s1"]);
-  const rr = (id) => Math.hypot(all.find((p) => p.id === id).x, all.find((p) => p.id === id).y);
-  assert.ok(Math.abs(rr("r1") - rr("r2")) < 1e-6);
-  assert.ok(rr("s1") > rr("r1"));
+test("turned to a west node, the way up runs straight left and the tree keeps its shape", () => {
+  const ix = fan();
+  const plain = radialTree(ix, focusSearch(ix, "a1", MAX_STEPS), "a1", { d3 }).all;
+  const turned = radialTree(ix, focusSearch(ix, "a1", MAX_STEPS), "a1", { d3 }, "a").all;
+  const at = Object.fromEntries(turned.map((p) => [p.id, p]));
+  for (const id of ["a", "root"]) { assert.ok(at[id].x < 0, id); assert.ok(Math.abs(at[id].y) < 1e-6, id); }
+  assert.ok(at.root.x < at.a.x);
+  // the same distances apart as before the turn
+  const d = (/** @type {any[]} */ all, x, y) => { const m = Object.fromEntries(all.map((p) => [p.id, p])); return Math.hypot(m[x].x - m[y].x, m[x].y - m[y].y); };
+  for (const [x, y] of [["a", "a1x"], ["root", "a1x"], ["a", "root"]]) assert.ok(Math.abs(d(plain, x, y) - d(turned, x, y)) < 1e-6, x + y);
 });
 
 test("fit puts everything inside the pane", () => {

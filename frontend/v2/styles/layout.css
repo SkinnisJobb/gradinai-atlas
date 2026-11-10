@@ -19,7 +19,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focu
 .brand span { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint); }
 .crumbs { flex: 1 1 240px; min-width: 0; display: flex; flex-wrap: wrap; gap: 2px; align-items: center; }
 .bar-tools { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
-.who { font-size: calc(12px * var(--ui-scale)); color: var(--ink-soft); }
+.who { position: relative; }
+/* The user menu (ui/usermenu.js): the name opens Settings, Change password, Sign out. */
+.who-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid transparent; background: none; color: var(--ink-soft);
+  font: inherit; font-size: calc(12px * var(--ui-scale)); padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.who-btn:hover, .who-btn[aria-expanded="true"] { border-color: var(--line-strong); color: var(--ink); background: var(--panel-2); }
+.who-caret { font-size: calc(9px * var(--ui-scale)); color: var(--ink-faint); }
+.who-menu { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; min-width: 200px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: var(--shadow); }
+.who-head { display: grid; padding: 6px 10px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.who-head-name { font-size: calc(12.5px * var(--ui-scale)); color: var(--ink); font-weight: 600; }
+.who-head-id { font-family: var(--font-mono); font-size: calc(11px * var(--ui-scale)); color: var(--ink-faint); }
+.who-form { margin: 0; }
+.who-item { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--ink); font: inherit;
+  font-size: calc(12.5px * var(--ui-scale)); padding: 6px 10px; border-radius: 6px; cursor: pointer; text-decoration: none; }
+.who-item:hover, .who-item:focus-visible { background: var(--panel-2); outline: none; }
+.who-item[aria-checked="true"]::after { content: " ✓"; color: var(--accent); }
+.who-item.is-signout { color: var(--ink-soft); }
+.who-sep { height: 1px; margin: 4px 6px; background: var(--line); }
+/* The pane switches are for a phone only: elsewhere the panes' bars do it. */
+.who-phone { display: none; }
 .btn { border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); font: inherit;
   font-size: calc(12px * var(--ui-scale)); padding: 4px 10px; border-radius: 6px; cursor: pointer; }
 .btn:hover { border-color: var(--accent); }
@@ -69,8 +88,12 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
   .search-slot { flex: 1 1 120px; min-width: 0; }
   .crumbs, .bar-tools, .bar-end { flex: 1 1 100%; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-left: 0; }
   .crumbs > *, .bar-tools > *, .bar-end > * { flex: none; }
+  /* The user menu drops out of the bar's end, so that row must not clip. */
+  .bar-end { overflow: visible; flex-wrap: wrap; justify-content: flex-end; }
   .crumbs:empty { display: none; }
-  .bar-tools .group > .eyebrow, .legacy-link, .who { display: none; }
+  .bar-tools .group > .eyebrow { display: none; }
+  .who-phone { display: block; }
+  .who-name { max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stage { grid-template-columns: minmax(0, 1fr) !important; }
   .pane-board { position: absolute; inset: 0; z-index: 2; }
   .pane-panel { position: absolute; left: 0; right: 0; bottom: 0; height: 60%; z-index: 3;
@@ -89,8 +112,6 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .search-hit .stype { font-size: calc(10px * var(--ui-scale)); text-transform: uppercase; letter-spacing: .06em; color: var(--ink-faint); align-self: center; }
 .search-hit .sid { grid-column: 1 / -1; font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-scale)); color: var(--ink-faint); }
 .bar-end { display: flex; align-items: center; gap: 12px; margin-left: auto; }
-.legacy-link { font-size: calc(12px * var(--ui-scale)); color: var(--ink-faint); }
-.legacy-link:hover { color: var(--accent); }
 .viewprefs .bsel { font: inherit; font-size: calc(12px * var(--ui-scale)); color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 6px; padding: 3px 6px; }
 .scalebtn { padding: 3px 8px; }
 

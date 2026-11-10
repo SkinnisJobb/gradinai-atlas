@@ -3,9 +3,10 @@
 // tested without a browser (layout.test.js).
 //
 // A RADIAL TREE, ALWAYS (owner decision, 2026-10-22: the force layout was "far too
-// messy"). The spanning tree from the step search is laid out once per focus at
-// the MAXIMUM step count, and the slider only decides how many rings show.
-// So a node that stays on screen never moves when the slider does.
+// messy"). The spanning tree is laid out for the rings that show, so the
+// nodes on screen get all the room: moving the Steps slider re-spaces the graph
+// (owner decision 2026-11-09; it used to be laid out once at MAX_STEPS, which crowded
+// the shown rings to leave space for hidden ones).
 //
 // Each child sits in its parent's angular sector, so structure links never
 // cross. Each ring is at least GAP further out than the last, and wide enough
@@ -13,7 +14,8 @@
 
 import { cmpNodes } from "../../core/graph-model.js";
 
-export const GAP = 150, SPACING = 46, MAX_STEPS = 4;
+/** MAX_STEPS: the Steps slider's reach when the graph's own depth is not known (graph.js uses the real depth). */
+export const GAP = 150, SPACING = 46, MAX_STEPS = 10;
 /** Path view spacing: between steps along a route, and between routes. */
 export const PATH_COL = 210, PATH_ROW = 130;
 export const radiusOf = (/** @type {number} */ depth) => (depth === 0 ? 20 : depth === 1 ? 14 : 10);
@@ -22,17 +24,19 @@ export const radiusOf = (/** @type {number} */ depth) => (depth === 0 ? 20 : dep
 export const polar = (a, r) => ({ x: r * Math.sin(a), y: -r * Math.cos(a) });
 
 /**
- * @typedef {{id: string, depth: number, parent: string|null, via: string|null, a: number, r: number, x: number, y: number, rr: number}} Placed
+ * @typedef {{id: string, depth: number, parent: string|null, via: string|null, a: number, r: number, x: number, y: number, rr: number, up?: boolean}} Placed
  */
 
 /**
  * @param {import("../../core/graph-model.js").Index} ix
- * @param {Map<string, {depth: number, parent: string|null, via: string|null}>} seen  stepSearch at MAX_STEPS
+ * @param {Map<string, {depth: number, parent: string|null, via: string|null, up?: boolean}>} seen  focusSearch or rootsSearch, cut to the rings that show
  * @param {string} focus
  * @param {{d3: any}} deps  d3-hierarchy's tree, passed in so this file runs in node
+ * @param {string|null} [west]  a node to turn the whole tree so it sits straight left
+ *   of the centre: the focus's parent, so the way back up is always on the same side
  * @returns {{all: Placed[], radii: number[]}}
  */
-export function radialTree(ix, seen, focus, deps) {
+export function radialTree(ix, seen, focus, deps, west = null) {
   const cmp = cmpNodes(ix);
   /** @type {Map<string, string[]>} */
   const kids = new Map();
@@ -49,6 +53,12 @@ export function radialTree(ix, seen, focus, deps) {
   /** @type {Map<string, number>} */
   const ang = new Map();
   h.each((/** @type {any} */ d) => ang.set(d.data.id, d.x));
+  // A rigid turn: every angle moves by the same amount and none is wrapped, so
+  // sectors, and linkPath's arcs between them, keep their shape.
+  if (west != null && ang.has(west)) {
+    const turn = -Math.PI / 2 - /** @type {number} */ (ang.get(west));
+    for (const [id, a] of ang) ang.set(id, a + turn);
+  }
 
   const cnt = /** @type {number[]} */ ([]);
   for (const v of seen.values()) cnt[v.depth] = (cnt[v.depth] || 0) + 1;
@@ -61,23 +71,9 @@ export function radialTree(ix, seen, focus, deps) {
   for (const [id, v] of seen) {
     const a = /** @type {number} */ (ang.get(id)), r = radii[v.depth];
     const p = id === focus ? { x: 0, y: 0 } : polar(a, r);
-    all.push({ id, depth: v.depth, parent: v.parent, via: v.via, a, r, x: p.x, y: p.y, rr: radiusOf(v.depth) });
+    all.push({ id, depth: v.depth, parent: v.parent, via: v.via, a, r, x: p.x, y: p.y, rr: radiusOf(v.depth), ...(v.up ? { up: true } : {}) });
   }
   return { all, radii };
-}
-
-/**
- * The opening view: the roots on one ring, starred nodes on a ring outside it.
- * @param {string[]} roots @param {string[]} starred  (already excluding roots)
- * @returns {{all: Placed[], radii: number[]}}
- */
-export function overview(roots, starred) {
-  const r1 = Math.max(160, (roots.length * 120) / (2 * Math.PI)), r2 = r1 + 170;
-  /** @type {Placed[]} */
-  const all = [];
-  roots.forEach((id, i) => { const a = (i / Math.max(1, roots.length)) * 2 * Math.PI, p = polar(a, r1); all.push({ id, depth: 0, parent: null, via: null, a, r: r1, ...p, rr: 22 }); });
-  starred.forEach((id, i) => { const a = ((i + 0.5) / starred.length) * 2 * Math.PI, p = polar(a, r2); all.push({ id, depth: 0, parent: null, via: null, a, r: r2, ...p, rr: 16 }); });
-  return { all, radii: [] };
 }
 
 /**

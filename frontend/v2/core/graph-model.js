@@ -183,6 +183,21 @@ export function ancestry(ix, id) {
 }
 
 /**
+ * Every node above `id` on a `contains` path, through ALL its parents, unlike
+ * `ancestry`, which follows only the first. Never includes `id`, even in a cycle.
+ * @param {Index} ix @param {string} id @returns {Set<string>}
+ */
+export function allContainers(ix, id) {
+  const out = new Set(), stack = [id];
+  while (stack.length) {
+    for (const p of containsParents(ix, /** @type {string} */ (stack.pop()))) {
+      if (p !== id && !out.has(p)) { out.add(p); stack.push(p); }
+    }
+  }
+  return out;
+}
+
+/**
  * @typedef {{links?: "contains"|"all", work?: boolean, hubDegree?: number}} StepOpts
  */
 
@@ -231,6 +246,108 @@ export function stepSearch(ix, focus, k, opts = {}) {
     }
   }
   return seen;
+}
+
+/** The invisible centre the roots hang off when nothing is focused. Never a node, never drawn. */
+export const ANCHOR = "\u0000roots";
+
+/**
+ * What a focused node shows: its LIMB. That is one chain of containers up to
+ * its root, however far (they cost no steps), and `k` steps DOWN from it.
+ * - Up: one parent per level, the one in `opts.prefer` (the trail that led
+ *   here) if any, else the first. A second parent's branch is another limb.
+ * - Down: a `contains` edge outward, or, with `links: "all"`, any other edge
+ *   to a node inside the focus's own subtree. A link out to another branch,
+ *   or past the root, is not a step (owner decision 2026-11-09: "we are in that limb
+ *   now"). Open work still hangs off the node it works on.
+ * Entries carry `up: true` for the containers.
+ * @param {Index} ix @param {string} focus @param {number} k @param {StepOpts & {prefer?: Iterable<string>}} [opts]
+ * @returns {Map<string, {depth: number, parent: string|null, via: string|null, up?: boolean}>}
+ */
+export function focusSearch(ix, focus, k, opts = {}) {
+  if (!ix.byId.has(focus)) return new Map();
+  /** @type {Map<string, {depth: number, parent: string|null, via: string|null, up?: boolean}>} */
+  const seen = new Map([[focus, { depth: 0, parent: null, via: null }]]);
+  const prefer = new Set(opts.prefer || []);
+  for (let cur = focus, d = 1; d < 64; d++) {
+    const ps = containsParents(ix, cur).filter((p) => !seen.has(p));
+    if (!ps.length) break;
+    const p = ps.find((x) => prefer.has(x)) ?? ps[0];
+    seen.set(p, { depth: d, parent: cur, via: "contains", up: true });
+    cur = p;
+  }
+  // The focus's subtree: the only place a sideways link may lead.
+  const inside = new Set([focus]), dq = [focus];
+  while (dq.length) for (const x of ix.adj.get(/** @type {string} */ (dq.shift())) || []) if (x.t === "contains" && x.out && !inside.has(x.o)) { inside.add(x.o); dq.push(x.o); }
+  stepDown(ix, seen, [focus], k, focus, opts, inside);
+  return seen;
+}
+
+/**
+ * What the opening view shows: the roots (and starred nodes) as depth 1 under
+ * the invisible `ANCHOR`, and `k` steps down from each, by the same rule as
+ * `focusSearch`. A node reachable from two seeds is drawn under the first.
+ * @param {Index} ix @param {string[]} seeds @param {number} k @param {StepOpts} [opts]
+ */
+export function rootsSearch(ix, seeds, k, opts = {}) {
+  /** @type {Map<string, {depth: number, parent: string|null, via: string|null, up?: boolean}>} */
+  const seen = new Map([[ANCHOR, { depth: 0, parent: null, via: null }]]);
+  const starts = [];
+  for (const id of seeds) if (ix.byId.has(id) && !seen.has(id)) { seen.set(id, { depth: 1, parent: ANCHOR, via: null }); starts.push(id); }
+  stepDown(ix, seen, starts, k + 1, null, opts);
+  return seen;
+}
+
+/**
+ * Breadth-first down from `starts` until depth `limit`, adding to `seen`.
+ * @param {Index} ix @param {Map<string, any>} seen @param {string[]} starts @param {number} limit
+ * @param {string|null} focus @param {StepOpts} opts
+ * @param {Set<string>} [inside]  where a sideways (non-contains) step may lead; anywhere when absent
+ */
+function stepDown(ix, seen, starts, limit, focus, opts, inside) {
+  const cmp = cmpNodes(ix), q = [...starts];
+  const nodeOk = (/** @type {string} */ id) => {
+    const n = ix.byId.get(id);
+    return !!n && (!n.isWork || id === focus || (!!opts.work && !CLOSED.has(n.status)));
+  };
+  const stepOk = (/** @type {string} */ from, /** @type {Adj} */ x) => {
+    if (!nodeOk(x.o)) return false;
+    if (x.t === "contains") return x.out;
+    if (opts.links === "all" && (!inside || inside.has(x.o))) return true;
+    const a = ix.byId.get(from), b = ix.byId.get(x.o);
+    return !!opts.work && x.t === "works_on" && !!a && !!b && a.isWork !== b.isWork;
+  };
+  while (q.length) {
+    const id = /** @type {string} */ (q.shift());
+    const d = seen.get(id).depth;
+    if (d >= limit || isHub(ix, id, focus, opts)) continue;
+    const next = (ix.adj.get(id) || []).filter((x) => !seen.has(x.o) && stepOk(id, x))
+      .sort((a, b) => (+(a.t !== "contains") - +(b.t !== "contains")) || cmp(a.o, b.o));
+    for (const x of next) {
+      if (seen.has(x.o)) continue;
+      seen.set(x.o, { depth: d + 1, parent: id, via: x.t });
+      q.push(x.o);
+    }
+  }
+}
+
+/**
+ * Collapse: drop everything that hangs below a collapsed node, as drawn in the
+ * spanning tree. The way up from the focus (`up` entries) is never dropped, so
+ * collapsing a container hides nothing above the focus.
+ * @template {{parent: string|null, up?: boolean}} V
+ * @param {Map<string, V>} seen @param {Set<string>} collapsed
+ * @returns {Map<string, V>}
+ */
+export function collapseSeen(seen, collapsed) {
+  if (!collapsed.size) return seen;
+  const out = new Map();
+  for (const [id, v] of seen) {
+    let cut = false;
+    if (!v.up) for (let p = v.parent, g = 0; p != null && g < 64 && !cut; p = seen.get(p)?.parent ?? null, g++) cut = collapsed.has(p);
+    if (!cut) out.set(id, v);
+  }
+  return out;
 }
 
 /**
