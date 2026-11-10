@@ -132,6 +132,7 @@ older run.
 | `images` | build, check and scan | the hardened images fail to build, fail their checks or fail the vulnerability gate |
 | `dast` | ZAP scan | a high-risk alert. Runs on a pull request only when its own files change, and on a schedule. |
 | `pins` | pins, dependabot schema | an invalid `dependabot.yml`. Unpinned images and actions are reported, not failed. |
+| `dependabot-security` | auto-merge a Dependabot security update | nothing: on a Dependabot pull request in a `*-security` group it approves and turns on auto-merge, so the pull request merges once every required check is green. Every other pull request is left alone. |
 | `tools` | tool tests | the shell tools, the licence and NOTICE files, or the client pack |
 | `cicd-lint` | generated pipelines | a generated CI pipeline that fails actionlint or its schema. Runs only when its inputs change. |
 | `openshift-lint` | OpenShift manifests | a manifest under `deploy/openshift/` that fails `kustomize build`, kubeconform, kube-linter or a policy in `tools/ci/openshift/policy/` (a secret in the environment, a container outside the restricted security context, an image without a digest, a mounted ServiceAccount token, a plain-HTTP URL, a pinned `runAsUser` in the base), or a policy fixture that no longer fails. Runs only when those files change. |
