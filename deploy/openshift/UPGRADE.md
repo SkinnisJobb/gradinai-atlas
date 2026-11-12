@@ -208,10 +208,22 @@ Then tell the Atlas maintainers what step 7 printed.
   step 1 shows which. Step 4 rewrites the `images:` block, so either way the overlay ends up
   right.
 - `atlas-api`, the migrate Job and the audit CronJob no longer have the `db-url` init container:
-  the image reads CloudNativePG's database URL itself. The ConfigMap `atlas-scripts-<hash>` that
-  held its script is left behind; delete it when the upgrade is checked:
-  `oc get configmap -n $ns -o name | Select-String atlas-scripts | ForEach-Object { oc delete -n $ns $_ }`.
+  the image reads CloudNativePG's database URL itself. The base still has an `atlas-scripts`
+  ConfigMap (the `https_probe.py` that `atlas-api` and `atlas-mcp` mount), now under a new hash;
+  the old `atlas-scripts-<hash>` that also held `db_url.py` is left behind. When the upgrade is
+  checked, delete the old one only, never the one the Deployments use:
+
+  ```powershell
+  $current = oc get deploy atlas-api -n $ns -o jsonpath='{.spec.template.spec.volumes[?(@.name=="scripts")].configMap.name}'
+  if (-not $current) { throw 'no scripts ConfigMap found on atlas-api; delete nothing' }
+  oc get configmap -n $ns -o name | Select-String atlas-scripts | Where-Object { $_ -notmatch "/$current$" } | ForEach-Object { oc delete -n $ns $_ }
+  ```
+
+  **Expected:** one `configmap "atlas-scripts-<old hash>" deleted`, and `$current` still listed
+  by `oc get configmap -n $ns`.
 - The migrate Job retries up to six times (was one).
-- The database's NetworkPolicies moved to their own component; an existing overlay renders the
-  same objects.
+- The database's NetworkPolicies moved to their own component (`networkpolicies` includes it, so
+  an existing overlay keeps both policies under the same names). `atlas-database` gains one
+  egress rule, to the cluster DNS (`openshift-dns`, port 5353), so a standby finds its primary
+  by service name; step 5's diff shows it.
 - No new setting, no schema change that needs a step, and the database image is unchanged.
