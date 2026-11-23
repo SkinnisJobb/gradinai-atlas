@@ -22,7 +22,7 @@
 # The live volume was initialised by `postgres:16` and is read unchanged by this image (same
 # major, same Debian 13 the homelab already runs, so no collation change is expected; the
 # collation check confirms it after the swap).
-FROM postgres:16-trixie@sha256:933463a6c8eba2b9f5cd414138738cd8d5519cd2c471214c222652f547a66a32
+FROM postgres:16-trixie@sha256:3950ad7c3148ca2175ef1b6c36c9efbf78957ae8fbe8b3a5d7c35af50500382f
 
 # Delete first, in its own layer: a scanner (Trivy) reads each layer, and a file merely
 # overwritten in a later layer still reports the Go binary of the earlier one; a deletion
